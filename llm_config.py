@@ -1,0 +1,160 @@
+"""
+llm_config.py — Routeur LLM multi-fournisseurs, constantes D&D 5e, exception autogen.
+
+Préfixes reconnus dans le champ "llm" de campaign_state.json :
+  gemini-*               → Google Gemini  (GEMINI_API_KEY)
+  groq/*                 → Groq            (GROQ_API_KEY)    gratuit, très rapide
+  openrouter/*           → OpenRouter      (OPENROUTER_API_KEY) modèles :free disponibles
+
+Exemples de valeurs :
+  "gemini-2.5-pro"
+  "gemini-2.5-flash"
+  "groq/llama-3.3-70b-versatile"
+  "openrouter/meta-llama/llama-3.3-70b-instruct:free"
+"""
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Endpoint OpenAI-compatible de Google Gemini.
+# CRITIQUE : AutoGen's config_list fallback ne fonctionne QUE pour les erreurs OpenAI-style.
+# En utilisant api_type="google", les erreurs 429 Gemini ne déclenchent PAS le fallback.
+# Solution : utiliser l'endpoint OpenAI-compatible de Gemini pour que le retry marche vraiment.
+_GEMINI_OPENAI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
+def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
+    """
+    Construit le llm_config AutoGen avec un système de fallback automatique.
+    Ordre de priorité : Modèle demandé > Gemini Flash > Groq > OpenRouter.
+
+    NOTE IMPORTANTE : Tous les modèles Gemini utilisent l'endpoint OpenAI-compatible
+    de Google afin que le mécanisme de retry config_list d'AutoGen se déclenche
+    correctement sur les erreurs 429 RESOURCE_EXHAUSTED.
+    """
+    m = model_name.strip()
+    config_list = []
+
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    groq_key   = os.getenv("GROQ_API_KEY", "")
+    router_key = os.getenv("OPENROUTER_API_KEY", "")
+
+    # ── 1. Modèle principal demandé ───────────────────────────────────────────
+    if m.startswith("groq/"):
+        if groq_key:
+            config_list.append({
+                "model":    m[len("groq/"):],
+                "api_key":  groq_key,
+                "base_url": "https://api.groq.com/openai/v1",
+                "api_type": "openai",
+            })
+    elif m.startswith("openrouter/"):
+        if router_key:
+            config_list.append({
+                "model":    m[len("openrouter/"):],
+                "api_key":  router_key,
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_type": "openai",
+                "default_headers": {
+                    "HTTP-Referer": "https://dnd-moteur-aube-brisee",
+                    "X-Title":      "Moteur de l Aube Brisee",
+                },
+            })
+    else:  # Gemini (ex: "gemini-2.5-pro", "gemini-2.5-flash")
+        if gemini_key:
+            config_list.append({
+                "model":    m,
+                "api_key":  gemini_key,
+                "base_url": _GEMINI_OPENAI_BASE,
+                "api_type": "openai",   # ← endpoint OpenAI-compat → fallback fonctionne
+            })
+
+    # ── 2. Fallback immédiat : Gemini 2.5 Flash (quota x10 vs Pro) ───────────
+    # Placé EN PREMIER avant Groq : même fournisseur, même qualité, quota différent.
+    if gemini_key and m not in ("gemini-2.5-flash", "gemini-2.5-flash-preview-04-17"):
+        config_list.append({
+            "model":    "gemini-2.5-flash",
+            "api_key":  gemini_key,
+            "base_url": _GEMINI_OPENAI_BASE,
+            "api_type": "openai",
+        })
+
+    # ── 3. Fallback Groq (gratuit, très rapide) ───────────────────────────────
+    if groq_key and not m.startswith("groq/"):
+        config_list.append({
+            "model":    "llama-4-scout-17b-16e-instruct",
+            "api_key":  groq_key,
+            "base_url": "https://api.groq.com/openai/v1",
+            "api_type": "openai",
+        })
+        config_list.append({
+            "model":    "llama-3.3-70b-versatile",
+            "api_key":  groq_key,
+            "base_url": "https://api.groq.com/openai/v1",
+            "api_type": "openai",
+        })
+
+    # ── 4. Fallback OpenRouter (modèles gratuits) ─────────────────────────────
+    if router_key and not m.startswith("openrouter/"):
+        config_list.append({
+            "model":    "meta-llama/llama-3.3-70b-instruct:free",
+            "api_key":  router_key,
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_type": "openai",
+            "default_headers": {
+                "HTTP-Referer": "https://dnd-moteur-aube-brisee",
+                "X-Title":      "Moteur de l Aube Brisee",
+            },
+        })
+
+    # ── Sécurité : au cas où aucune clé n'est configurée ─────────────────────
+    if not config_list:
+        config_list.append({
+            "model":    m,
+            "api_key":  "DUMMY_KEY",
+            "base_url": _GEMINI_OPENAI_BASE,
+            "api_type": "openai",
+        })
+
+    print("🛠️ DEBUG CONFIG LLM:", [c.get("model") for c in config_list])
+
+    return {
+        "config_list": config_list,
+        "temperature":  temperature,
+    }
+
+
+# Config par défaut (utilisée pour le résumé de session et le GroupChatManager)
+_default_model = os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-pro")
+llm_config = build_llm_config(_default_model)
+
+
+# ─── Exception pour interrompre proprement le thread autogen ─────────────────
+class StopLLMRequested(BaseException):
+    """Injectée via ctypes dans le thread autogen pour l'interrompre proprement."""
+    pass
+
+
+# ─── Compétences D&D 5e classées par caractéristique ─────────────────────────
+DND_SKILLS = {
+    "Force":        [("Athlétisme", "STR")],
+    "Dextérité":    [("Acrobaties", "DEX"), ("Escamotage", "DEX"), ("Discrétion", "DEX")],
+    "Constitution": [],
+    "Intelligence": [("Arcanes", "INT"), ("Histoire", "INT"), ("Investigation", "INT"),
+                     ("Nature", "INT"), ("Religion", "INT")],
+    "Sagesse":      [("Dressage", "WIS"), ("Perspicacité", "WIS"), ("Médecine", "WIS"),
+                     ("Perception", "WIS"), ("Survie", "WIS")],
+    "Charisme":     [("Tromperie", "CHA"), ("Intimidation", "CHA"),
+                     ("Représentation", "CHA"), ("Persuasion", "CHA")],
+}
+
+ABILITY_COLORS = {
+    "Force":        "#e57373",
+    "Dextérité":    "#81c784",
+    "Constitution": "#ffb74d",
+    "Intelligence": "#64b5f6",
+    "Sagesse":      "#ce93d8",
+    "Charisme":     "#f06292",
+}
