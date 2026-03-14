@@ -69,19 +69,20 @@ class CharacterMixin:
 
         # ── Données statiques par personnage ──────────────────────────────────
         _CHAR_STATS = {
-            "Kaelen": {"hit_die": 10, "level": 15, "con_mod": 3,
+            "Kaelen": {"hit_die": 10, "level": 15, "con_mod": 3, "ac": 20,
                        "max_slots": {"1":4,"2":3,"3":3,"4":1}},
-            "Elara":  {"hit_die": 6,  "level": 15, "con_mod": 1,
+            "Elara":  {"hit_die": 6,  "level": 15, "con_mod": 1, "ac": 14,
                        "max_slots": {"1":4,"2":3,"3":3,"4":3,"5":2,"6":1,"7":1,"8":1}},
-            "Thorne": {"hit_die": 10, "level": 15, "con_mod": 3,
+            "Thorne": {"hit_die": 10, "level": 15, "con_mod": 3, "ac": 18,
                        "max_slots": {}},
-            "Lyra":   {"hit_die": 8,  "level": 15, "con_mod": 2,
+            "Lyra":   {"hit_die": 8,  "level": 15, "con_mod": 2, "ac": 17,
                        "max_slots": {"1":4,"2":3,"3":3,"4":3,"5":2,"6":1,"7":1,"8":1}},
         }
-        cstats    = _CHAR_STATS.get(char_name, {"hit_die":8,"level":1,"con_mod":0,"max_slots":{}})
+        cstats    = _CHAR_STATS.get(char_name, {"hit_die":8,"level":1,"con_mod":0,"ac":10,"max_slots":{}})
         hit_die   = data.get("hit_die",  cstats["hit_die"])
         level     = data.get("level",    cstats["level"])
         con_mod   = data.get("con_mod",  cstats["con_mod"])
+        ac        = data.get("ac",       cstats["ac"])
         max_slots = cstats["max_slots"]
 
         # ── Avatar animé ──────────────────────────────────────────────────────
@@ -205,6 +206,24 @@ class CharacterMixin:
         bar_fill = tk.Frame(bar_bg, bg=self._hp_color(pct_init), height=8)
         bar_fill.place(relx=0, rely=0, relwidth=pct_init, relheight=1)
 
+        # ── Classe d'Armure ───────────────────────────────────────────────
+        ac_row = tk.Frame(body, bg="#1e1e2e")
+        ac_row.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(ac_row, text="🛡 CA", bg="#1e1e2e", fg="#aaaaaa",
+                 font=("Arial", 9)).pack(side=tk.LEFT)
+
+        def get_ac():
+            return load_state().get("characters", {}).get(char_name, {}).get("ac", ac)
+        def set_ac(v):
+            s = load_state(); s["characters"][char_name]["ac"] = max(0, min(v, 30)); save_state(s)
+
+        ac_lbl, ac_spx = _make_editable(
+            ac_row, get_ac, set_ac, min_v=0, max_v=30,
+            font=("Consolas", 11, "bold")
+        )
+        ac_lbl.config(fg=color)
+        ac_spx.config(fg=color)
+
         # ── Hit Dice ──────────────────────────────────────────────────────
         hd_row = tk.Frame(body, bg="#1e1e2e")
         hd_row.pack(fill=tk.X, pady=(0, 6))
@@ -317,6 +336,7 @@ class CharacterMixin:
                 used  = d2.get("hit_dice_used", 0)
                 avail = max(0, level - used)
                 hd_lbl.config(text=str(avail))
+                ac_lbl.config(text=str(d2.get("ac", ac)))
                 _rebuild_slots()
             except Exception:
                 pass

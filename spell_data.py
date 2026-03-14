@@ -683,3 +683,178 @@ class SpellPickerDialog:
         if self._selected:
             self._cb(self._selected)
             self.win.destroy()
+
+
+# ─── Regex cachée de tous les noms de sorts ───────────────────────────────────
+
+_spell_pattern: re.Pattern | None = None
+
+def get_spell_pattern() -> re.Pattern | None:
+    """
+    Retourne une regex compilée qui matche n'importe quel nom de sort connu.
+    Construite une seule fois après load_spells(), puis mise en cache.
+    Les noms sont triés par longueur décroissante pour favoriser les matches longs.
+    """
+    global _spell_pattern
+    if _spell_pattern is not None:
+        return _spell_pattern
+    load_spells()
+    if not _SPELL_DATA:
+        return None
+    # Noms originaux (casse préservée) triés par longueur desc
+    names_sorted = sorted(
+        (v["name"] for v in _SPELL_DATA.values()),
+        key=len, reverse=True
+    )
+    parts = [re.escape(n) for n in names_sorted]
+    _spell_pattern = re.compile(
+        r"(?<![A-Za-zÀ-ÿ])(" + "|".join(parts) + r")(?![A-Za-zÀ-ÿ])",
+        re.IGNORECASE
+    )
+    return _spell_pattern
+
+
+# ─── SpellSheetWindow — fiche sort autonome (lecture seule) ───────────────────
+
+class SpellSheetWindow:
+    """
+    Fenêtre Toplevel autonome affichant la fiche complète d'un sort.
+    Non-modale : plusieurs fiches peuvent être ouvertes simultanément.
+
+    Usage :
+        SpellSheetWindow(parent_tk_widget, spell_dict)
+        SpellSheetWindow(parent_tk_widget, "Fireball")   # par nom
+    """
+
+    BG      = "#0b0d12"
+    PANEL   = "#090c15"
+    BORDER  = "#2a3040"
+    GOLD    = "#c8a820"
+    FG      = "#dde0e8"
+    FG_DIM  = "#8899aa"
+
+    def __init__(self, parent, spell):
+        # Accepte un dict normalisé ou un nom de sort
+        if isinstance(spell, str):
+            load_spells()
+            spell = _SPELL_DATA.get(spell.lower())
+        if not spell:
+            return
+
+        self.sp = spell
+
+        win = tk.Toplevel(parent)
+        school_color = _SCHOOL_COLOR.get(spell["school"], "#aaaaaa")
+        icon         = _SCHOOL_ICON.get(spell["school"], "✨")
+        lvl_str      = "Tour de magie" if spell["level"] == 0 else f"Niveau {spell['level']}"
+
+        win.title(f"{icon} {spell['name']}  —  {lvl_str}")
+        win.geometry("560x480")
+        win.configure(bg=self.BG)
+        win.resizable(True, True)
+        win.minsize(400, 300)
+
+        # ── En-tête coloré ────────────────────────────────────────────────────
+        hdr = tk.Frame(win, bg=_darken_color(school_color, 0.15), pady=10)
+        hdr.pack(fill=tk.X)
+
+        tk.Label(
+            hdr, text=f"{icon}  {spell['name']}",
+            bg=_darken_color(school_color, 0.15),
+            fg=school_color,
+            font=("Consolas", 15, "bold"),
+        ).pack(side=tk.LEFT, padx=16)
+
+        badges = []
+        if spell["concentration"]: badges.append("Concentration")
+        if spell["ritual"]:        badges.append("Rituel")
+        badge_txt = "  |  ".join([f"{lvl_str}", spell["school"]] + badges)
+        tk.Label(
+            hdr, text=badge_txt,
+            bg=_darken_color(school_color, 0.15),
+            fg=self.FG_DIM,
+            font=("Consolas", 9),
+        ).pack(side=tk.LEFT, padx=(0, 12))
+
+        # ── Métadonnées ───────────────────────────────────────────────────────
+        meta_frame = tk.Frame(win, bg="#0d1018", pady=6)
+        meta_frame.pack(fill=tk.X, padx=0)
+
+        meta_pairs = [
+            ("Incantation", spell["cast_time"]),
+            ("Portée",      spell["range"]),
+            ("Composantes", spell["components"]),
+            ("Durée",       spell["duration"]),
+            ("Source",      spell["source"]),
+        ]
+        for i, (label, value) in enumerate(meta_pairs):
+            col = tk.Frame(meta_frame, bg="#0d1018")
+            col.pack(side=tk.LEFT, padx=(16 if i == 0 else 12, 0))
+            tk.Label(col, text=label.upper(), bg="#0d1018", fg=self.FG_DIM,
+                     font=("Consolas", 7, "bold")).pack(anchor="w")
+            tk.Label(col, text=value, bg="#0d1018", fg=self.GOLD,
+                     font=("Consolas", 9)).pack(anchor="w")
+
+        # ── Séparateur ────────────────────────────────────────────────────────
+        tk.Frame(win, bg=self.BORDER, height=1).pack(fill=tk.X, padx=8, pady=(4, 0))
+
+        # ── Description scrollable ────────────────────────────────────────────
+        txt = scrolledtext.ScrolledText(
+            win, bg=self.PANEL, fg=self.FG,
+            font=("Consolas", 10), wrap=tk.WORD,
+            relief="flat", state=tk.NORMAL,
+            padx=14, pady=10,
+        )
+        txt.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+        txt.tag_config("desc",  foreground=self.FG,    font=("Consolas", 10))
+        txt.tag_config("emph",  foreground=self.GOLD,  font=("Consolas", 10, "bold"))
+        txt.tag_config("dim",   foreground=self.FG_DIM,font=("Consolas", 9, "italic"))
+
+        # Mise en valeur des formules de dés et des mots en majuscules
+        desc = spell["description"]
+        _dice_re  = re.compile(r'\b\d+d\d+(?:[+\-]\d+)?\b')
+        _upper_re = re.compile(r'\b[A-Z][A-Z]{2,}\b')
+
+        pos = 0
+        for m in sorted(
+            list(_dice_re.finditer(desc)) + list(_upper_re.finditer(desc)),
+            key=lambda x: x.start()
+        ):
+            if m.start() < pos:
+                continue
+            if m.start() > pos:
+                txt.insert(tk.END, desc[pos:m.start()], "desc")
+            txt.insert(tk.END, m.group(0), "emph")
+            pos = m.end()
+        if pos < len(desc):
+            txt.insert(tk.END, desc[pos:], "desc")
+
+        txt.config(state=tk.DISABLED)
+
+        # ── Bouton fermer ─────────────────────────────────────────────────────
+        bot = tk.Frame(win, bg="#080a10", pady=6)
+        bot.pack(fill=tk.X, side=tk.BOTTOM)
+        tk.Button(
+            bot, text="Fermer",
+            bg="#1a0a0a", fg="#cc5555",
+            font=("Consolas", 9, "bold"), relief="flat",
+            padx=12, pady=4, cursor="hand2",
+            command=win.destroy,
+        ).pack(side=tk.RIGHT, padx=10)
+
+        win.focus_set()
+
+
+def _darken_color(hex_color: str, factor: float) -> str:
+    """Assombrit une couleur hex (factor entre 0 et 1)."""
+    try:
+        h = hex_color.lstrip("#")
+        if len(h) == 6:
+            r = int(int(h[0:2], 16) * (1 - factor))
+            g = int(int(h[2:4], 16) * (1 - factor))
+            b = int(int(h[4:6], 16) * (1 - factor))
+            return f"#{max(0,r):02x}{max(0,g):02x}{max(0,b):02x}"
+    except Exception:
+        pass
+    return hex_color

@@ -181,6 +181,22 @@ def _parse_dice(expr: str) -> int:
     return total + bonus
 
 
+def _roll_dice_only(expr: str) -> int:
+    """Roule uniquement les dés d'une expression (sans le bonus flat).
+    Utilisé pour les coups critiques : les dés sont doublés deux fois (×4),
+    mais le bonus fixe (+8, +5…) n'est jamais multiplié."""
+    expr = expr.strip().lower().replace(" ", "")
+    m_bonus = re.search(r'([+-]\d+)$', expr)
+    if m_bonus:
+        expr = expr[:m_bonus.start()]
+    total = 0
+    for m in re.finditer(r'(\d*)d(\d+)', expr):
+        n = int(m.group(1)) if m.group(1) else 1
+        sides = int(m.group(2))
+        total += sum(random.randint(1, sides) for _ in range(n))
+    return total
+
+
 def _dice_avg(expr: str) -> float:
     """Retourne la moyenne théorique d'une expression de dés."""
     expr = expr.strip().lower().replace(" ", "")
@@ -967,7 +983,10 @@ class CombatSimulator:
                 # Touché
                 dmg = _parse_dice(attacker.dmg_expr)
                 if is_crit:
-                    dmg += _parse_dice(attacker.dmg_expr)  # Double dés sur critique
+                    # Doubler les dés deux fois (×4 dés totaux) — bonus flat inchangé.
+                    # Tous les dés de l'attaque sont concernés (Divine Smite inclus).
+                    for _ in range(3):
+                        dmg += _roll_dice_only(attacker.dmg_expr)
                 target.take_damage(dmg)
                 attacker.stat_dmg_dealt += dmg
                 attacker.stat_hits += 1
@@ -1267,7 +1286,7 @@ RÈGLES ABSOLUES :
 2. RÉSISTANCES : Si un monstre a une résistance ou immunité aux dégâts non-magiques (bludgeoning/piercing/slashing), les attaques physiques normales des PJ font MOITIÉ dégâts (résistance) ou 0 (immunité). Indique-le dans le champ "note" et applique la réduction dans "damage". Les sorts et armes magiques ignorent cette résistance.
 3. LAIR ACTIONS : À l'initiative 20 de chaque round, le lair peut agir (si présent dans la fiche). Inclus-les comme une action séparée avec attacker="Lair".
 4. MULTIATTAQUE : Respecte le nombre d'attaques par tour indiqué.
-5. CRITIQUES : d20=20 → double les dés de dégâts.
+5. CRITIQUES : d20=20 → les dés de dégâts sont doublés DEUX FOIS (×4 dés totaux). Le bonus fixe (+X) n'est PAS multiplié. Tous les dés de l'attaque sont concernés : dés d'arme ET dés de Divine Smite ou autre effet additionnel. Ex : 2d6+8 crit → 8d6+8.
 6. TACTIQUE : Les ennemis intelligents (INT ≥ 10) agissent tactiquement — ils concentrent leurs attaques, utilisent leurs capacités spéciales au bon moment, fuient si à moins de 25% PV.
 7. COHÉRENCE : Les PV après chaque action doivent être cohérents et décroissants correctement.
 

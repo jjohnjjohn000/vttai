@@ -245,6 +245,44 @@ def _play_file(tmp_path):
         try: os.remove(tmp_path)
         except OSError: pass
 
+# --- Prefetch : génère tous les chunks en avance, retourne la liste de fichiers ---
+
+def prefetch_voice(text: str, character_name: str) -> list[str]:
+    """
+    Génère tous les chunks audio en avance (sans les jouer).
+    Retourne une liste de chemins de fichiers mp3 prêts à lire, dans l'ordre.
+    Appelé depuis un thread de préfetch pendant que la voix précédente joue.
+    """
+    use_async = _check_edge_tts_async()
+    if not FFPLAY_AVAILABLE or (not use_async and not EDGE_TTS_CLI):
+        return []
+
+    voice_id    = VOICE_MAPPING.get(character_name, VOICE_MAPPING["default"])
+    voice_speed = _normalize_rate(SPEED_MAPPING.get(character_name, SPEED_MAPPING["default"]))
+    clean_text  = _clean_for_tts(text)
+    if clean_text is None:
+        return []
+
+    chunks    = _split_chunks(clean_text)
+    _generate = _generate_chunk_async if use_async else _generate_chunk_cli
+    files     = []
+    for chunk in chunks:
+        f = _generate(voice_id, chunk, voice_speed)
+        if f:
+            files.append(f)
+    return files
+
+
+def play_prefetched(files: list[str]) -> bool:
+    """Joue une liste de fichiers mp3 pré-générés par prefetch_voice()."""
+    any_played = False
+    for f in files:
+        if f and os.path.exists(f):
+            if _play_file(f):
+                any_played = True
+    return any_played
+
+
 # --- API publique ---
 def record_audio_and_transcribe():
     # Import lazy : PyAudio/PortAudio initialisent des threads C natifs qui

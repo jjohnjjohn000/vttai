@@ -88,6 +88,7 @@ DEFAULTS: dict = {
         "poll_geometry_ms":    2000,
         "stats_refresh_ms":    2000,
     },
+    "campaign_name": "campagne",   # Nom du dossier de sauvegarde (campagne/<nom>/)
 }
 
 
@@ -144,6 +145,11 @@ def get_memories_config() -> dict:
 
 def get_voice_config() -> dict:
     return APP_CONFIG.get("voice", DEFAULTS["voice"])
+
+def get_campaign_name() -> str:
+    """Retourne le nom de la campagne (utilisé pour le dossier de sauvegarde)."""
+    name = APP_CONFIG.get("campaign_name", DEFAULTS["campaign_name"]).strip()
+    return name or "campagne"
 
 
 # ─── Singleton chargé au démarrage ────────────────────────────────────────────

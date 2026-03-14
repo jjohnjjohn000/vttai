@@ -447,7 +447,8 @@ class MonsterSheetWindow:
     PURPLE  = "#ce93d8"
 
     def __init__(self, root, npc_name: str, bestiary_name: str | None = None,
-                 on_select_callback=None, win_state: dict = None, track_fn=None):
+                 on_select_callback=None, win_state: dict = None, track_fn=None,
+                 chat_queue=None):
         """
         root            : fenêtre parente Tk
         npc_name        : nom du PNJ (pour le titre)
@@ -455,10 +456,12 @@ class MonsterSheetWindow:
         on_select_callback(bestiary_name: str) : appelé quand le MJ sélectionne un monstre
         win_state       : dict de persistance de géométrie
         track_fn        : fonction _track_window de DnDApp
+        chat_queue      : queue.Queue — jets de dés envoyés dans le chat
         """
         self.root = root
         self.npc_name = npc_name
         self.on_select_callback = on_select_callback
+        self.chat_queue = chat_queue
 
         _load_bestiary()
 
@@ -646,6 +649,274 @@ class MonsterSheetWindow:
         txt.bind("<MouseWheel>",
                  lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
+    # ── Dés & parsing actions ────────────────────────────────────────────────
+
+    def _roll_dice(self, expr: str) -> tuple[int, str]:
+        """Lance une expression de dés (ex: '2d6+5') → (total, détail)."""
+        import random as _random
+        import re as _re
+        expr = expr.strip()
+        total = 0
+        detail_parts = []
+        # Traite chaque terme : NdX, +N, -N
+        for term in _re.finditer(r'([+-]?\s*\d*d\d+|[+-]?\s*\d+)', expr):
+            t = term.group(0).replace(' ', '')
+            if 'd' in t:
+                sign = -1 if t.startswith('-') else 1
+                t2 = t.lstrip('+-')
+                parts = t2.split('d')
+                n = int(parts[0]) if parts[0] else 1
+                sides = int(parts[1])
+                rolls = [_random.randint(1, sides) for _ in range(n)]
+                s = sum(rolls)
+                total += sign * s
+                detail_parts.append(f"[{','.join(str(r) for r in rolls)}]")
+            else:
+                val = int(t.replace(' ',''))
+                total += val
+                detail_parts.append(str(val))
+        return total, '+'.join(detail_parts).replace('+-', '-')
+
+    def _parse_action_rolls(self, entries: list) -> dict:
+        """
+        Extrait depuis les entries d'une action :
+          hit      : int | None  (bonus d'attaque, tag {@hit N})
+          damages  : list[(expr, type)]  (tags {@damage NdX+Y}, {@scaledice...})
+          dc       : int | None   ({@dc N})
+          dc_save  : str | None   ({@skill X} ou inféré depuis le texte)
+          desc     : str  (texte nettoyé)
+        """
+        import re as _re
+        full_text = _fmt_entries(entries)
+        raw_text  = "\n".join(e if isinstance(e, str) else "" for e in entries
+                              if isinstance(e, str))
+
+        hit_m  = _re.search(r'\{@hit\s+(-?\d+)\}', raw_text)
+        dc_m   = _re.search(r'\{@dc\s+(\d+)\}', raw_text)
+
+        dmg_tags = _re.findall(r'\{@damage\s+([^}]+)\}', raw_text)
+        type_tags = _re.findall(r'\{@damage\s+[^}]+\}\s*([a-zA-Zéâ]+(?:\s+[a-zA-Zéâ]+)?)',
+                                raw_text)
+
+        # Cherche aussi les types de dégâts depuis le texte nettoyé
+        dmg_types_raw = _re.findall(
+            r'(\d+d\d+(?:[+-]\d+)?)\s+(?:de\s+)?([a-zA-Zé]+(?:\s+et\s+[a-zA-Zé]+)?)\s*(?:dégâts|damage)',
+            full_text, _re.IGNORECASE)
+
+        damages = []
+        for i, expr in enumerate(dmg_tags):
+            t = type_tags[i] if i < len(type_tags) else ""
+            damages.append((expr.strip(), t.strip()))
+        if not damages and dmg_types_raw:
+            for expr, typ in dmg_types_raw:
+                damages.append((expr, typ))
+
+        # Jet de sauvegarde associé
+        save_m = _re.search(
+            r'\{@dc\s+\d+\}[^{]*\{@skill\s+([^}]+)\}|'
+            r'jet\s+de\s+sauvegarde\s+(?:de\s+)?(\w+)|'
+            r'(\w+)\s+saving\s+throw',
+            raw_text, _re.IGNORECASE)
+        dc_save = None
+        if save_m:
+            dc_save = (save_m.group(1) or save_m.group(2) or save_m.group(3) or "").strip()
+
+        return {
+            "hit":     int(hit_m.group(1)) if hit_m else None,
+            "dc":      int(dc_m.group(1))  if dc_m  else None,
+            "dc_save": dc_save,
+            "damages": damages,
+            "desc":    full_text,
+        }
+
+    def _send_to_chat(self, text: str, color: str = "#f0d060"):
+        """Envoie un message dans le chat principal."""
+        if self.chat_queue:
+            self.chat_queue.put({"sender": f"⚔ {self.npc_name}", "text": text, "color": color})
+
+    def _action_roll_widget(self, parent, action_name: str, rolls: dict,
+                            monster: dict, row_bg: str):
+        """
+        Construit le bloc interactif sous une action :
+        [Attaque] [Dégât X] [DD N — Sauvegarde]
+        """
+        if not rolls["hit"] and not rolls["dc"] and not rolls["damages"]:
+            return  # Rien à lancer
+
+        btn_frame = tk.Frame(parent, bg=row_bg)
+        btn_frame.pack(anchor="w", padx=20, pady=(2, 6))
+
+        def _btn(text, bg, fg, cmd):
+            tk.Button(btn_frame, text=text, bg=bg, fg=fg,
+                      font=("Consolas", 8, "bold"), relief="flat",
+                      padx=6, pady=2, cursor="hand2",
+                      command=cmd).pack(side=tk.LEFT, padx=(0, 4))
+
+        # ── Bouton Attaque ──────────────────────────────────────────────
+        if rolls["hit"] is not None:
+            bonus = rolls["hit"]
+            sign  = "+" if bonus >= 0 else ""
+
+            def _roll_attack(b=bonus, name=action_name):
+                import random as _rnd
+                d20  = _rnd.randint(1, 20)
+                tot  = d20 + b
+                sign2 = "+" if b >= 0 else ""
+                crit = " 🎯 CRITIQUE!" if d20 == 20 else (" ☠ FUMBLE" if d20 == 1 else "")
+                msg = f"**{name}** — Attaque\n  d20({d20}) {sign2}{b} = **{tot}**{crit}"
+                self._send_to_chat(msg, "#e57373")
+
+            _btn(f"Attaque {sign}{bonus}", "#3a1010", "#e57373", _roll_attack)
+
+        # ── Bouton(s) Dégâts ────────────────────────────────────────────
+        for i, (expr, dmg_type) in enumerate(rolls["damages"]):
+            lbl_type = f" {dmg_type}" if dmg_type else ""
+            btn_text = f"Dégâts{lbl_type} ({expr})" if i == 0 else f"+ {expr}{lbl_type}"
+
+            def _roll_damage(e=expr, t=dmg_type, name=action_name):
+                total, detail = self._roll_dice(e)
+                type_str = f" {t}" if t else ""
+                msg = f"**{name}** — Dégâts{type_str}\n  {e} → {detail} = **{total}**"
+                self._send_to_chat(msg, "#ffb74d")
+
+            _btn(btn_text, "#2a1800", "#ffb74d", _roll_damage)
+
+        # ── Bouton DD / Sauvegarde ──────────────────────────────────────
+        if rolls["dc"] is not None:
+            save_lbl = rolls["dc_save"].upper() if rolls["dc_save"] else "SAU"
+            dc_val   = rolls["dc"]
+
+            def _show_dc(dc=dc_val, sv=save_lbl, name=action_name):
+                msg = f"**{name}** — Jet de sauvegarde\n  DD {dc} ({sv}) — les cibles doivent réussir !"
+                self._send_to_chat(msg, "#64b5f6")
+
+            _btn(f"DD {dc_val} — {save_lbl}", "#0a1a30", "#64b5f6", _show_dc)
+
+    def _skill_roll_widget(self, parent, monster: dict, row_bg: str):
+        """Ligne de boutons jets de compétences / sauvegardes / caractéristiques."""
+        import random as _rnd
+
+        STAT_MAP = {
+            "str": ("FOR", "#e57373"), "dex": ("DEX", "#81c784"),
+            "con": ("CON", "#ffb74d"), "int": ("INT", "#64b5f6"),
+            "wis": ("SAG", "#ce93d8"), "cha": ("CHA", "#f06292"),
+        }
+        SAVE_FR = {
+            "str": "FOR", "dex": "DEX", "con": "CON",
+            "int": "INT", "wis": "SAG", "cha": "CHA",
+        }
+
+        # Frame scrollable horizontalement (wraplength via grid)
+        outer = tk.Frame(parent, bg=row_bg)
+        outer.pack(fill=tk.X, padx=8, pady=(0, 6))
+
+        tk.Label(outer, text="JETS RAPIDES", bg=row_bg, fg=self.FG_DIM,
+                 font=("Consolas", 7, "bold")).pack(anchor="w", padx=2)
+
+        btn_wrap = tk.Frame(outer, bg=row_bg)
+        btn_wrap.pack(fill=tk.X)
+
+        def _qbtn(text, bg, fg, cmd):
+            tk.Button(btn_wrap, text=text, bg=bg, fg=fg,
+                      font=("Consolas", 7, "bold"), relief="flat",
+                      padx=5, pady=1, cursor="hand2",
+                      command=cmd).pack(side=tk.LEFT, padx=2, pady=2)
+
+        # Caractéristiques brutes
+        for key, (label, color) in STAT_MAP.items():
+            val = monster.get(key, 10)
+            mod = (val - 10) // 2
+            sign = "+" if mod >= 0 else ""
+
+            def _roll_stat(k=key, lbl=label, m=mod, c=color):
+                d20  = _rnd.randint(1, 20)
+                tot  = d20 + m
+                s    = "+" if m >= 0 else ""
+                msg  = f"**Jet de {lbl}**  d20({d20}){s}{m} = **{tot}**"
+                self._send_to_chat(msg, c)
+
+            _qbtn(f"{label} {sign}{mod}", "#1a1a2a", color, _roll_stat)
+
+        # Sauvegardes (si présentes dans la fiche)
+        saves = monster.get("save", {})
+        if saves:
+            tk.Label(outer, text="SAUVEGARDES", bg=row_bg, fg=self.FG_DIM,
+                     font=("Consolas", 7, "bold")).pack(anchor="w", padx=2, pady=(4,0))
+            btn_wrap2 = tk.Frame(outer, bg=row_bg)
+            btn_wrap2.pack(fill=tk.X)
+            for k, v_str in saves.items():
+                import re as _re2
+                m2 = _re2.search(r'([+-]?\d+)', str(v_str))
+                bonus = int(m2.group(1)) if m2 else 0
+                label, color = SAVE_FR.get(k, (k.upper(), self.FG)), STAT_MAP.get(k, (k, self.FG))[1]
+                sign2 = "+" if bonus >= 0 else ""
+
+                def _roll_save(lbl=label, b=bonus, c=color):
+                    d20  = _rnd.randint(1, 20)
+                    tot  = d20 + b
+                    s    = "+" if b >= 0 else ""
+                    msg  = f"**Sauvegarde {lbl}**  d20({d20}){s}{b} = **{tot}**"
+                    self._send_to_chat(msg, c)
+
+                tk.Button(btn_wrap2, text=f"Sauv. {label} {sign2}{bonus}",
+                          bg="#0a1a0a", fg=color,
+                          font=("Consolas", 7, "bold"), relief="flat",
+                          padx=5, pady=1, cursor="hand2",
+                          command=_roll_save).pack(side=tk.LEFT, padx=2, pady=2)
+
+        # Compétences (si présentes dans la fiche)
+        skills = monster.get("skill", {})
+        if skills:
+            tk.Label(outer, text="COMPÉTENCES", bg=row_bg, fg=self.FG_DIM,
+                     font=("Consolas", 7, "bold")).pack(anchor="w", padx=2, pady=(4,0))
+            btn_wrap3 = tk.Frame(outer, bg=row_bg)
+            btn_wrap3.pack(fill=tk.X)
+            SKILL_COLORS = {
+                "perception": "#ce93d8", "stealth": "#81c784",
+                "athletics": "#e57373", "arcana": "#64b5f6",
+                "history": "#64b5f6",   "insight": "#ce93d8",
+                "persuasion": "#f06292","deception": "#f06292",
+                "intimidation":"#e57373","investigation":"#64b5f6",
+            }
+            import re as _re3
+            for skill_key, v_str in skills.items():
+                m3 = _re3.search(r'([+-]?\d+)', str(v_str))
+                bonus = int(m3.group(1)) if m3 else 0
+                color = SKILL_COLORS.get(skill_key.lower(), self.FG_MID)
+                sign3 = "+" if bonus >= 0 else ""
+                sk_label = skill_key.capitalize()
+
+                def _roll_skill(lbl=sk_label, b=bonus, c=color):
+                    import random as _rnd2
+                    d20  = _rnd2.randint(1, 20)
+                    tot  = d20 + b
+                    s    = "+" if b >= 0 else ""
+                    msg  = f"**Compétence : {lbl}**  d20({d20}){s}{b} = **{tot}**"
+                    self._send_to_chat(msg, c)
+
+                tk.Button(btn_wrap3, text=f"{sk_label} {sign3}{bonus}",
+                          bg="#0d0d1a", fg=color,
+                          font=("Consolas", 7, "bold"), relief="flat",
+                          padx=5, pady=1, cursor="hand2",
+                          command=_roll_skill).pack(side=tk.LEFT, padx=2, pady=2)
+
+    def _action_block(self, parent, action: dict, monster: dict,
+                      name_color: str, row_bg: str):
+        """Rend une action complète : titre + description + boutons de lancer."""
+        a_name = action.get("name", "?")
+        entries = action.get("entries", [])
+        a_desc  = _fmt_entries(entries)
+        rolls   = self._parse_action_rolls(entries)
+
+        tk.Label(parent, text=f"▸ {a_name}", bg=self.BG, fg=name_color,
+                 font=("Consolas", 9, "bold"), anchor="w", padx=10,
+                 pady=2).pack(fill=tk.X)
+        if a_desc:
+            tk.Label(parent, text=a_desc, bg=self.BG, fg=self.FG_MID,
+                     font=("Consolas", 9), anchor="w", padx=20,
+                     wraplength=520, justify=tk.LEFT).pack(fill=tk.X)
+        self._action_roll_widget(parent, a_name, rolls, monster, self.BG)
+
     def _show_monster(self, name: str):
         m = get_monster(name)
         if not m:
@@ -751,21 +1022,18 @@ class MonsterSheetWindow:
 
         self._sep()
 
+        # ── JETS RAPIDES (stats / sauvegardes / compétences) ──────────────────
+        self._sep(color="#1a1a2a")
+        self._section("Jets Rapides", "#888899")
+        self._skill_roll_widget(self._inner, m, self.BG)
+        self._sep(color="#1a1a2a")
+
         # ── TRAITS ──────────────────────────────────────────────────────────
         traits = m.get("trait", [])
         if traits:
             self._section("Traits", self.PURPLE)
             for t in traits:
-                t_name = t.get("name", "?")
-                t_desc = _fmt_entries(t.get("entries", []))
-                tk.Label(self._inner, text=f"▸ {t_name}", bg=self.BG, fg=self.PURPLE,
-                         font=("Consolas", 9, "bold"), anchor="w", padx=10,
-                         pady=2).pack(fill=tk.X)
-                if t_desc:
-                    tk.Label(self._inner, text=t_desc, bg=self.BG, fg=self.FG_MID,
-                             font=("Consolas", 9), anchor="w", padx=20,
-                             wraplength=540, justify=tk.LEFT).pack(fill=tk.X)
-
+                self._action_block(self._inner, t, m, self.PURPLE, self.BG)
             self._sep()
 
         # ── ACTIONS ─────────────────────────────────────────────────────────
@@ -773,15 +1041,7 @@ class MonsterSheetWindow:
         if actions:
             self._section("Actions", self.ACCENT)
             for a in actions:
-                a_name = a.get("name", "?")
-                a_desc = _fmt_entries(a.get("entries", []))
-                tk.Label(self._inner, text=f"▸ {a_name}", bg=self.BG, fg=self.ACCENT,
-                         font=("Consolas", 9, "bold"), anchor="w", padx=10,
-                         pady=2).pack(fill=tk.X)
-                if a_desc:
-                    tk.Label(self._inner, text=a_desc, bg=self.BG, fg=self.FG_MID,
-                             font=("Consolas", 9), anchor="w", padx=20,
-                             wraplength=540, justify=tk.LEFT).pack(fill=tk.X)
+                self._action_block(self._inner, a, m, self.ACCENT, self.BG)
             self._sep()
 
         # ── ACTIONS BONUS ────────────────────────────────────────────────────
@@ -789,15 +1049,7 @@ class MonsterSheetWindow:
         if bonus:
             self._section("Actions Bonus", "#ffb74d")
             for a in bonus:
-                a_name = a.get("name", "?")
-                a_desc = _fmt_entries(a.get("entries", []))
-                tk.Label(self._inner, text=f"▸ {a_name}", bg=self.BG, fg="#ffb74d",
-                         font=("Consolas", 9, "bold"), anchor="w", padx=10,
-                         pady=2).pack(fill=tk.X)
-                if a_desc:
-                    tk.Label(self._inner, text=a_desc, bg=self.BG, fg=self.FG_MID,
-                             font=("Consolas", 9), anchor="w", padx=20,
-                             wraplength=540, justify=tk.LEFT).pack(fill=tk.X)
+                self._action_block(self._inner, a, m, "#ffb74d", self.BG)
             self._sep()
 
         # ── RÉACTIONS ────────────────────────────────────────────────────────
@@ -805,15 +1057,7 @@ class MonsterSheetWindow:
         if reactions:
             self._section("Réactions", self.BLUE)
             for r in reactions:
-                r_name = r.get("name", "?")
-                r_desc = _fmt_entries(r.get("entries", []))
-                tk.Label(self._inner, text=f"▸ {r_name}", bg=self.BG, fg=self.BLUE,
-                         font=("Consolas", 9, "bold"), anchor="w", padx=10,
-                         pady=2).pack(fill=tk.X)
-                if r_desc:
-                    tk.Label(self._inner, text=r_desc, bg=self.BG, fg=self.FG_MID,
-                             font=("Consolas", 9), anchor="w", padx=20,
-                             wraplength=540, justify=tk.LEFT).pack(fill=tk.X)
+                self._action_block(self._inner, r, m, self.BLUE, self.BG)
             self._sep()
 
         # ── ACTIONS LÉGENDAIRES ───────────────────────────────────────────────
@@ -824,7 +1068,6 @@ class MonsterSheetWindow:
 
         if legendary or leg_group_name:
             self._section("Actions Légendaires", self.GOLD)
-            # Intro du groupe légendaire
             lg = get_legendary_group(leg_group_name) if leg_group_name else None
             if lg:
                 intro = _fmt_entries(lg.get("lairActions", lg.get("regional", [])))
@@ -833,15 +1076,7 @@ class MonsterSheetWindow:
                              font=("Consolas", 8, "italic"), anchor="w", padx=10,
                              wraplength=540, justify=tk.LEFT, pady=3).pack(fill=tk.X)
             for la in legendary:
-                la_name = la.get("name", "?")
-                la_desc = _fmt_entries(la.get("entries", []))
-                tk.Label(self._inner, text=f"▸ {la_name}", bg=self.BG, fg=self.GOLD,
-                         font=("Consolas", 9, "bold"), anchor="w", padx=10,
-                         pady=2).pack(fill=tk.X)
-                if la_desc:
-                    tk.Label(self._inner, text=la_desc, bg=self.BG, fg=self.FG_MID,
-                             font=("Consolas", 9), anchor="w", padx=20,
-                             wraplength=540, justify=tk.LEFT).pack(fill=tk.X)
+                self._action_block(self._inner, la, m, self.GOLD, self.BG)
             self._sep()
 
         # ── LORE / FLUFF ──────────────────────────────────────────────────────
@@ -993,7 +1228,8 @@ class GroupNPCPanel:
             self.root, npc_name, bestiary_name,
             on_select_callback=_on_select,
             win_state=self._win_state,
-            track_fn=self._track
+            track_fn=self._track,
+            chat_queue=self._msg_queue,
         )
         self._open_sheets[npc_name] = sheet
 

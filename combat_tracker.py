@@ -23,6 +23,18 @@ from tkinter import ttk, scrolledtext, messagebox
 import random
 import json
 
+# ─── Intégration bestiary (optionnelle) ───────────────────────────────────────
+try:
+    from npc_bestiary_panel import (
+        search_monsters  as _bestiary_search,
+        get_monster      as _bestiary_get,
+        _load_bestiary   as _bestiary_load,
+        MonsterSheetWindow,
+    )
+    _BESTIARY_OK = True
+except ImportError:
+    _BESTIARY_OK = False
+
 # ─── État de combat partagé avec main.py ──────────────────────────────────────
 # Mis à jour à chaque changement de tour ; lu par run_autogen pour contraindre
 # les agents hors-tour.
@@ -30,8 +42,16 @@ COMBAT_STATE: dict = {
     "active":            False,   # combat en cours ?
     "active_combatant":  None,    # nom du combatant dont c'est le tour (str|None)
     "round_num":         0,
-    "spoken_off_turn":   set(),   # noms des agents PJ qui ont déjà réagi ce round hors-tour
+    # Deux ressources hors-tour indépendantes, réinitialisées à chaque round :
+    "reactions_used":    set(),   # PJ ayant utilisé leur réaction D&D 5e ce round
+    "speech_used":       set(),   # PJ ayant utilisé leur parole hors-tour ce round
 }
+
+
+def _is_fully_silenced(agent_name: str) -> bool:
+    """Retourne True si l'agent a épuisé ses DEUX ressources hors-tour ce round."""
+    return (agent_name in COMBAT_STATE["reactions_used"]
+            and agent_name in COMBAT_STATE["speech_used"])
 
 
 def get_combat_prompt(agent_name: str) -> str:
@@ -39,53 +59,146 @@ def get_combat_prompt(agent_name: str) -> str:
     Retourne le bloc de règles de combat à injecter dans le system_message
     de l'agent selon l'état courant du combat.
     Appelé depuis main.py à chaque changement de tour.
+
+    Deux ressources hors-tour INDÉPENDANTES par round :
+      • Réaction   — déclenchée mécaniquement (Attaque d'opportunité, Bouclier…)
+      • Parole     — une phrase courte si l'information est VRAIMENT importante
+    Chacune ne vaut que si elle apporte une information cruciale ou répond
+    à une question directe. Le bavardage tactique est interdit.
     """
     cs = COMBAT_STATE
     if not cs["active"]:
         return ""
 
-    active = cs["active_combatant"] or "?"
-    rnd    = cs["round_num"]
+    active   = cs["active_combatant"] or "?"
+    rnd      = cs["round_num"]
+    reacted  = agent_name in cs["reactions_used"]
+    spoken   = agent_name in cs["speech_used"]
 
+    # ── Tour actif ───────────────────────────────────────────────────────────
     if agent_name == active:
+        # Rappels spécifiques par personnage
+        _char_hints = {
+            "Kaelen": (
+                "  🗡 EXTRA ATTACK : ton Action = 2 attaques — déclare-les toutes les deux.\n"
+                "  ✦ DIVINE SMITE : décision APRÈS le jet d'attaque — le système te propose de l'appliquer.\n"
+                "    ⚠ Format OBLIGATOIRE : inclure 'Divine Smite niv.X si touche' dans la Règle 5e.\n"
+                "    ⚠ JAMAIS de [ACTION] séparé pour le smite — toujours dans le bloc de l'attaque.\n"
+                "  ◈ ACTION BONUS : sort smite PRÉ-CAST (Wrathful Smite…) si non lancé avant.\n"
+            ),
+            "Elara": (
+                "  🔮 ACTION : choisis le sort le plus efficace pour la situation.\n"
+                "  ◈ CONCENTRATION : vérifie si un sort actif tourne déjà avant d'en lancer un nouveau.\n"
+                "  ◈ ACTION BONUS : sort bonus action si disponible (ex. Misty Step pour te repositionner).\n"
+            ),
+            "Thorne": (
+                "  🗡 ACTION : 1 attaque + SNEAK ATTACK (8d6) si avantage ou allié adjacent.\n"
+                "  ◈ CUNNING ACTION obligatoire chaque tour (Dash / Disengage / Hide) — choisis selon la tactique.\n"
+                "  ⚡ Priorité : Hide → avantage assuré sur la prochaine attaque + Sneak Attack garanti.\n"
+            ),
+            "Lyra": (
+                "  ✦ ACTION : sort de soin/attaque ou Esquive si en danger.\n"
+                "  ◈ ARME SPIRITUELLE : si invoquée, attaque bonus gratuite chaque tour (ne pas oublier !).\n"
+                "  ◈ CHANNEL DIVINITY disponible si non utilisé ce repos court.\n"
+            ),
+        }
+        hint = _char_hints.get(agent_name, "")
         return (
             f"\n\n⚔️ ═══ COMBAT — ROUND {rnd} — C'EST TON TOUR ═══\n"
-            "Tu peux agir PLEINEMENT ce tour :\n"
-            "✅ Décrire ton attaque ou sort (puis attendre les jets du MJ)\n"
-            "✅ Te déplacer, te repositionner\n"
-            "✅ Interagir avec l'environnement\n"
-            "✅ Parler, crier, donner des ordres\n"
+            "Utilise TON ÉCONOMIE D'ACTION COMPLÈTE de façon AUTONOME :\n\n"
+            f"{hint}"
+            "  ↺ RÉACTION : disponible si déclencheur hors-tour (Bouclier, AttOpp…).\n"
+            "  🏃 MOUVEMENT : repositionne-toi si c'est tactiquement utile.\n\n"
+            "⚠ Ne laisse JAMAIS ton Action inutilisée — au minimum : Esquive (Dodge) ou Aide (Help).\n"
+            "⚠ N'attends PAS que le MJ te liste tes options — c'est TON tour, décide.\n\n"
+            "FORMAT — termine ton message par un bloc [ACTION] pour chaque action mécanique :\n\n"
+            "  [ACTION]\n"
+            "  Type      : <Action / Action Bonus / Réaction>\n"
+            "  Intention : <ce que ton personnage fait, en une phrase claire>\n"
+            "  Règle 5e  : <mécanique exacte : attaque + bonus + dégâts, sort + niveau, etc.>\n"
+            "  Cible     : <sur qui ou quoi>\n\n"
+            "Si tu as Attaque Supplémentaire, déclare toutes les frappes dans le même bloc :\n"
+            "  Type      : Action — Attaque × 2 (Extra Attack)\n"
+            "  Règle 5e  : Attaque 1 : corps-à-corps +11, 2d6+8 radiants\n"
+            "              Attaque 2 : corps-à-corps +11, 2d6+8 radiants\n\n"
             "Joue avec intensité et concision."
         )
-    elif agent_name in cs["spoken_off_turn"]:
+
+    # ── Hors-tour : les deux ressources épuisées → silence total ────────────
+    if reacted and spoken:
         return (
-            f"\n\n⚔️ ═══ COMBAT — ROUND {rnd} — HORS-TOUR — INTERVENTION UTILISÉE ═══\n"
-            f"C'est le tour de {active}. Tu as déjà parlé ou réagi ce round.\n"
+            f"\n\n⚔️ ═══ COMBAT — ROUND {rnd} — HORS-TOUR — TOUTES RESSOURCES ÉPUISÉES ═══\n"
+            f"C'est le tour de {active}. Tu as déjà utilisé ta réaction ET ta parole ce round.\n"
             "🚫 TU NE PEUX PLUS RIEN FAIRE jusqu'à ton prochain tour.\n"
-            "🚫 Interdit : attaquer, lancer un sort, te déplacer, parler, commenter, décrire une action.\n"
-            "✅ Seule réponse autorisée : le mot-clé exact [SILENCE] — rien d'autre."
+            "🚫 Interdit : attaquer, lancer un sort, te déplacer, parler, commenter.\n"
+            "✅ Exception : si le MJ te demande explicitement un jet (dégâts, attaque, sauvegarde…),\n"
+            "   exécute roll_dice immédiatement — cela ne coûte aucune ressource.\n"
+            "✅ Sinon, seule réponse autorisée : le mot-clé exact [SILENCE] — rien d'autre."
         )
-    else:
+
+    # ── Hors-tour : réaction utilisée, parole encore disponible ─────────────
+    if reacted and not spoken:
         return (
-            f"\n\n⚔️ ═══ COMBAT — ROUND {rnd} — HORS-TOUR ═══\n"
-            f"C'est le tour de {active}. Ce n'est PAS ton tour.\n"
+            f"\n\n⚔️ ═══ COMBAT — ROUND {rnd} — HORS-TOUR — RÉACTION UTILISÉE ═══\n"
+            f"C'est le tour de {active}. Tu as déjà utilisé ta réaction ce round.\n"
             "\n"
-            "✅ AUTORISÉ une seule fois ce round (au choix) :\n"
-            "  • Une réaction D&D 5e déclenchée par un événement précis\n"
-            "    (attaque d'opportunité, sort Bouclier, Riposte, Pas de côté…)\n"
-            "  • OU une seule phrase courte parlée à un allié\n"
-            "    (avertissement, encouragement, coordination tactique — max 10 mots)\n"
+            "✅ Il te reste UNE parole possible — seulement si :\n"
+            "  • Tu révèles une information tactique CRITIQUE (danger immédiat, piège)\n"
+            "  • Tu réponds à une question directe d'un allié\n"
+            "  Sinon → [SILENCE]\n"
+            "✅ Si le MJ te demande un jet (dégâts, attaque, sauvegarde…) : exécute roll_dice\n"
+            "   immédiatement — cela ne coûte aucune ressource.\n"
             "\n"
-            "🚫 INTERDIT hors-tour, sans exception :\n"
-            "  • Se déplacer ou se repositionner\n"
-            "  • Attaquer (sauf réaction explicite)\n"
-            "  • Lancer un sort (sauf sort de réaction comme Bouclier)\n"
-            "  • Utiliser un objet, une compétence, une action bonus\n"
-            "  • Décrire une action physique quelconque\n"
-            "  • Commenter l'action en cours ou donner des conseils stratégiques\n"
-            "\n"
-            "Après cette unique intervention, réponds [SILENCE] jusqu'à ton prochain tour."
+            "🚫 INTERDIT : toute action physique, mouvement, sort, commentaire.\n"
+            "Si tu parles, une seule phrase (max 10 mots). Après : [SILENCE]."
         )
+
+    # ── Hors-tour : parole utilisée, réaction encore disponible ─────────────
+    if spoken and not reacted:
+        return (
+            f"\n\n⚔️ ═══ COMBAT — ROUND {rnd} — HORS-TOUR — PAROLE UTILISÉE ═══\n"
+            f"C'est le tour de {active}. Tu as déjà parlé ce round.\n"
+            "\n"
+            "✅ Il te reste UNE réaction D&D 5e — seulement si un déclencheur mécanique précis se produit :\n"
+            "  • Attaque d'opportunité (ennemi quitte ta portée)\n"
+            "  • Sort Bouclier (tu es attaqué)\n"
+            "  • Riposte ou Pas de côté (si tu possèdes cette capacité)\n"
+            "  Sans déclencheur réel → [SILENCE]\n"
+            "✅ Si le MJ te demande un jet (dégâts, attaque, sauvegarde…) : exécute roll_dice\n"
+            "   immédiatement — cela ne coûte aucune ressource.\n"
+            "\n"
+            "🚫 INTERDIT : toute action normale, mouvement, parole supplémentaire.\n"
+            "Après la réaction (ou si pas de déclencheur) : [SILENCE]."
+        )
+
+    # ── Hors-tour : les deux ressources disponibles ──────────────────────────
+    return (
+        f"\n\n⚔️ ═══ COMBAT — ROUND {rnd} — HORS-TOUR ═══\n"
+        f"C'est le tour de {active}. Ce n'est PAS ton tour.\n"
+        "\n"
+        "Tu disposes de DEUX ressources limitées et indépendantes ce round :\n"
+        "\n"
+        "🔵 RÉACTION (1 par round) — uniquement si un déclencheur mécanique précis se produit :\n"
+        "  • Attaque d'opportunité, sort Bouclier, Riposte, Pas de côté…\n"
+        "  Sans déclencheur réel → pas de réaction.\n"
+        "\n"
+        "🟡 PAROLE (1 par round) — uniquement si l'une de ces conditions est remplie :\n"
+        "  • Tu révèles une information CRUCIALE que les alliés ne peuvent pas deviner\n"
+        "  • Tu réponds à une question directe d'un allié\n"
+        "  Une seule phrase, max 10 mots. Le bavardage tactique est interdit.\n"
+        "\n"
+        "✅ JETS DEMANDÉS PAR LE MJ — toujours autorisés, quelle que soit ta situation :\n"
+        "  Si le MJ te demande un jet (dégâts, attaque, sauvegarde, initiative…),\n"
+        "  exécute roll_dice immédiatement. Cela ne consomme ni réaction ni parole.\n"
+        "\n"
+        "🚫 INTERDIT hors-tour, sans exception :\n"
+        "  • Se déplacer, attaquer hors réaction, lancer un sort hors réaction\n"
+        "  • Action bonus, objet, compétence\n"
+        "  • Commenter l'action, donner des conseils, décrire une posture\n"
+        "\n"
+        "Si aucune condition ne justifie d'agir → réponds [SILENCE].\n"
+        "Après chaque ressource utilisée, réponds [SILENCE] pour les tours suivants."
+    )
 
 # ─── Palette ──────────────────────────────────────────────────────────────────
 C = {
@@ -173,6 +286,7 @@ class Combatant:
         self.dex_bonus  = dex_bonus
         self.color      = color
         self.concentration = concentration
+        self.bestiary_name = ""   # nom exact dans le bestiary (pour la fiche)
 
         # Économie d'action
         self.action_used  = False
@@ -229,12 +343,49 @@ class Combatant:
 
     def to_dict(self) -> dict:
         return {
-            "name": self.name, "is_pc": self.is_pc,
-            "max_hp": self.max_hp, "hp": self.hp,
-            "ac": self.ac, "initiative": self.initiative,
-            "conditions": list(self.conditions.keys()),
-            "notes": self.notes,
+            "name":               self.name,
+            "is_pc":              self.is_pc,
+            "max_hp":             self.max_hp,
+            "hp":                 self.hp,
+            "ac":                 self.ac,
+            "initiative":         self.initiative,
+            "dex_bonus":          self.dex_bonus,
+            "color":              self.color,
+            "concentration":      self.concentration,
+            "bestiary_name":      self.bestiary_name,
+            "conditions":         list(self.conditions.keys()),
+            "notes":              self.notes,
+            "death_saves_success": self.death_saves_success,
+            "death_saves_fail":   self.death_saves_fail,
+            "action_used":        self.action_used,
+            "bonus_used":         self.bonus_used,
+            "reaction_used":      self.reaction_used,
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Combatant":
+        """Reconstruit un Combatant depuis un dict sérialisé."""
+        c = cls(
+            name          = d["name"],
+            is_pc         = d["is_pc"],
+            max_hp        = d.get("max_hp", 20),
+            current_hp    = d.get("hp"),
+            ac            = d.get("ac", 10),
+            initiative    = d.get("initiative", 0),
+            dex_bonus     = d.get("dex_bonus", 0),
+            color         = d.get("color", "#e0e0e0"),
+            concentration = d.get("concentration", False),
+        )
+        c.bestiary_name       = d.get("bestiary_name", "")
+        c.notes               = d.get("notes", "")
+        c.death_saves_success = d.get("death_saves_success", 0)
+        c.death_saves_fail    = d.get("death_saves_fail", 0)
+        c.action_used         = d.get("action_used", False)
+        c.bonus_used          = d.get("bonus_used", False)
+        c.reaction_used       = d.get("reaction_used", False)
+        for cond in d.get("conditions", []):
+            c.conditions[cond] = True
+        return c
 
 
 # ─── Fenêtre principale du tracker ───────────────────────────────────────────
@@ -242,23 +393,30 @@ class CombatTracker:
     """Fenêtre Toplevel de gestion de combat D&D 5e."""
 
     def __init__(self, root: tk.Tk, state_loader,
-                 chat_queue=None):
+                 chat_queue=None, pc_turn_callback=None,
+                 advance_turn_callback=None):
         """
-        root         : tk.Tk principal
-        state_loader : callable → dict (load_state de state_manager)
-        chat_queue   : queue.Queue pour injecter des messages dans le chat
+        root              : tk.Tk principal
+        state_loader      : callable → dict (load_state de state_manager)
+        chat_queue        : queue.Queue pour injecter des messages dans le chat
+        pc_turn_callback  : callable(char_name: str) → déclenché automatiquement
+                            quand c'est le tour d'un PJ, pour injecter le trigger
+                            autogen sans attendre la saisie du MJ.
         """
-        self.root        = root
-        self._load_state = state_loader
-        self.chat_queue  = chat_queue
+        self.root              = root
+        self._load_state       = state_loader
+        self.chat_queue        = chat_queue
+        self.pc_turn_callback  = pc_turn_callback
+        self.advance_turn_callback = advance_turn_callback   # ← nouveau
         self.combatants: list[Combatant] = []
         self.current_idx = -1
         self.round_num   = 0
         self.combat_active = False
         self._rows: dict = {}   # uid → frame widgets
+        self.kill_pool: list  = []  # combatants retirés via Kill Pool
 
         self._build_window()
-        self._import_pcs()
+        self._restore_combat_state()
 
     # ── Construction de la fenêtre ────────────────────────────────────────────
     def _build_window(self):
@@ -379,9 +537,9 @@ class CombatTracker:
         sep = tk.Frame(self.win, bg=C["border"], height=1)
         sep.pack(fill=tk.X, padx=6, pady=(4, 0))
 
-        bot = tk.Frame(self.win, bg="#0d1018", height=88)
+        # Pas de height fixe ni pack_propagate(False) — le panel s'adapte
+        bot = tk.Frame(self.win, bg="#0d1018")
         bot.pack(fill=tk.X)
-        bot.pack_propagate(False)
 
         # ── Ajouter un PNJ ─────────────────────────────────────────────────
         add_frame = tk.Frame(bot, bg="#0d1018")
@@ -389,7 +547,7 @@ class CombatTracker:
 
         tk.Label(add_frame, text="AJOUTER UN COMBATANT",
                  bg="#0d1018", fg=C["fg_dim"],
-                 font=("Consolas", 8, "bold")).grid(row=0, columnspan=7, sticky="w", pady=(0, 4))
+                 font=("Consolas", 8, "bold")).grid(row=0, columnspan=8, sticky="w", pady=(0, 2))
 
         def lbl(text):
             return tk.Label(add_frame, text=text, bg="#0d1018",
@@ -402,35 +560,106 @@ class CombatTracker:
             e.insert(0, default)
             return e
 
-        lbl("Nom").grid(row=1, column=0, padx=(0,2), sticky="w")
-        self._npc_name = ent(12, "Gobelin")
-        self._npc_name.grid(row=2, column=0, padx=(0,4), ipady=3)
+        # ── Ligne recherche bestiary ───────────────────────────────────────
+        self._current_bestiary_name = ""
+        if _BESTIARY_OK:
+            search_frame = tk.Frame(add_frame, bg="#0d1018")
+            search_frame.grid(row=1, column=0, columnspan=8, sticky="w", pady=(0, 4))
 
-        lbl("PV max").grid(row=1, column=1, padx=(0,2), sticky="w")
-        self._npc_hp = ent(5, "15")
-        self._npc_hp.grid(row=2, column=1, padx=(0,4), ipady=3)
+            tk.Label(search_frame, text="Fiche:", bg="#0d1018", fg=C["gold"],
+                     font=("Consolas", 8, "bold")).pack(side=tk.LEFT)
 
-        lbl("CA").grid(row=1, column=2, padx=(0,2), sticky="w")
-        self._npc_ac = ent(4, "13")
-        self._npc_ac.grid(row=2, column=2, padx=(0,4), ipady=3)
+            self._ct_search_var = tk.StringVar()
+            self._ct_search_entry = tk.Entry(
+                search_frame, textvariable=self._ct_search_var,
+                bg=C["entry_bg"], fg=C["fg"], font=("Consolas", 9),
+                insertbackground=C["fg"], relief="flat", width=22)
+            self._ct_search_entry.pack(side=tk.LEFT, padx=(4, 6), ipady=2)
 
-        lbl("Init. bonus").grid(row=1, column=3, padx=(0,2), sticky="w")
-        self._npc_dex = ent(4, "1")
-        self._npc_dex.grid(row=2, column=3, padx=(0,4), ipady=3)
+            self._ct_status = tk.Label(search_frame, text="", bg="#0d1018",
+                                       fg=C["fg_dim"], font=("Consolas", 8))
+            self._ct_status.pack(side=tk.LEFT)
 
-        lbl("Init. fixe").grid(row=1, column=4, padx=(0,2), sticky="w")
-        self._npc_init_fixed = ent(4, "")
-        self._npc_init_fixed.grid(row=2, column=4, padx=(0,4), ipady=3)
+            self._ct_suggest_frame  = tk.Frame(add_frame, bg="#0d1018", bd=1, relief="solid")
+            self._ct_suggest_labels: list[tk.Label] = []
+            self._ct_suggest_visible = False
+            self._ct_suggest_idx    = -1
 
-        lbl("Quantité").grid(row=1, column=5, padx=(0,2), sticky="w")
-        self._npc_qty = ent(3, "1")
-        self._npc_qty.grid(row=2, column=5, padx=(0,4), ipady=3)
+            def _on_search(*_):
+                query = self._ct_search_var.get().strip()
+                self._ct_hide_suggest()
+                if len(query) < 1:
+                    return
+                results = _bestiary_search(query, max_results=8)
+                if not results:
+                    return
+                for w in self._ct_suggest_frame.winfo_children():
+                    w.destroy()
+                self._ct_suggest_labels.clear()
+                self._ct_suggest_idx = -1
+                for res_name in results:
+                    lw = tk.Label(self._ct_suggest_frame, text=res_name,
+                                  bg="#0d1018", fg=C["fg"],
+                                  font=("Consolas", 9), anchor="w",
+                                  padx=8, pady=2, cursor="hand2")
+                    lw.pack(fill=tk.X)
+                    lw.bind("<Enter>",    lambda e, l=lw: l.config(bg=C["border"]))
+                    lw.bind("<Leave>",    lambda e, l=lw: l.config(bg="#0d1018"))
+                    lw.bind("<Button-1>", lambda e, n=res_name: self._ct_pick(n))
+                    self._ct_suggest_labels.append(lw)
+                self._ct_suggest_frame.place(
+                    in_=search_frame,
+                    x=self._ct_search_entry.winfo_x(),
+                    y=search_frame.winfo_height() + 2,
+                    width=240)
+                self._ct_suggest_visible = True
 
-        tk.Button(add_frame, text="＋ Ajouter",
+            self._ct_search_var.trace_add("write", _on_search)
+            self._ct_search_entry.bind("<Escape>",   lambda e: self._ct_hide_suggest())
+            self._ct_search_entry.bind("<FocusOut>",
+                lambda e: self.win.after(150, self._ct_hide_suggest))
+
+            def _ct_nav(event):
+                if not self._ct_suggest_visible or not self._ct_suggest_labels:
+                    return
+                if event.keysym == "Down":
+                    self._ct_suggest_idx = min(
+                        self._ct_suggest_idx + 1, len(self._ct_suggest_labels) - 1)
+                elif event.keysym == "Up":
+                    self._ct_suggest_idx = max(self._ct_suggest_idx - 1, 0)
+                elif event.keysym == "Return":
+                    if 0 <= self._ct_suggest_idx < len(self._ct_suggest_labels):
+                        self._ct_pick(
+                            self._ct_suggest_labels[self._ct_suggest_idx].cget("text"))
+                    return
+                for i, l in enumerate(self._ct_suggest_labels):
+                    l.config(bg=C["border"] if i == self._ct_suggest_idx else "#0d1018")
+
+            self._ct_search_entry.bind("<Down>",   _ct_nav)
+            self._ct_search_entry.bind("<Up>",     _ct_nav)
+            self._ct_search_entry.bind("<Return>", _ct_nav)
+
+            field_label_row = 2
+        else:
+            field_label_row = 1
+
+        # ── Labels + champs ────────────────────────────────────────────────
+        for col, text in enumerate(["Nom", "PV max", "CA", "Init+", "Init=", "Qte"]):
+            lbl(text).grid(row=field_label_row, column=col, padx=(0,2), sticky="w")
+
+        fr = field_label_row + 1
+        self._npc_name       = ent(12, "Gobelin");   self._npc_name.grid(row=fr, column=0, padx=(0,4), ipady=3)
+        self._npc_hp         = ent(5,  "15");         self._npc_hp.grid(row=fr,  column=1, padx=(0,4), ipady=3)
+        self._npc_ac         = ent(4,  "13");         self._npc_ac.grid(row=fr,  column=2, padx=(0,4), ipady=3)
+        self._npc_dex        = ent(4,  "1");          self._npc_dex.grid(row=fr, column=3, padx=(0,4), ipady=3)
+        self._npc_init_fixed = ent(4,  "");           self._npc_init_fixed.grid(row=fr, column=4, padx=(0,4), ipady=3)
+        self._npc_qty        = ent(3,  "1");          self._npc_qty.grid(row=fr, column=5, padx=(0,4), ipady=3)
+
+        tk.Button(add_frame, text="+ Ajouter",
                   bg=_darken(C["blue"], 0.4), fg=C["blue_bright"],
                   font=("Consolas", 9, "bold"), relief="flat",
                   padx=8, pady=3, cursor="hand2",
-                  command=self._add_npc).grid(row=2, column=6, padx=(4, 0))
+                  command=self._add_npc).grid(row=fr, column=6, padx=(4, 0))
 
         # ── Infos combat ───────────────────────────────────────────────────
         info_frame = tk.Frame(bot, bg="#0d1018")
@@ -441,13 +670,169 @@ class CombatTracker:
                  bg="#0d1018", fg=C["fg_dim"],
                  font=("Consolas", 9), justify=tk.LEFT).pack(anchor="e")
 
-        # Bouton tri manuel
-        tk.Button(info_frame, text="⇅ Retrier par initiative",
+        tk.Button(info_frame, text="Retrier par initiative",
                   bg=_darken(C["purple"], 0.4), fg="#c070e0",
                   font=("Consolas", 8), relief="flat", padx=6,
                   command=self._sort_and_refresh).pack(anchor="e", pady=(4, 0))
 
+        # ── Kill Pool ──────────────────────────────────────────────────
+        kp_frame = tk.Frame(bot, bg="#0d1018")
+        kp_frame.pack(side=tk.RIGHT, padx=16, pady=10)
+        tk.Label(kp_frame, text="KILL POOL",
+                 bg="#0d1018", fg="#9b59b6",
+                 font=("Consolas", 8, "bold")).pack(anchor="w")
+        self._kill_pool_inner = tk.Frame(kp_frame, bg="#0d1018")
+        self._kill_pool_inner.pack(fill=tk.X)
+        tk.Label(self._kill_pool_inner, text="— vide —",
+                 bg="#0d1018", fg=C["fg_dim"],
+                 font=("Consolas", 8)).pack(anchor="w")
+
+    def _ct_hide_suggest(self):
+        if hasattr(self, "_ct_suggest_frame"):
+            self._ct_suggest_frame.place_forget()
+            self._ct_suggest_visible = False
+
+    def _ct_pick(self, bestiary_name: str):
+        """Remplit le formulaire avec HP/CA/Init du monstre sélectionné."""
+        self._ct_hide_suggest()
+        if not _BESTIARY_OK:
+            return
+        _bestiary_load()
+        m = _bestiary_get(bestiary_name)
+        if not m:
+            self._ct_status.config(text="Introuvable", fg=C["red_bright"])
+            return
+
+        ac_raw = m.get("ac", [])
+        if ac_raw:
+            first = ac_raw[0]
+            ac = first if isinstance(first, int) else (first.get("ac", 10) if isinstance(first, dict) else 10)
+        else:
+            ac = 10
+
+        hp_raw = m.get("hp", {})
+        hp = hp_raw.get("average", 10) if isinstance(hp_raw, dict) else int(hp_raw or 10)
+
+        dex_mod = (int(m.get("dex", 10)) - 10) // 2
+
+        cr_raw = m.get("cr", "?")
+        cr = cr_raw.get("cr", "?") if isinstance(cr_raw, dict) else str(cr_raw)
+
+        def _set(e, v):
+            e.delete(0, tk.END)
+            e.insert(0, str(v))
+
+        _set(self._npc_name, bestiary_name[:14])
+        _set(self._npc_hp,   hp)
+        _set(self._npc_ac,   ac)
+        _set(self._npc_dex,  dex_mod)
+        self._npc_init_fixed.delete(0, tk.END)
+
+        self._current_bestiary_name = bestiary_name
+        self._ct_search_var.set("")
+        self._ct_status.config(text=f"CR {cr}  PV:{hp}  CA:{ac}", fg=C["green_bright"])
+
     # ── Import PJ depuis state_manager ────────────────────────────────────────
+    # ── Persistance du combat ─────────────────────────────────────────────────
+
+    def _save_combat_state(self):
+        """Sérialise l'état complet du tracker dans campaign_state.json."""
+        try:
+            from state_manager import load_state as _ls, save_state as _ss
+            state = _ls()
+            state["combat_tracker"] = {
+                "active":      self.combat_active,
+                "round_num":   self.round_num,
+                "current_idx": self.current_idx,
+                "reactions_used": list(COMBAT_STATE.get("reactions_used", set())),
+                "speech_used":    list(COMBAT_STATE.get("speech_used",    set())),
+                "combatants":  [c.to_dict() for c in self.combatants],
+            }
+            _ss(state)
+        except Exception as e:
+            print(f"[CombatTracker] Erreur sauvegarde : {e}")
+
+    def sync_pc_hp_from_state(self):
+        """
+        Synchronise les PV des PJ dans le tracker depuis campaign_state["characters"].
+        Appelé depuis autogen_engine chaque fois que update_hp() modifie les PV
+        (dégâts reçus, soins) afin que le tracker reste cohérent avec la fiche.
+        Thread-safe : doit être appelé via root.after() depuis le thread Tk.
+        """
+        try:
+            from state_manager import load_state as _ls
+            _st = _ls()
+            chars = _st.get("characters", {})
+            changed = False
+            for cb in self.combatants:
+                if cb.is_pc and cb.name in chars:
+                    new_hp = chars[cb.name].get("hp", cb.hp)
+                    if cb.hp != new_hp:
+                        cb.hp = new_hp
+                        changed = True
+            if changed:
+                self._refresh_list()
+        except Exception as e:
+            print(f"[CombatTracker] sync_pc_hp_from_state : {e}")
+
+    def _restore_combat_state(self):
+        """
+        Recharge l'état du tracker depuis campaign_state.json.
+        Si un combat était en cours, le reprend exactement là où il en était.
+        Sinon, importe seulement les PJ depuis l'état de la campagne.
+        """
+        try:
+            from state_manager import load_state as _ls
+            state = _ls()
+            saved = state.get("combat_tracker", {})
+
+            if saved.get("combatants"):
+                # Reconstruction complète depuis la sauvegarde
+                self.combatants = [Combatant.from_dict(d) for d in saved["combatants"]]
+
+                # ── Réconciliation HP : la source de vérité pour les PJ est
+                # campaign_state["characters"], pas le snapshot du tracker.
+                # (update_hp écrit dans characters ; on s'assure qu'ils sont alignés.)
+                _canonical_chars = state.get("characters", {})
+                for cb in self.combatants:
+                    if cb.is_pc and cb.name in _canonical_chars:
+                        cb.hp = _canonical_chars[cb.name].get("hp", cb.hp)
+
+                self.combat_active = saved.get("active", False)
+                self.round_num     = saved.get("round_num", 0)
+                self.current_idx   = saved.get("current_idx", -1)
+
+                # Restaure les ressources hors-tour du round courant
+                COMBAT_STATE["reactions_used"] = set(saved.get("reactions_used", []))
+                COMBAT_STATE["speech_used"]    = set(saved.get("speech_used",    []))
+
+                if self.combat_active:
+                    # Remet COMBAT_STATE en ordre
+                    COMBAT_STATE["active"]     = True
+                    COMBAT_STATE["round_num"]  = self.round_num
+                    active_c = (self.combatants[self.current_idx]
+                                if 0 <= self.current_idx < len(self.combatants) else None)
+                    COMBAT_STATE["active_combatant"] = active_c.name if active_c else None
+
+                    # Met à jour les boutons
+                    self._btn_start.config(state=tk.DISABLED)
+                    self._btn_next.config( state=tk.NORMAL)
+                    self._btn_end.config(  state=tk.NORMAL)
+                    self._update_round_label()
+                else:
+                    COMBAT_STATE["active"] = False
+                    COMBAT_STATE["active_combatant"] = None
+
+                self._refresh_list()
+                if self.combat_active:
+                    self._log(f"⟳ Combat restauré — Round {self.round_num}")
+            else:
+                # Pas de sauvegarde : import classique des PJ
+                self._import_pcs()
+        except Exception as e:
+            print(f"[CombatTracker] Erreur restauration : {e}")
+            self._import_pcs()
+
     def _import_pcs(self):
         try:
             state = self._load_state()
@@ -492,10 +877,16 @@ class CombatTracker:
                        highlightthickness=2 if active else 1)
         row.pack(fill=tk.X, padx=4, pady=2)
 
+        # Helper : fixe la largeur minimale via un spacer invisible (height=0)
+        # sans pack_propagate(False) qui tronque le contenu verticalement.
+        def _col(w, padx=4, pady=4):
+            f = tk.Frame(row, bg=row_bg)
+            f.pack(side=tk.LEFT, padx=padx, pady=pady)
+            tk.Frame(f, bg=row_bg, width=w, height=0).pack()
+            return f
+
         # ── Col 1 : Initiative ─────────────────────────────────────────────
-        init_f = tk.Frame(row, bg=row_bg, width=56)
-        init_f.pack(side=tk.LEFT, padx=(6, 2), pady=4)
-        init_f.pack_propagate(False)
+        init_f = _col(56, padx=(6, 2))
 
         init_var = tk.StringVar(value=str(c.initiative))
         init_entry = tk.Entry(init_f, textvariable=init_var, width=4,
@@ -514,52 +905,79 @@ class CombatTracker:
         init_entry.bind("<FocusOut>", _set_init)
         init_entry.bind("<Return>",   _set_init)
 
-        tk.Button(init_f, text="🎲", bg=row_bg, fg="#c8a820",
-                  font=("Arial", 8), bd=0, relief="flat", cursor="hand2",
+        tk.Button(init_f, text="[D]", bg=row_bg, fg="#c8a820",
+                  font=("Consolas", 8, "bold"), bd=0, relief="flat", cursor="hand2",
                   command=lambda cb=c: self._roll_one_initiative(cb)
                   ).pack()
 
-        # ── Col 2 : Nom + badge ────────────────────────────────────────────
-        name_f = tk.Frame(row, bg=row_bg, width=158)
-        name_f.pack(side=tk.LEFT, padx=4, pady=4)
-        name_f.pack_propagate(False)
+        # ── Col 2 : Nom + badge + boutons ─────────────────────────────────
+        name_f = _col(158)
 
-        badge = "PJ" if c.is_pc else "PNJ"
-        badge_bg = _darken(c.color, 0.50) if c.is_pc else "#5a2a10"
-        badge_fg = "white"
-
-        tk.Label(name_f, text=badge, bg=badge_bg, fg=badge_fg,
+        badge    = "PJ" if c.is_pc else "PNJ"
+        badge_bg = _darken(c.color, 0.45) if c.is_pc else "#5a2a10"
+        tk.Label(name_f, text=badge, bg=badge_bg, fg="white",
                  font=("Consolas", 7, "bold"), padx=4, pady=1
                  ).pack(anchor="w")
 
-        skull = " 💀" if c.is_dead else (" 🩸" if c.is_down else "")
-        star  = " ⭐" if active else ""
+        skull = " [X]" if c.is_dead else (" [~]" if c.is_down else "")
+        star  = " *"   if active else ""
         tk.Label(name_f, text=c.name + skull + star, bg=row_bg,
                  fg=C["fg_gold"] if active else c.color,
-                 font=("Consolas", 10, "bold"), anchor="w"
-                 ).pack(anchor="w")
+                 font=("Consolas", 11, "bold") if c.is_pc else ("Consolas", 10, "bold"),
+                 anchor="w").pack(anchor="w")
 
-        # Bouton supprimer
-        tk.Button(name_f, text="✕", bg=row_bg, fg="#cc5555",
-                  font=("Arial", 7), bd=0, relief="flat",
-                  cursor="hand2",
-                  command=lambda cb=c: self._remove_combatant(cb)
-                  ).pack(anchor="w")
+        # Boutons sous le nom
+        btn_row = tk.Frame(name_f, bg=row_bg)
+        btn_row.pack(anchor="w")
+
+        # Bouton retirer — confirmation pour les PJ
+        def _confirm_remove(cb=c):
+            if cb.is_pc:
+                if not messagebox.askyesno(
+                    "Retirer du combat",
+                    f"Retirer {cb.name} du combat ?\n(PV et stats non modifies)",
+                    parent=self.win):
+                    return
+            self._remove_combatant(cb)
+
+        tk.Button(btn_row,
+                  text="Retirer" if c.is_pc else "X",
+                  bg=_darken("#e05050", 0.55), fg="#e07070",
+                  font=("Consolas", 7, "bold"), bd=0, relief="flat",
+                  cursor="hand2", padx=3,
+                  command=_confirm_remove).pack(side=tk.LEFT)
+
+        # Bouton Fiche pour les PNJ ayant un bestiary_name
+        if not c.is_pc and _BESTIARY_OK and c.bestiary_name:
+            def _open_fiche(cb=c):
+                MonsterSheetWindow(self.root, cb.name,
+                                   bestiary_name=cb.bestiary_name,
+                                   chat_queue=self.chat_queue)
+            tk.Button(btn_row, text="Fiche",
+                      bg=_darken(C["gold"], 0.55), fg=C["gold"],
+                      font=("Consolas", 7, "bold"), bd=0, relief="flat",
+                      cursor="hand2", padx=3,
+                      command=_open_fiche).pack(side=tk.LEFT, padx=(3, 0))
+
+        # Bouton Kill Pool (PNJ uniquement)
+        if not c.is_pc:
+            tk.Button(btn_row, text="[Mort]",
+                      bg=_darken("#800080", 0.45), fg="#cc66cc",
+                      font=("Consolas", 7, "bold"), bd=0, relief="flat",
+                      cursor="hand2", padx=3,
+                      command=lambda cb=c: self._add_to_kill_pool(cb)
+                      ).pack(side=tk.LEFT, padx=(3, 0))
 
         # ── Col 3 : PV ────────────────────────────────────────────────────
-        hp_f = tk.Frame(row, bg=row_bg, width=162)
-        hp_f.pack(side=tk.LEFT, padx=4, pady=4)
-        hp_f.pack_propagate(False)
+        hp_f = _col(162)
 
-        hp_lbl = tk.Label(hp_f,
-                          text=f"{max(0,c.hp)} / {c.max_hp}",
-                          bg=row_bg, fg=c.hp_color(),
-                          font=("Consolas", 10, "bold"))
+        hp_font = ("Consolas", 13, "bold") if c.is_pc else ("Consolas", 10, "bold")
+        hp_lbl  = tk.Label(hp_f,
+                           text=f"{max(0,c.hp)} / {c.max_hp}",
+                           bg=row_bg, fg=c.hp_color(), font=hp_font)
         hp_lbl.pack(anchor="w")
 
-        # Barre de vie
-        bar_canvas = tk.Canvas(hp_f, height=6, bg="#1a1a1a",
-                               highlightthickness=0)
+        bar_canvas = tk.Canvas(hp_f, height=6, bg="#1a1a1a", highlightthickness=0)
         bar_canvas.pack(fill=tk.X, pady=(1, 3))
 
         def draw_hp_bar(canvas=bar_canvas, cb=c):
@@ -571,67 +989,65 @@ class CombatTracker:
             filled = int(w * cb.hp_pct())
             canvas.create_rectangle(0, 0, w, 6, fill="#1a1a1a", outline="")
             if filled > 0:
-                canvas.create_rectangle(0, 0, filled, 6,
-                                        fill=cb.hp_color(), outline="")
+                canvas.create_rectangle(0, 0, filled, 6, fill=cb.hp_color(), outline="")
 
-        # Ce <Configure> est sur un Canvas directement (pas sur une Frame enfant de Canvas)
-        # → moins risqué, mais on protège quand même avec un try/except.
         bar_canvas.bind("<Configure>",
                         lambda e, cb=c, canvas=bar_canvas: (
                             draw_hp_bar(canvas, cb) if canvas.winfo_exists() else None
                         ))
 
-        # Boutons +/-/saisie
         hp_btn_f = tk.Frame(hp_f, bg=row_bg)
         hp_btn_f.pack(anchor="w")
 
         dmg_var = tk.StringVar(value="")
         hp_entry = tk.Entry(hp_btn_f, textvariable=dmg_var, width=5,
                             bg=C["entry_bg"], fg=C["fg"], font=("Consolas", 9),
-                            insertbackground=C["fg"], relief="flat",
-                            justify="center")
+                            insertbackground=C["fg"], relief="flat", justify="center")
         hp_entry.pack(side=tk.LEFT, ipady=2, padx=(0, 2))
 
-        def apply_dmg(sign, cb=c, var=dmg_var,
-                      lbl=hp_lbl, canvas=bar_canvas):
+        def apply_dmg(sign, cb=c, var=dmg_var, lbl=hp_lbl, canvas=bar_canvas):
             try:
                 val = int(var.get()) if var.get().strip() else 0
             except ValueError:
                 val = 0
             cb.hp = max(0, min(cb.max_hp, cb.hp + sign * val))
-            lbl.config(text=f"{max(0,cb.hp)} / {cb.max_hp}",
-                       fg=cb.hp_color())
+            lbl.config(text=f"{max(0,cb.hp)} / {cb.max_hp}", fg=cb.hp_color(),
+                       font=("Consolas", 13, "bold") if cb.is_pc else ("Consolas", 10, "bold"))
             draw_hp_bar(canvas, cb)
             var.set("")
-            # Re-render le nom (skull update)
+            # ── Sync bidirectionnel : tracker → campaign_state["characters"] ──
+            if cb.is_pc:
+                try:
+                    from state_manager import load_state as _ls, save_state as _ss
+                    _st = _ls()
+                    if cb.name in _st.get("characters", {}):
+                        _st["characters"][cb.name]["hp"] = cb.hp
+                        _ss(_st)
+                except Exception as _e:
+                    print(f"[CombatTracker] Sync HP -> state_manager : {_e}")
             self._refresh_list()
-            # Death saves si PJ à 0
+            self._save_combat_state()
             if cb.is_pc and cb.hp == 0:
                 self._open_death_saves(cb)
 
-        tk.Button(hp_btn_f, text="❤ Soin",
+        tk.Button(hp_btn_f, text="+ Soin",
                   bg=_darken(C["green"], 0.35), fg=C["green_bright"],
-                  font=("Consolas", 7, "bold"), relief="flat", padx=3,
-                  cursor="hand2",
-                  command=lambda cb=c, v=dmg_var,
-                  l=hp_lbl, canvas=bar_canvas: apply_dmg(+1, cb, v, l, canvas)
+                  font=("Consolas", 7, "bold"), relief="flat", padx=3, cursor="hand2",
+                  command=lambda cb=c, v=dmg_var, l=hp_lbl,
+                  canvas=bar_canvas: apply_dmg(+1, cb, v, l, canvas)
                   ).pack(side=tk.LEFT)
-        tk.Button(hp_btn_f, text="💥 Dégât",
+        tk.Button(hp_btn_f, text="- Degat",
                   bg=_darken(C["red"], 0.35), fg=C["red_bright"],
-                  font=("Consolas", 7, "bold"), relief="flat", padx=3,
-                  cursor="hand2",
-                  command=lambda cb=c, v=dmg_var,
-                  l=hp_lbl, canvas=bar_canvas: apply_dmg(-1, cb, v, l, canvas)
+                  font=("Consolas", 7, "bold"), relief="flat", padx=3, cursor="hand2",
+                  command=lambda cb=c, v=dmg_var, l=hp_lbl,
+                  canvas=bar_canvas: apply_dmg(-1, cb, v, l, canvas)
                   ).pack(side=tk.LEFT, padx=(2, 0))
 
-        # Death saves si down
         if c.is_pc and c.is_down:
             self._mini_death_saves(hp_f, c)
 
         # ── Col 4 : CA ────────────────────────────────────────────────────
-        ac_f = tk.Frame(row, bg=row_bg, width=52)
-        ac_f.pack(side=tk.LEFT, padx=4, pady=4)
-        ac_f.pack_propagate(False)
+        ac_f = _col(52)
 
         ac_var = tk.StringVar(value=str(c.ac))
         ac_entry = tk.Entry(ac_f, textvariable=ac_var, width=4,
@@ -649,39 +1065,28 @@ class CombatTracker:
 
         ac_entry.bind("<FocusOut>", _set_ac)
         ac_entry.bind("<Return>",   _set_ac)
-
         tk.Label(ac_f, text="CA", bg=row_bg, fg=C["fg_dim"],
                  font=("Consolas", 7)).pack()
 
         # ── Col 5 : Conditions ────────────────────────────────────────────
-        cond_f = tk.Frame(row, bg=row_bg, width=220)
-        cond_f.pack(side=tk.LEFT, padx=4, pady=4)
-        cond_f.pack_propagate(False)
-
+        cond_f = _col(220)
         self._build_conditions_widget(cond_f, c, row_bg)
 
         # ── Col 6 : Actions ───────────────────────────────────────────────
-        act_f = tk.Frame(row, bg=row_bg, width=162)
-        act_f.pack(side=tk.LEFT, padx=4, pady=4)
-        act_f.pack_propagate(False)
-
+        act_f = _col(162)
         self._build_action_economy(act_f, c, row_bg, active)
 
         # ── Col 7 : Concentration ─────────────────────────────────────────
-        conc_f = tk.Frame(row, bg=row_bg, width=58)
-        conc_f.pack(side=tk.LEFT, padx=4, pady=4)
-        conc_f.pack_propagate(False)
+        conc_f = _col(58)
 
         conc_var = tk.BooleanVar(value=c.concentration)
         conc_cb  = tk.Checkbutton(conc_f, variable=conc_var,
-                                  text="♦", bg=row_bg,
+                                  text="Conc", bg=row_bg,
                                   fg=C["conc"] if c.concentration else C["fg_dim"],
                                   activebackground=row_bg,
                                   selectcolor=_darken(C["conc"], 0.3),
-                                  font=("Arial", 12), bd=0)
-        conc_cb.pack()
-        tk.Label(conc_f, text="Conc.", bg=row_bg, fg=C["fg_dim"],
-                 font=("Consolas", 7)).pack()
+                                  font=("Consolas", 8, "bold"), bd=0)
+        conc_cb.pack(anchor="w")
 
         def _toggle_conc(cb=c, var=conc_var, btn=conc_cb):
             cb.concentration = var.get()
@@ -704,9 +1109,8 @@ class CombatTracker:
 
         note_entry.bind("<FocusOut>", _save_note)
 
-        # Bouton jet de mort rapide pour les PNJ tombés
         if not c.is_pc and c.is_down:
-            tk.Label(row, text="💀 KO", bg=row_bg, fg=C["skull"],
+            tk.Label(row, text="KO", bg=row_bg, fg=C["skull"],
                      font=("Consolas", 9, "bold")).pack(side=tk.RIGHT, padx=6)
 
     def _build_conditions_widget(self, parent, c: Combatant, row_bg: str):
@@ -748,6 +1152,7 @@ class CombatTracker:
                 else:
                     cb.conditions[cn] = True
                     b.config(bg=cd["color"], fg="white")
+                self._save_combat_state()
 
             btn.config(command=_toggle)
 
@@ -887,7 +1292,8 @@ class CombatTracker:
         # ── Mise à jour état partagé ──
         COMBAT_STATE["active"]           = True
         COMBAT_STATE["round_num"]        = 1
-        COMBAT_STATE["spoken_off_turn"]  = set()
+        COMBAT_STATE["reactions_used"]   = set()
+        COMBAT_STATE["speech_used"]      = set()
         active_c = self.combatants[0] if self.combatants else None
         COMBAT_STATE["active_combatant"] = active_c.name if active_c else None
 
@@ -898,6 +1304,9 @@ class CombatTracker:
         self._update_round_label()
         self._refresh_list()
         self._log_turn()
+        self._save_combat_state()
+        # ── Déclenche automatiquement le tour si c'est un PJ ──
+        self._trigger_pc_turn_if_needed()
 
     def _next_turn(self):
         if not self.combat_active:
@@ -913,7 +1322,8 @@ class CombatTracker:
             self.current_idx = 0
             self.round_num  += 1
             self._log(f"\n══ Round {self.round_num} ══")
-            COMBAT_STATE["spoken_off_turn"] = set()   # reset réactions au nouveau round
+            COMBAT_STATE["reactions_used"] = set()   # reset au nouveau round
+            COMBAT_STATE["speech_used"]    = set()   # reset au nouveau round
 
         # ── Mise à jour état partagé ──
         COMBAT_STATE["round_num"] = self.round_num
@@ -923,6 +1333,10 @@ class CombatTracker:
         self._update_round_label()
         self._refresh_list()
         self._log_turn()
+        self._save_combat_state()
+
+        # ── Déclenche automatiquement le tour si c'est un PJ ──
+        self._trigger_pc_turn_if_needed()
 
         # Auto-scroll vers le combatant actif
         try:
@@ -932,7 +1346,13 @@ class CombatTracker:
         except Exception:
             pass
 
+    def advance_turn(self):
+        """Appelé par le moteur IA quand un PJ déclare [FIN_DE_TOUR]."""
+        if self.combat_active:
+            self.root.after(0, self._next_turn)
+
     def _end_combat(self):
+
         if not messagebox.askyesno("Fin du combat",
                                     "Terminer le combat et réinitialiser ?"):
             return
@@ -946,7 +1366,8 @@ class CombatTracker:
         COMBAT_STATE["active"]           = False
         COMBAT_STATE["active_combatant"] = None
         COMBAT_STATE["round_num"]        = 0
-        COMBAT_STATE["spoken_off_turn"]  = set()
+        COMBAT_STATE["reactions_used"]   = set()
+        COMBAT_STATE["speech_used"]      = set()
 
         for c in self.combatants:
             c.reset_turn_resources()
@@ -962,6 +1383,7 @@ class CombatTracker:
         self._refresh_list()
 
         self._log("🏁 COMBAT TERMINÉ\n" + summary)
+        self._save_combat_state()
         if self.chat_queue:
             self.chat_queue.put({
                 "sender": "⚔️ Combat",
@@ -1022,6 +1444,8 @@ class CombatTracker:
         NPC_COLORS = ["#ff9966","#ffcc66","#99ddff","#cc99ff",
                       "#99ffcc","#ff99bb","#ddbbff","#aaffaa"]
 
+        bname = getattr(self, "_current_bestiary_name", "")
+
         for i in range(qty):
             n    = f"{name} {i+1}" if qty > 1 else name
             init = int(fixed) if fixed.lstrip("-").isdigit() else 0
@@ -1030,12 +1454,18 @@ class CombatTracker:
                              max_hp=max_hp, ac=ac,
                              initiative=init, dex_bonus=dex_b,
                              color=col)
+            c.bestiary_name = bname
             if not fixed.lstrip("-").isdigit():
                 c.roll_initiative()
             self.combatants.append(c)
 
+        # Reset bestiary state
+        self._current_bestiary_name = ""
+        if _BESTIARY_OK and hasattr(self, "_ct_status"):
+            self._ct_status.config(text="")
+
         self._sort_and_refresh()
-        self._log(f"➕ {qty}× {name} ajouté(s) au combat.")
+        self._log(f"+ {qty}x {name} ajoute(s) au combat.")
 
     def _remove_combatant(self, c: Combatant):
         if c in self.combatants:
@@ -1044,6 +1474,60 @@ class CombatTracker:
             if self.combat_active and self.current_idx >= idx:
                 self.current_idx = max(0, self.current_idx - 1)
             self._refresh_list()
+
+    def _add_to_kill_pool(self, c: "Combatant"):
+        """Retire le combatant de l'initiative et l'ajoute au kill pool."""
+        if c not in self.combatants:
+            return
+        idx = self.combatants.index(c)
+        self.combatants.remove(c)
+        if self.combat_active and self.current_idx >= idx:
+            self.current_idx = max(0, self.current_idx - 1)
+        self.kill_pool.append(c)
+        self._refresh_list()
+        self._refresh_kill_pool()
+        self._log(f"[Kill Pool] {c.name} ({c.max_hp} PV max) retiré du combat.")
+        if self.chat_queue:
+            self.chat_queue.put({
+                "sender": "⚔️ Combat",
+                "text":   f"☠️ {c.name} est hors combat (Kill Pool).",
+                "color":  "#9b59b6",
+            })
+
+    def _refresh_kill_pool(self):
+        """Met à jour l'affichage du kill pool dans le bottom panel."""
+        if not hasattr(self, "_kill_pool_inner"):
+            return
+        for w in self._kill_pool_inner.winfo_children():
+            w.destroy()
+        if not self.kill_pool:
+            tk.Label(self._kill_pool_inner, text="— vide —",
+                     bg="#0d1018", fg=C["fg_dim"],
+                     font=("Consolas", 8)).pack(anchor="w")
+            return
+        for c in self.kill_pool:
+            row = tk.Frame(self._kill_pool_inner, bg="#0d1018")
+            row.pack(fill=tk.X, pady=1)
+            tk.Label(row, text=f"☠ {c.name}",
+                     bg="#0d1018", fg="#cc66cc",
+                     font=("Consolas", 8, "bold"), anchor="w"
+                     ).pack(side=tk.LEFT, padx=(0, 6))
+            tk.Label(row, text=f"{c.max_hp} PV",
+                     bg="#0d1018", fg=C["fg_dim"],
+                     font=("Consolas", 8)).pack(side=tk.LEFT)
+            # Bouton Annuler (remettre dans l'initiative)
+            def _restore(cb=c):
+                if cb in self.kill_pool:
+                    self.kill_pool.remove(cb)
+                    cb.hp = max(1, cb.max_hp // 4)  # remet à 25% PV
+                    self.combatants.append(cb)
+                    self._sort_and_refresh()
+                    self._refresh_kill_pool()
+            tk.Button(row, text="Annuler",
+                      bg=_darken(C["gold"], 0.55), fg=C["gold"],
+                      font=("Consolas", 7), bd=0, relief="flat",
+                      cursor="hand2", padx=3,
+                      command=_restore).pack(side=tk.RIGHT)
 
     # ── Jets de mort (fenêtre dédiée) ─────────────────────────────────────────
     def _open_death_saves(self, c: Combatant):
@@ -1152,9 +1636,26 @@ class CombatTracker:
     def _on_close(self):
         if self.combat_active:
             if not messagebox.askyesno("Combat actif",
-                                        "Un combat est en cours. Fermer quand même ?"):
+                                        "Un combat est en cours. Fermer quand même ?\n"
+                                        "(Le combat sera sauvegardé et reprendra à la prochaine ouverture.)"):  
                 return
+        self._save_combat_state()
         self.win.destroy()
+
+    # ── Déclencheur automatique tour PJ ──────────────────────────────────────
+
+    def _trigger_pc_turn_if_needed(self):
+        """Si le combatant actif est un PJ vivant, appelle pc_turn_callback
+        pour déclencher son tour automatiquement dans autogen.
+        Appelé après chaque _next_turn() et _start_combat().
+        """
+        if not self.combat_active or not self.pc_turn_callback:
+            return
+        if not (0 <= self.current_idx < len(self.combatants)):
+            return
+        c = self.combatants[self.current_idx]
+        if c.is_pc and not c.is_down:
+            self.pc_turn_callback(c.name)
 
 
 # ─── Helpers couleur ──────────────────────────────────────────────────────────

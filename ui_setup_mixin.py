@@ -7,7 +7,7 @@ Contient : setup_ui, _build_char_cards, _hp_color, update_stats_panel.
 import tkinter as tk
 from tkinter import scrolledtext
 
-from state_manager import load_state
+from state_manager import load_state, set_character_active, is_character_active
 from llm_config import llm_config
 from combat_simulator import CombatSimulator
 from npc_bestiary_panel import GroupNPCPanel
@@ -232,16 +232,26 @@ class UISetupMixin:
         """Construit les 4 cartes compactes dans la sidebar. Appelé une seule fois."""
         state = load_state()
         for name, data in state.get("characters", {}).items():
-            color = self.CHAR_COLORS.get(name, "#aaaaaa")
+            color   = self.CHAR_COLORS.get(name, "#aaaaaa")
+            active  = data.get("active", True)
+
             card = tk.Frame(self._char_card_frame, bg="#1e2030", relief="flat",
                             cursor="hand2", padx=4, pady=3)
             card.pack(fill=tk.X, pady=2)
 
             top_row = tk.Frame(card, bg="#1e2030")
             top_row.pack(fill=tk.X)
+
             name_lbl = tk.Label(top_row, text=name, bg="#1e2030", fg=color,
                                 font=("Arial", 9, "bold"), anchor="w")
             name_lbl.pack(side=tk.LEFT)
+
+            # Badge 🚫 affiché uniquement si inactif
+            badge_lbl = tk.Label(top_row, text="[Absent]", bg="#1e2030", fg="#666666",
+                                 font=("Consolas", 7, "italic"), anchor="e")
+            if not active:
+                badge_lbl.pack(side=tk.RIGHT, padx=(0, 2))
+
             hp_lbl = tk.Label(top_row, text=f"{data['hp']}/{data['max_hp']}",
                               bg="#1e2030", fg="#aaaaaa", font=("Consolas", 8), anchor="e")
             hp_lbl.pack(side=tk.RIGHT)
@@ -249,16 +259,108 @@ class UISetupMixin:
             bar_bg = tk.Frame(card, bg="#3a3a3a", height=5)
             bar_bg.pack(fill=tk.X, pady=(1, 0))
             pct = max(0, min(1, data["hp"] / data["max_hp"])) if data["max_hp"] else 0
-            bar_fill = tk.Frame(bar_bg, bg=self._hp_color(pct), height=5)
-            bar_fill.place(relx=0, rely=0, relwidth=pct, relheight=1)
+            bar_color = self._hp_color(pct) if active else "#444444"
+            bar_fill = tk.Frame(bar_bg, bg=bar_color, height=5)
+            bar_fill.place(relx=0, rely=0, relwidth=pct if active else 1.0, relheight=1)
 
+            # Griser la carte si inactive
+            if not active:
+                card.config(bg="#181820")
+                top_row.config(bg="#181820")
+                name_lbl.config(fg="#555566", bg="#181820")
+                hp_lbl.config(fg="#555566", bg="#181820")
+                badge_lbl.config(bg="#181820")
+                bar_bg.config(bg="#2a2a2a")
+                bar_fill.config(bg="#444444")
+
+            # Clic gauche → fiche popout
             for widget in (card, top_row, name_lbl, hp_lbl, bar_bg):
                 widget.bind("<Button-1>", lambda e, n=name: self.open_char_popout(n))
 
+            # Clic droit → menu contextuel
+            for widget in (card, top_row, name_lbl, hp_lbl, bar_bg, badge_lbl):
+                widget.bind("<Button-3>", lambda e, n=name: self._show_char_context_menu(e, n))
+
             self._char_cards[name] = {
-                "card": card, "hp_lbl": hp_lbl,
-                "bar_bg": bar_bg, "bar_fill": bar_fill
+                "card": card, "top_row": top_row,
+                "name_lbl": name_lbl, "hp_lbl": hp_lbl,
+                "badge_lbl": badge_lbl,
+                "bar_bg": bar_bg, "bar_fill": bar_fill,
             }
+
+    def _show_char_context_menu(self, event, char_name: str):
+        """Affiche le menu contextuel clic-droit sur une fiche personnage."""
+        active = is_character_active(char_name)
+        menu = tk.Menu(self.root, tearoff=0,
+                       bg="#2a2a3a", fg="white", font=("Consolas", 10),
+                       activebackground="#4a4a6a", activeforeground="white")
+
+        if active:
+            menu.add_command(
+                label=f"[Retirer de la scene]  {char_name}",
+                command=lambda: self._toggle_char_active(char_name, False),
+            )
+        else:
+            menu.add_command(
+                label=f"[Ajouter a la scene]  {char_name}",
+                command=lambda: self._toggle_char_active(char_name, True),
+            )
+
+        menu.add_separator()
+        menu.add_command(
+            label="Ouvrir la fiche",
+            command=lambda: self.open_char_popout(char_name),
+        )
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _toggle_char_active(self, char_name: str, active: bool):
+        """Active ou désactive un personnage et rafraîchit la carte."""
+        set_character_active(char_name, active)
+        self._refresh_char_card(char_name)
+        status = "entre dans la scene" if active else "quitte la scene"
+        self.msg_queue.put({
+            "sender": "⚙ Scene",
+            "text":   f"{char_name} {status}.",
+            "color":  "#888899",
+        })
+
+    def _refresh_char_card(self, char_name: str):
+        """Rafraîchit visuellement une carte personnage après changement d'état active."""
+        card_widgets = self._char_cards.get(char_name)
+        if not card_widgets:
+            return
+
+        state   = load_state()
+        data    = state.get("characters", {}).get(char_name, {})
+        active  = data.get("active", True)
+        color   = self.CHAR_COLORS.get(char_name, "#aaaaaa")
+        hp, max_hp = data.get("hp", 0), data.get("max_hp", 1)
+        pct = max(0, min(1, hp / max_hp)) if max_hp else 0
+
+        if active:
+            card_widgets["card"].config(bg="#1e2030")
+            card_widgets["top_row"].config(bg="#1e2030")
+            card_widgets["name_lbl"].config(fg=color, bg="#1e2030")
+            card_widgets["hp_lbl"].config(fg="#aaaaaa", bg="#1e2030")
+            card_widgets["badge_lbl"].config(bg="#1e2030")
+            card_widgets["badge_lbl"].pack_forget()
+            card_widgets["bar_bg"].config(bg="#3a3a3a")
+            card_widgets["bar_fill"].config(bg=self._hp_color(pct))
+            card_widgets["bar_fill"].place(relwidth=pct)
+        else:
+            card_widgets["card"].config(bg="#181820")
+            card_widgets["top_row"].config(bg="#181820")
+            card_widgets["name_lbl"].config(fg="#555566", bg="#181820")
+            card_widgets["hp_lbl"].config(fg="#555566", bg="#181820")
+            card_widgets["badge_lbl"].config(bg="#181820")
+            card_widgets["badge_lbl"].pack(side=tk.RIGHT, padx=(0, 2))
+            card_widgets["bar_bg"].config(bg="#2a2a2a")
+            card_widgets["bar_fill"].config(bg="#444444")
+            card_widgets["bar_fill"].place(relwidth=1.0)
 
     @staticmethod
     def _hp_color(pct: float) -> str:
@@ -275,10 +377,13 @@ class UISetupMixin:
                 if not card_widgets:
                     continue
                 hp, max_hp = data["hp"], data["max_hp"]
+                active = data.get("active", True)
                 pct = max(0, min(1, hp / max_hp)) if max_hp else 0
                 card_widgets["hp_lbl"].config(text=f"{hp}/{max_hp}")
-                card_widgets["bar_fill"].config(bg=self._hp_color(pct))
-                card_widgets["bar_fill"].place(relwidth=pct)
+                if active:
+                    card_widgets["bar_fill"].config(bg=self._hp_color(pct))
+                    card_widgets["bar_fill"].place(relwidth=pct)
+                # Si inactif, la barre reste grisée (gérée par _refresh_char_card)
         except Exception as e:
             print(f"[update_stats_panel] Erreur : {e}")
         self.root.after(2000, self.update_stats_panel)

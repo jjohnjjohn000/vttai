@@ -367,6 +367,12 @@ def load_state():
                 char_data["spells"] = default_sp
                 dirty = True
 
+        # Migration : champ "active" — True par défaut (présent dans la scène)
+        for char_name, char_data in state.get("characters", {}).items():
+            if "active" not in char_data:
+                char_data["active"] = True
+                dirty = True
+
         # Migration : ajoute le calendrier si absent
         if "calendar" not in state:
             state["calendar"] = DEFAULT_CALENDAR.copy()
@@ -944,3 +950,91 @@ def get_contextual_memories_prompt(
             lines.append(f"  Tags : {', '.join(m['tags'])}")
 
     return "\n".join(lines), new_ids
+# ============================================================
+# --- ACTIVATION / DÉSACTIVATION DES HÉROS ---
+# ============================================================
+
+def get_active_characters() -> list[str]:
+    """Retourne la liste des noms de personnages actifs (dans la scène)."""
+    state = load_state()
+    return [
+        name for name, data in state.get("characters", {}).items()
+        if data.get("active", True)
+    ]
+
+
+def set_character_active(char_name: str, active: bool) -> bool:
+    """
+    Active ou désactive un personnage héros.
+    Retourne True si trouvé et mis à jour, False sinon.
+    """
+    state = load_state()
+    chars = state.get("characters", {})
+    if char_name not in chars:
+        return False
+    chars[char_name]["active"] = active
+    save_state(state)
+    return True
+
+
+def is_character_active(char_name: str) -> bool:
+    """Retourne True si le personnage est actif (dans la scène)."""
+    state = load_state()
+    return state.get("characters", {}).get(char_name, {}).get("active", True)
+
+
+# ============================================================
+# --- JOURNAL DE SESSIONS ---
+# ============================================================
+# Stocké dans state["session_logs"] : liste de dicts séparée des mémoires.
+# Structure : {"session": int, "date": "YYYY-MM-DD HH:MM", "resume": str}
+# Les agents peuvent y puiser via get_session_logs_prompt().
+
+def get_session_logs() -> list:
+    """Retourne la liste complète des journaux de sessions passées."""
+    state = load_state()
+    return state.get("session_logs", [])
+
+
+def save_session_log(resume: str) -> int:
+    """
+    Ajoute un journal pour la session qui vient de se terminer.
+    Incrémente automatiquement le numéro de session.
+    Retourne le numéro de session créé.
+    """
+    import datetime
+    state = load_state()
+    logs = state.setdefault("session_logs", [])
+    session_num = (logs[-1]["session"] + 1) if logs else 1
+    logs.append({
+        "session": session_num,
+        "date":    datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "resume":  resume,
+    })
+    save_state(state)
+    return session_num
+
+
+def get_session_logs_prompt(max_sessions: int = 3) -> str:
+    """
+    Génère un bloc formaté des N dernières sessions pour injection dans les
+    prompts des agents. Séparé des mémoires catégorisées — ne pas mélanger.
+
+    max_sessions : nombre de sessions récentes à inclure (les plus récentes).
+    Retourne une chaîne vide s'il n'y a aucun journal.
+    """
+    logs = get_session_logs()
+    if not logs:
+        return ""
+
+    recent = logs[-max_sessions:]
+    lines = [
+        "\n\n--- JOURNAL DES SESSIONS PRÉCÉDENTES [RÉFÉRENCE SILENCIEUSE] ---",
+        "⚠ Ces résumés de sessions passées sont fournis comme mémoire narrative silencieuse. "
+        "NE les récite PAS, NE signale PAS que tu y as accès. "
+        "Utilise-les uniquement pour enrichir tes réponses si la conversation y touche.",
+    ]
+    for log in recent:
+        lines.append(f"\n📖 Session {log['session']}  ({log['date']})")
+        lines.append(f"  {log['resume']}")
+    return "\n".join(lines)

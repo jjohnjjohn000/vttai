@@ -48,7 +48,7 @@ _C_GRID = (50, 50, 90, 160)
 # Fog — vue MJ (semi-transparent : voir la carte sous le brouillard)
 _C_FOG_DM     = (20, 20, 60, 100)    # bleuté translucide
 # Fog — vue joueur (opaque)
-_C_FOG_PLAYER = (8, 8, 18, 240)
+_C_FOG_PLAYER = (8, 8, 18, 255)
 _C_FOG_CLEAR  = (0, 0, 0, 0)
 
 BG_WIN  = "#0d0d1a"
@@ -119,12 +119,13 @@ class CombatMapWindow:
         # Vue : True = MJ (fog transparent), False = Joueur (fog opaque)
         self._dm_view = True
 
-        # Fog : matrice bool numpy [rows, cols] — True = couvert
-        self._fog: "np.ndarray" = np.ones((self.rows, self.cols), dtype=bool)
+        # Fog : image PIL "L" (cols*cell_px × rows*cell_px) — 255=couvert 0=révélé
+        # Résolution fixe zoom-indépendante ; scalée à cp au rendu.
+        self._fog_mask: "Image.Image | None" = None   # initialisée dans _load_from_saved
+        self._fog_pil:  "Image.Image | None" = None
 
-        # Buffers PIL (reconstruits au zoom/resize seulement)
+        # Buffer fond (reconstruits au zoom/resize seulement)
         self._bg_pil:  "Image.Image | None" = None
-        self._fog_pil: "Image.Image | None" = None
         self._scene_photo = None
         self._img_id      = 0
 
@@ -132,6 +133,9 @@ class CombatMapWindow:
         self.map_image_path  = ""
         self._map_pil_cache: "Image.Image | None" = None
         self._map_path_cached = ""
+        self._map_scaled_cache: "Image.Image | None" = None
+        self._map_scaled_size: tuple = (-1, -1)   # (mw, mh) du dernier resize
+        self._tile_rect: tuple = (0, 0, 0, 0)     # (x0,y0,x1,y1) tuile courante
 
         # ── État des outils ───────────────────────────────────────────────────
         self.tool           = "reveal"
@@ -142,6 +146,34 @@ class CombatMapWindow:
         self._drag_offset   = (0.0, 0.0)
         self._last_fog_cell = None
         self._pending_render = None
+
+        # ── Zoom fluide ───────────────────────────────────────────────────────
+        # Durant le scroll : rebuild PIL throttlé à 16 ms (60 fps max).
+        # Après 120 ms d'inactivité : rebuild PIL complet (image nette).
+        self._zoom_rebuild_pending = None   # after-id du rebuild PIL différé
+        self._zoom_anchor_world_x: float = 0.0  # coord monde sous curseur (début séquence)
+        self._zoom_anchor_world_y: float = 0.0
+        self._zoom_anchor_ex: int   = 0    # coord écran du curseur
+        self._zoom_anchor_ey: int   = 0
+
+        # ── Notes flottantes (post-its déplaçables) ───────────────────────────
+        # Chaque note : {px, py, text, color, canvas_ids: [], pinned: bool}
+        # px/py = coordonnées en espace carte (indépendantes du zoom)
+        # → converties à l'affichage en canvas_x = px * zoom_factor
+        self._notes: list = []
+        self._doors: list = []  # {col, row, open, label, canvas_ids}
+        self._drag_note: "dict | None" = None       # note en cours de déplacement
+        self._drag_note_off: tuple = (0.0, 0.0)    # offset souris→origine note
+
+        # ── Dessin polygonal ──────────────────────────────────────────────────
+        self._poly_points: list = []
+        self._poly_ids:    list = []
+
+        # ── Sélection multiple ────────────────────────────────────────────────
+        self._selected_tokens:   set          = set()
+        self._drag_origins:      dict         = {}
+        self._box_select_start: "tuple|None"  = None
+        self._box_rect_id:       int          = 0
 
         # ── Outil redimensionnement carte ─────────────────────────────────────
         # _map_resize_handle : "nw"|"n"|"ne"|"e"|"se"|"s"|"sw"|"w"|"move"|None
@@ -165,24 +197,66 @@ class CombatMapWindow:
         self.map_ox  = data.get("map_ox", 0)
         self.map_oy  = data.get("map_oy", 0)
 
-        self._fog = np.ones((self.rows, self.cols), dtype=bool)
-        fog_list  = data.get("fog")
-        if fog_list is not None:
-            self._fog[:] = False
-            for cell in fog_list:
-                c, r = int(cell[0]), int(cell[1])
-                if 0 <= r < self.rows and 0 <= c < self.cols:
-                    self._fog[r, c] = True
+        # ── Fog mask (résolution pixel = cols*cell_px × rows*cell_px) ─────────
+        mw, mh = self.cols * self.cell_px, self.rows * self.cell_px
+        fog_b64 = data.get("fog_mask_b64")
+        if fog_b64:
+            import base64, io as _io
+            raw = base64.b64decode(fog_b64)
+            img = Image.open(_io.BytesIO(raw)).convert("L")
+            if img.size != (mw, mh):
+                img = img.resize((mw, mh), Image.NEAREST)
+            self._fog_mask = img
+        else:
+            # Rétro-compatibilité : ancien format liste de cases
+            self._fog_mask = Image.new("L", (mw, mh), 255)   # tout couvert
+            fog_list = data.get("fog")
+            if fog_list is not None:
+                from PIL import ImageDraw as _ID
+                draw = _ID.Draw(self._fog_mask)
+                # Révéler tout, puis recouvrir les cases listées
+                draw.rectangle([0, 0, mw - 1, mh - 1], fill=0)
+                for cell in fog_list:
+                    c, r = int(cell[0]), int(cell[1])
+                    if 0 <= r < self.rows and 0 <= c < self.cols:
+                        x0 = c * self.cell_px
+                        y0 = r * self.cell_px
+                        draw.rectangle(
+                            [x0, y0, x0 + self.cell_px - 1, y0 + self.cell_px - 1],
+                            fill=255)
 
         for t in data.get("tokens", []):
             self.tokens.append({k: v for k, v in t.items() if k != "ids"})
+
+        for n in data.get("notes", []):
+            self._notes.append({
+                "px":   float(n.get("px", 0)),
+                "py":   float(n.get("py", 0)),
+                "text": n.get("text", ""),
+                "color": n.get("color", "#ffe082"),
+                "canvas_ids": [],
+            })
+
+        for d in data.get("doors", []):
+            self._doors.append({
+                "col":   int(d.get("col", 0)),
+                "row":   int(d.get("row", 0)),
+                "open":  bool(d.get("open", False)),
+                "label": d.get("label", ""),
+                "canvas_ids": [],
+            })
 
         p = data.get("map_image_path", "")
         if p and os.path.exists(p):
             self.map_image_path = p
 
     def _save_state(self):
-        rows_idx, cols_idx = np.where(self._fog)
+        import base64, io as _io
+        fog_b64 = ""
+        if self._fog_mask is not None:
+            buf = _io.BytesIO()
+            self._fog_mask.save(buf, "PNG")
+            fog_b64 = base64.b64encode(buf.getvalue()).decode()
         self.win_state["combat_map_data"] = {
             "cols":           self.cols,
             "rows":           self.rows,
@@ -191,10 +265,16 @@ class CombatMapWindow:
             "map_h":          self.map_h,
             "map_ox":         self.map_ox,
             "map_oy":         self.map_oy,
-            "fog":            [[int(c), int(r)] for r, c in zip(rows_idx, cols_idx)],
+            "fog_mask_b64":   fog_b64,
             "tokens":         [{k: v for k, v in t.items() if k != "ids"}
                                for t in self.tokens],
             "map_image_path": self.map_image_path,
+            "notes":          [{"px": n["px"], "py": n["py"],
+                                "text": n["text"], "color": n["color"]}
+                               for n in self._notes],
+            "doors":          [{"col": d["col"], "row": d["row"],
+                                "open": d["open"], "label": d["label"]}
+                               for d in self._doors],
         }
         self.save_fn()
 
@@ -231,6 +311,8 @@ class CombatMapWindow:
             ("reveal",     "◎  Révéler",    "#81c784", "#0e2c1a"),
             ("hide",       "●  Cacher",     "#e57373", "#2c0e0e"),
             ("add",        "+  Token",      "#64b5f6", "#0e1e2c"),
+            ("note",       "📌 Note",       "#ffe082", "#2a2500"),
+            ("door",       "[P] Porte",    "#ff9966", "#2c1200"),
             ("resize_map", "⤢  Carte",      "#ffb74d", "#2c1a00"),
         ]:
             btn = tk.Button(
@@ -351,13 +433,23 @@ class CombatMapWindow:
         self.canvas = tk.Canvas(frame, bg=BG_CNV, highlightthickness=0,
                                 yscrollcommand=v_sb.set, xscrollcommand=h_sb.set)
         self.canvas.pack(fill=tk.BOTH, expand=True)
-        v_sb.config(command=self.canvas.yview)
-        h_sb.config(command=self.canvas.xview)
+
+        def _scroll_x(*args):
+            self.canvas.xview(*args)
+            self._schedule_tile_refresh()
+
+        def _scroll_y(*args):
+            self.canvas.yview(*args)
+            self._schedule_tile_refresh()
+
+        v_sb.config(command=_scroll_y)
+        h_sb.config(command=_scroll_x)
 
         # Souris
         self.canvas.bind("<ButtonPress-1>",    self._mb1_down)
         self.canvas.bind("<B1-Motion>",         self._mb1_move)
         self.canvas.bind("<ButtonRelease-1>",   self._mb1_up)
+        self.canvas.bind("<Double-Button-1>",   self._mb1_double)
         self.canvas.bind("<ButtonPress-2>",     self._pan_start)
         self.canvas.bind("<B2-Motion>",         self._pan_drag)
         self.canvas.bind("<ButtonPress-3>",     self._mb3_down)
@@ -375,6 +467,7 @@ class CombatMapWindow:
         self.win.bind("<Down>",        lambda e: self._map_nudge( 0,  1))
         self.win.bind("<Shift-Up>",    lambda e: self._change_cell_size( 1))
         self.win.bind("<Shift-Down>",  lambda e: self._change_cell_size(-1))
+        self.win.bind("<Escape>",      lambda e: self._poly_cancel())
 
     def _build_statusbar(self):
         sb = tk.Frame(self.win, bg="#070710", pady=3)
@@ -398,6 +491,7 @@ class CombatMapWindow:
 
     @property
     def _wh(self) -> tuple:
+        """Taille logique complète de la carte (scrollregion)."""
         cp = self._cp
         return self.cols * cp, self.rows * cp
 
@@ -409,80 +503,168 @@ class CombatMapWindow:
     # ─── Rendu offscreen PIL ──────────────────────────────────────────────────
 
     def _rebuild_bg(self):
-        """Couche fond : damier + image + grille. Mise en cache au zoom/resize."""
-        cp   = self._cp
-        W, H = self._wh
+        """
+        Couche fond : damier + image + grille.
 
-        # Damier vectorisé numpy
-        ri  = np.arange(H) // cp
-        ci  = np.arange(W) // cp
+        Stratégie de rendu selon le zoom :
+        - Zoom-in (tuile < carte) : crop natif → resize uniquement la portion visible
+          → qualité pixel-perfect, coût O(viewport) indépendant du zoom
+        - Zoom-out (carte entière visible) : resize source → taille d'affichage réelle
+          → compression proportionnelle, pas de pixels gaspillés
+
+        L'image PIL rendue a exactement la taille de la zone visible (tuile).
+        Elle est placée à (tile_x0, tile_y0) dans le canvas.
+        """
+        cp = self._cp
+        W_full, H_full = self._wh
+
+        # ── Zone visible dans l'espace canvas (coordonnées logiques) ──────────
+        x0f, x1f = self.canvas.xview()
+        y0f, y1f = self.canvas.yview()
+        sr_w = W_full + 40
+        sr_h = H_full + 40
+        margin = cp  # 1 case de marge pour éviter les bords blancs au pan
+
+        tx0 = max(0,      int(x0f * sr_w - margin))
+        ty0 = max(0,      int(y0f * sr_h - margin))
+        tx1 = min(W_full, int(x1f * sr_w + margin))
+        ty1 = min(H_full, int(y1f * sr_h + margin))
+
+        TW = max(1, tx1 - tx0)   # taille de la tuile à rendre (pixels)
+        TH = max(1, ty1 - ty0)
+        self._tile_rect = (tx0, ty0, tx1, ty1)
+
+        # ── Damier ────────────────────────────────────────────────────────────
+        # La phase du damier dépend de tx0/ty0 pour que les cases restent alignées
+        ri  = (np.arange(TH) + ty0) // cp
+        ci  = (np.arange(TW) + tx0) // cp
         chk = (ri[:, None] + ci[None, :]) % 2
         arr = np.where(chk[:, :, None] == 0,
                        np.array(_C_BG_A, dtype=np.uint8),
                        np.array(_C_BG_B, dtype=np.uint8))
         bg = Image.fromarray(arr.astype(np.uint8), "RGBA")
 
-        # Image de fond (carte) — décalée par map_ox/map_oy
-        # La carte est rendue à sa taille fixe (map_w×map_h × zoom),
-        # indépendamment de cell_px. Seule la grille suit cell_px.
+        # ── Image de fond (carte) ─────────────────────────────────────────────
         if self.map_image_path and os.path.exists(self.map_image_path):
             try:
                 if self._map_path_cached != self.map_image_path:
                     self._map_pil_cache   = Image.open(self.map_image_path).convert("RGBA")
                     self._map_path_cached = self.map_image_path
-                # Taille de l'image de fond = map_w × map_h (zoom appliqué)
-                mw = max(1, int(self.map_w * self.zoom))
-                mh = max(1, int(self.map_h * self.zoom))
-                map_img = self._map_pil_cache.resize((mw, mh), Image.LANCZOS)
-                # Crée un canvas transparent de la taille exacte du buffer,
-                # puis colle l'image à l'offset voulu (la grille restera par-dessus)
-                map_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-                map_layer.paste(map_img, (self.map_ox, self.map_oy))
-                bg = Image.alpha_composite(bg, map_layer)
+                    self._map_scaled_cache = None
+                    self._map_scaled_size  = (-1, -1)
+
+                src = self._map_pil_cache            # image source native
+                sw, sh = src.size                    # dimensions source en pixels
+
+                # Échelle source → espace canvas logique
+                scale = self._cp / self.cell_px      # px canvas par px cellule
+                # Dimensions de l'image en espace canvas
+                disp_w = max(1, int(self.map_w * scale))
+                disp_h = max(1, int(self.map_h * scale))
+                # Coin haut-gauche de l'image dans le canvas
+                img_cx0 = int(self.map_ox * scale)
+                img_cy0 = int(self.map_oy * scale)
+
+                # Intersection image ↔ tuile (espace canvas)
+                ix0 = max(tx0, img_cx0)
+                iy0 = max(ty0, img_cy0)
+                ix1 = min(tx1, img_cx0 + disp_w)
+                iy1 = min(ty1, img_cy0 + disp_h)
+
+                if ix1 > ix0 and iy1 > iy0:
+                    dest_w = ix1 - ix0   # px dans la tuile à remplir
+                    dest_h = iy1 - iy0
+
+                    # Portion correspondante dans la source (px source natifs)
+                    frac_x0 = (ix0 - img_cx0) / disp_w
+                    frac_y0 = (iy0 - img_cy0) / disp_h
+                    frac_x1 = (ix1 - img_cx0) / disp_w
+                    frac_y1 = (iy1 - img_cy0) / disp_h
+                    src_crop = src.crop((
+                        max(0, int(frac_x0 * sw)),
+                        max(0, int(frac_y0 * sh)),
+                        min(sw, max(1, int(frac_x1 * sw))),
+                        min(sh, max(1, int(frac_y1 * sh))),
+                    ))
+
+                    # Resize crop → dest_w × dest_h (toujours à taille écran réelle)
+                    # LANCZOS pour zoom-out (agrandissement minimal ou réduction)
+                    # BILINEAR pour zoom-in extrême (plus rapide, assez net)
+                    src_cw, src_ch = src_crop.size
+                    filt = Image.BILINEAR if dest_w > src_cw else Image.LANCZOS
+                    tile_img = src_crop.resize((dest_w, dest_h), filt)
+
+                    paste_x = ix0 - tx0
+                    paste_y = iy0 - ty0
+                    map_layer = Image.new("RGBA", (TW, TH), (0, 0, 0, 0))
+                    map_layer.paste(tile_img, (paste_x, paste_y))
+                    bg = Image.alpha_composite(bg, map_layer)
+
             except Exception as e:
                 print(f"[CombatMap] image fond : {e}")
 
-        # Grille
+        # ── Grille (seulement les lignes qui croisent la tuile) ───────────────
         if self._show_grid and cp >= 4:
             bg_arr = np.array(bg, dtype=np.float32)
-            gc     = np.array(_C_GRID[:3], dtype=np.float32)
-            ga     = _C_GRID[3] / 255.0
-            for c in range(self.cols + 1):
-                x = min(c * cp, W - 1)
-                bg_arr[:, x, :3] = ga * gc + (1 - ga) * bg_arr[:, x, :3]
-            for r in range(self.rows + 1):
-                y = min(r * cp, H - 1)
-                bg_arr[y, :, :3] = ga * gc + (1 - ga) * bg_arr[y, :, :3]
+            gc = np.array(_C_GRID[:3], dtype=np.float32)
+            ga = _C_GRID[3] / 255.0
+            # Colonnes
+            c0 = tx0 // cp
+            c1 = tx1 // cp + 1
+            for c in range(c0, c1 + 1):
+                x = c * cp - tx0
+                if 0 <= x < TW:
+                    bg_arr[:, x, :3] = ga * gc + (1 - ga) * bg_arr[:, x, :3]
+            # Rangées
+            r0 = ty0 // cp
+            r1 = ty1 // cp + 1
+            for r in range(r0, r1 + 1):
+                y = r * cp - ty0
+                if 0 <= y < TH:
+                    bg_arr[y, :, :3] = ga * gc + (1 - ga) * bg_arr[y, :, :3]
             bg_arr[:, :, 3] = 255
             bg = Image.fromarray(bg_arr.astype(np.uint8), "RGBA")
 
         self._bg_pil = bg
 
     def _rebuild_fog(self):
-        """Construit _fog_pil entier depuis self._fog + _fog_color courant."""
-        cp   = self._cp
-        W, H = self._wh
-        fog_px = np.repeat(np.repeat(self._fog, cp, axis=0), cp, axis=1)
-        arr    = np.zeros((H, W, 4), dtype=np.uint8)
-        arr[fog_px] = self._fog_color
-        self._fog_pil = Image.fromarray(arr, "RGBA")
+        """Fog sur la tuile visible uniquement, résolution native."""
+        tx0, ty0, tx1, ty1 = getattr(self, "_tile_rect", (0, 0) + self._wh)
+        TW = max(1, tx1 - tx0)
+        TH = max(1, ty1 - ty0)
+        W_full, H_full = self._wh
+
+        if self._fog_mask is None:
+            self._fog_mask = Image.new("L", (self.cols * self.cell_px,
+                                             self.rows * self.cell_px), 255)
+        mW, mH = self._fog_mask.size
+
+        # Crop du fog mask proportionnel à la tuile canvas
+        fx0 = int(tx0 / W_full * mW) if W_full > 0 else 0
+        fy0 = int(ty0 / H_full * mH) if H_full > 0 else 0
+        fx1 = int(tx1 / W_full * mW) if W_full > 0 else mW
+        fy1 = int(ty1 / H_full * mH) if H_full > 0 else mH
+        fog_crop = self._fog_mask.crop((
+            max(0, fx0), max(0, fy0),
+            min(mW, max(fx0 + 1, fx1)),
+            min(mH, max(fy0 + 1, fy1))))
+        scaled = fog_crop.resize((TW, TH), Image.NEAREST)
+
+        arr  = np.array(scaled, dtype=np.uint8)
+        rgba = np.zeros((TH, TW, 4), dtype=np.uint8)
+        fc   = np.array(self._fog_color, dtype=np.uint8)
+        covered = arr > 0
+        rgba[covered] = fc
+        if self._dm_view:
+            rgba[covered, 3] = (arr[covered].astype(np.uint16) * fc[3] // 255).astype(np.uint8)
+        self._fog_pil = Image.fromarray(rgba, "RGBA")
 
     def _patch_fog_cells(self, cells: list):
-        """Dirty-patch : met à jour uniquement les cases listées."""
-        if self._fog_pil is None:
-            self._rebuild_fog()
-            return
-        cp         = self._cp
-        fog_tile   = Image.new("RGBA", (cp, cp), self._fog_color)
-        clear_tile = Image.new("RGBA", (cp, cp), _C_FOG_CLEAR)
-        for (c, r) in cells:
-            if not (0 <= r < self.rows and 0 <= c < self.cols):
-                continue
-            tile = fog_tile if self._fog[r, c] else clear_tile
-            self._fog_pil.paste(tile, (c * cp, r * cp))
+        """Non utilisé avec le fog mask — garde uniquement pour compat d'appel."""
+        self._rebuild_fog()
 
     def _composite(self):
-        """alpha_composite(bg, fog) → PhotoImage → 1 canvas item."""
+        """alpha_composite(tuile_bg, tuile_fog) → PhotoImage placé aux coords canvas."""
         if self._bg_pil is None:
             self._rebuild_bg()
         if self._fog_pil is None:
@@ -491,19 +673,23 @@ class CombatMapWindow:
         scene = Image.alpha_composite(self._bg_pil, self._fog_pil)
         self._scene_photo = ImageTk.PhotoImage(scene)
 
-        W, H = self._wh
-        self.canvas.config(scrollregion=(0, 0, W + 40, H + 40))
+        W_full, H_full = self._wh
+        self.canvas.config(scrollregion=(0, 0, W_full + 40, H_full + 40))
+
+        x0, y0 = getattr(self, "_tile_rect", (0, 0))[:2]
         if self._img_id:
             self.canvas.itemconfig(self._img_id, image=self._scene_photo)
-            self.canvas.coords(self._img_id, 0, 0)
+            self.canvas.coords(self._img_id, x0, y0)
         else:
             self._img_id = self.canvas.create_image(
-                0, 0, anchor="nw", image=self._scene_photo, tags=("scene",))
+                x0, y0, anchor="nw", image=self._scene_photo, tags=("scene",))
         self.canvas.tag_raise("token")
-        # Mise à jour auto de la vue joueurs si elle est ouverte
+        self.canvas.tag_raise("note")
+        self.canvas.tag_raise("door")
+        # Vue joueurs
         if self._player_win is not None:
             try:
-                self._player_win.refresh(self._bg_pil, self._fog, self._cp,
+                self._player_win.refresh(self._bg_pil, self._fog_mask, self._cp,
                                          self.cols, self.rows, self.tokens)
             except Exception:
                 self._player_win = None
@@ -518,8 +704,10 @@ class CombatMapWindow:
         self.canvas.delete("scene")
         self._rebuild_bg()
         self._rebuild_fog()
+        self._redraw_all_doors()
         self._composite()
         self._redraw_all_tokens()
+        self._redraw_all_notes()
         self._zoom_lbl.config(text=f"{int(self.zoom * 100)}%")
         self._cellpx_lbl.config(text=f"{self.cell_px}px")
         self._dim_var.set(f"Grille : {self.cols}×{self.rows} cases  |  "
@@ -530,13 +718,19 @@ class CombatMapWindow:
     def _fog_dirty_update(self, cells: list):
         """Dirty-patch fog + composite throttlé à ~60 fps."""
         self._patch_fog_cells(cells)
-        if self._pending_render is not None:
-            self.win.after_cancel(self._pending_render)
-        self._pending_render = self.win.after(16, self._flush_render)
+        self._schedule_tile_refresh()
 
     def _flush_render(self):
         self._pending_render = None
+        self._bg_pil  = None   # force re-crop de la tuile visible
+        self._fog_pil = None
         self._composite()
+
+    def _schedule_tile_refresh(self, delay: int = 16):
+        """Planifie un re-rendu de la tuile visible (throttlé)."""
+        if self._pending_render is not None:
+            self.win.after_cancel(self._pending_render)
+        self._pending_render = self.win.after(delay, self._flush_render)
 
     # ─── Tokens ───────────────────────────────────────────────────────────────
 
@@ -549,7 +743,6 @@ class CombatMapWindow:
     def _draw_one_token(self, tok: dict):
         style = TOKEN_STYLES.get(tok["type"], TOKEN_STYLES["hero"])
         cp    = self._cp
-        # Tokens positionnés sur la grille (toujours à 0,0 sur le canvas)
         cx    = (tok["col"] + 0.5) * cp
         cy    = (tok["row"] + 0.5) * cp
         rad   = cp * 0.40
@@ -561,6 +754,13 @@ class CombatMapWindow:
         outline = _rgb_to_hex(style["outline"])
         tag     = f"tok_{id(tok)}"
         ids     = []
+
+        # Anneau de sélection (blanc pointillé si sélectionné)
+        sel_col = "#ffffff" if id(tok) in self._selected_tokens else ""
+        ids.append(self.canvas.create_oval(
+            cx-rad-5, cy-rad-5, cx+rad+5, cy+rad+5,
+            outline=sel_col, width=2, fill="", dash=(4, 3),
+            tags=("token", "sel_ring", tag)))
 
         ids.append(self.canvas.create_oval(
             cx-rad-3, cy-rad-3, cx+rad+3, cy+rad+3,
@@ -575,7 +775,7 @@ class CombatMapWindow:
             pts = [cx, cy-rad, cx+rad, cy, cx, cy+rad, cx-rad, cy]
             ids.append(self.canvas.create_polygon(
                 pts, fill=fill, outline=outline, width=2, tags=("token", tag)))
-        else:  # triangle piège
+        else:
             pts = [cx, cy-rad, cx+rad*0.88, cy+rad*0.75, cx-rad*0.88, cy+rad*0.75]
             ids.append(self.canvas.create_polygon(
                 pts, fill=fill, outline=outline, width=2, tags=("token", tag)))
@@ -592,13 +792,10 @@ class CombatMapWindow:
                 anchor="n", tags=("token", tag)))
 
         tok["ids"] = tuple(ids)
+        # Motion + release gérés au niveau canvas (_mb1_move/_mb1_up)
         for iid in ids:
             self.canvas.tag_bind(iid, "<ButtonPress-1>",
                                   lambda e, t=tok: self._tok_press(e, t))
-            self.canvas.tag_bind(iid, "<B1-Motion>",
-                                  lambda e, t=tok: self._tok_drag(e, t))
-            self.canvas.tag_bind(iid, "<ButtonRelease-1>",
-                                  lambda e, t=tok: self._tok_release(e, t))
 
     def _redraw_one_token(self, tok: dict):
         for iid in tok.get("ids", ()):
@@ -612,12 +809,15 @@ class CombatMapWindow:
         prev_tool = self.tool
         self.tool = tool
         cursors  = {"select": "arrow", "reveal": "dotbox", "hide": "dot",
-                    "add": "plus", "resize_map": "fleur"}
+                    "add": "plus", "note": "pencil", "resize_map": "fleur",
+                    "door": "hand2"}
         statuses = {
             "select":     "Sélection — glisser les tokens | clic droit = supprimer",
-            "reveal":     "Révéler — cliquer/glisser pour lever le brouillard",
-            "hide":       "Cacher   — cliquer/glisser pour poser le brouillard",
+            "reveal":     "Révéler — clic gauche : sommet | clic droit : appliquer | Échap : annuler",
+            "hide":       "Cacher   — clic gauche : sommet | clic droit : appliquer | Échap : annuler",
             "add":        "Token    — cliquer sur une case pour placer un token",
+            "note":       "Note     — clic gauche : placer un post-it | glisser une note : déplacer | double-clic : éditer | clic droit : supprimer",
+            "door":       "Porte    — clic gauche : placer/basculer ouverte|fermée | clic droit : supprimer",
             "resize_map": "Carte — glisser une poignée pour redimensionner | "
                           "glisser le centre pour déplacer | Shift = ratio fixe",
         }
@@ -628,6 +828,10 @@ class CombatMapWindow:
                 btn.config(bg=bg_on, fg=fg_on, relief="sunken")
             else:
                 btn.config(bg="#252538", fg="#aaaacc", relief="flat")
+
+        # Annuler polygone en cours si on change d'outil
+        if prev_tool in ("reveal", "hide") and tool not in ("reveal", "hide"):
+            self._poly_cancel()
 
         # Affiche/masque le checkbox ratio et les poignées
         if tool == "resize_map":
@@ -663,16 +867,66 @@ class CombatMapWindow:
         return cells or [(col, row)]
 
     def _apply_fog_at(self, cx, cy):
-        col, row = self._canvas_to_cell(cx, cy)
-        pos = (col, row)
-        if pos == self._last_fog_cell:
+        """Kept for compat — polygon is the only fog tool."""
+        pass
+
+    # ─── Outil polygone (reveal / hide) ──────────────────────────────────────
+
+    def _poly_add_point(self, cx: float, cy: float):
+        pts = self._poly_points
+        col = "#81c784" if self.tool == "reveal" else "#e57373"
+        if pts:
+            x0, y0 = pts[-1]
+            self._poly_ids.append(self.canvas.create_line(
+                x0, y0, cx, cy, fill=col, width=1, tags="poly_preview"))
+        r = 3
+        self._poly_ids.append(self.canvas.create_rectangle(
+            cx-r, cy-r, cx+r, cy+r,
+            outline=col, fill="#1a1a1a", width=1, tags="poly_preview"))
+        pts.append((cx, cy))
+        self._poly_update_preview(cx, cy)
+
+    def _poly_update_preview(self, cx: float, cy: float):
+        self.canvas.delete("poly_preview_cursor")
+        pts = self._poly_points
+        if not pts:
             return
-        self._last_fog_cell = pos
-        cells     = self._brush_cells(col, row)
-        is_reveal = (self.tool == "reveal")
-        for (c, r) in cells:
-            self._fog[r, c] = not is_reveal
-        self._fog_dirty_update(cells)
+        col = "#81c784" if self.tool == "reveal" else "#e57373"
+        x0, y0 = pts[-1]
+        self.canvas.create_line(x0, y0, cx, cy,
+            fill=col, width=1, dash=(4, 4),
+            tags=("poly_preview", "poly_preview_cursor"))
+        if len(pts) >= 2:
+            x1, y1 = pts[0]
+            self.canvas.create_line(cx, cy, x1, y1,
+                fill=col, width=1, dash=(2, 6),
+                tags=("poly_preview", "poly_preview_cursor"))
+
+    def _poly_cancel(self):
+        self.canvas.delete("poly_preview")
+        self._poly_points.clear()
+        self._poly_ids.clear()
+
+    def _poly_apply(self):
+        from PIL import ImageDraw as _ID
+        pts = self._poly_points
+        if len(pts) < 3:
+            self._poly_cancel()
+            return
+        cp  = self._cp
+        mw  = self.cols * self.cell_px
+        mh  = self.rows * self.cell_px
+        if self._fog_mask is None:
+            self._fog_mask = Image.new("L", (mw, mh), 255)
+        inv    = self.cell_px / cp
+        scaled = [(cx * inv, cy * inv) for cx, cy in pts]
+        fill   = 255 if self.tool == "hide" else 0
+        _ID.Draw(self._fog_mask).polygon(scaled, fill=fill)
+        self._poly_cancel()
+        self._fog_pil = None
+        self._rebuild_fog()
+        self._composite()
+        self._save_state()
 
     # ─── Événements souris ────────────────────────────────────────────────────
 
@@ -684,28 +938,74 @@ class CombatMapWindow:
         elif self.tool == "add":
             self._add_token(cx, cy)
         elif self.tool in ("reveal", "hide"):
-            self._apply_fog_at(cx, cy)
+            self._poly_add_point(cx, cy)
+        elif self.tool == "note":
+            # Débuter drag si on clique sur une note existante, sinon créer
+            hit = self._note_at(cx, cy)
+            if hit is not None:
+                self._drag_note = hit
+                self._drag_note_off = (cx - hit["px"] * self.zoom,
+                                       cy - hit["py"] * self.zoom)
+            # sinon : on attend le release (pas de drag) pour créer
+        elif self.tool == "door":
+            col, row = self._canvas_to_cell(cx, cy)
+            self._door_toggle_or_create(col, row)
+        elif self.tool == "select":
+            if self._drag_token is None:
+                self._box_select_begin(cx, cy)
 
     def _mb1_move(self, event):
         cx, cy = self._canvas_xy(event)
-        if self.tool == "resize_map":
+        if self._drag_note is not None:
+            # Déplacer la note en temps réel
+            n = self._drag_note
+            n["px"] = (cx - self._drag_note_off[0]) / self.zoom
+            n["py"] = (cy - self._drag_note_off[1]) / self.zoom
+            self._redraw_one_note(n)
+        elif self._drag_token is not None:
+            self._tok_drag(event, self._drag_token)
+        elif self._box_select_start is not None:
+            self._box_select_update(cx, cy)
+        elif self.tool == "resize_map":
             self._map_resize_drag(cx, cy, event)
-        elif self.tool in ("reveal", "hide"):
-            self._apply_fog_at(cx, cy)
 
     def _mb1_up(self, event):
+        cx, cy = self._canvas_xy(event)
         self._last_fog_cell = None
-        if self.tool == "resize_map":
-            self._map_resize_end()
-        elif self.tool in ("reveal", "hide"):
-            if self._pending_render is not None:
-                self.win.after_cancel(self._pending_render)
-                self._pending_render = None
-            self._composite()
+        if self._drag_note is not None:
+            # Snap léger vers grille si très proche d'un bord de case
             self._save_state()
+            self._drag_note = None
+            self._drag_note_off = (0.0, 0.0)
+        elif self.tool == "note" and self._drag_note is None:
+            # Pas de drag → créer une nouvelle note
+            if not self._note_at(cx, cy):
+                self._create_note(cx, cy)
+        elif self._drag_token is not None:
+            self._tok_release(event, self._drag_token)
+        elif self._box_select_start is not None:
+            shift = bool(event.state & 0x0001)
+            self._box_select_end(cx, cy, shift)
+        elif self.tool == "resize_map":
+            self._map_resize_end()
 
     def _mb3_down(self, event):
         cx, cy = self._canvas_xy(event)
+        if self.tool in ("reveal", "hide"):
+            self._poly_apply()
+            return
+        # Clic droit sur une porte → la supprimer
+        col, row = self._canvas_to_cell(cx, cy)
+        door_hit = self._door_at(col, row)
+        if door_hit is not None:
+            self._delete_door(door_hit)
+            return
+        # Clic droit sur une note → la supprimer
+        hit = self._note_at(cx, cy)
+        if hit is not None:
+            self._delete_note(hit)
+            return
+        # Clic droit sur un token → le supprimer
         items = self.canvas.find_overlapping(cx-8, cy-8, cx+8, cy+8)
         for iid in items:
             if "token" in self.canvas.gettags(iid):
@@ -724,7 +1024,9 @@ class CombatMapWindow:
             self._pos_var.set(f"Col {col+1} / Lig {row+1}")
         else:
             self._pos_var.set("")
-        # Curseur adaptatif en mode resize_map
+        # Prévisualisation polygone
+        if self.tool in ("reveal", "hide") and self._poly_points:
+            self._poly_update_preview(cx, cy)
         if self.tool == "resize_map" and self._map_resize_handle is None:
             handle = self._hit_test_handle(cx, cy)
             cursor_map = {
@@ -742,14 +1044,69 @@ class CombatMapWindow:
 
     def _pan_drag(self, event):
         self.canvas.scan_dragto(event.x, event.y, gain=1)
+        self._schedule_tile_refresh(delay=30)
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
 
     def _do_zoom(self, event):
-        factor = 1.18 if (event.num == 4 or getattr(event, "delta", 0) > 0) else 1/1.18
+        factor = 1.10 if (event.num == 4 or getattr(event, "delta", 0) > 0) else 1/1.10
         new_zoom = max(0.25, min(4.0, self.zoom * factor))
         if abs(new_zoom - self.zoom) < 0.001:
             return
+
+        # Coord canvas du point sous le curseur AVANT zoom
+        cx = self.canvas.canvasx(event.x)
+        cy = self.canvas.canvasy(event.y)
+
+        # Mémoriser l'ancre au début de la séquence (premier tick de molette)
+        if self._zoom_rebuild_pending is None:
+            self._zoom_anchor_world_x = cx / self.zoom   # coord monde normalisée
+            self._zoom_anchor_world_y = cy / self.zoom
+            self._zoom_anchor_ex = event.x
+            self._zoom_anchor_ey = event.y
+
         self.zoom = new_zoom
-        self._full_redraw()
+        self._zoom_lbl.config(text=f"{int(self.zoom * 100)}%")
+
+        # Throttle : on annule le rebuild précédent et on en replanifie un
+        # dans 16 ms (~60 fps). La molette peut envoyer des événements plus vite
+        # que ça — on saute les intermédiaires, on ne garde que le dernier.
+        if self._zoom_rebuild_pending is not None:
+            self.win.after_cancel(self._zoom_rebuild_pending)
+        self._zoom_rebuild_pending = self.win.after(16, self._zoom_rebuild_final)
+
+    def _zoom_rebuild_final(self):
+        """Rebuild PIL au zoom courant, ancré sur le point mémorisé sous le curseur."""
+        self._zoom_rebuild_pending = None
+
+        # ── 1. Repositionner le scroll D'ABORD ───────────────────────────────
+        # _visible_rect() lit xview/yview → doit être correct avant le rebuild.
+        W, H = self._wh
+        sr_w, sr_h = W + 40, H + 40
+        self.canvas.config(scrollregion=(0, 0, sr_w, sr_h))
+
+        new_cx = self._zoom_anchor_world_x * self.zoom
+        new_cy = self._zoom_anchor_world_y * self.zoom
+        fx = max(0.0, min(1.0, (new_cx - self._zoom_anchor_ex) / sr_w))
+        fy = max(0.0, min(1.0, (new_cy - self._zoom_anchor_ey) / sr_h))
+        self.canvas.xview_moveto(fx)
+        self.canvas.yview_moveto(fy)
+        self.canvas.update_idletasks()   # flush → xview() à jour pour _visible_rect
+
+        # ── 2. Rebuild de la tuile visible ────────────────────────────────────
+        self._bg_pil  = None
+        self._fog_pil = None
+        # Invalider le cache de la carte scalée (taille change avec le zoom)
+        self._map_scaled_size = (-1, -1)
+        self._img_id  = 0
+        self.canvas.delete("scene")
+        self._rebuild_bg()
+        self._rebuild_fog()
+        self._redraw_all_doors()
+        self._composite()
+        self._redraw_all_tokens()
+        self._redraw_all_notes()
+        if self.tool == "resize_map":
+            self._draw_map_handles()
 
     # ─── Outil redimensionnement carte (poignées drag) ───────────────────────
 
@@ -757,11 +1114,11 @@ class CombatMapWindow:
 
     def _map_rect_canvas(self) -> tuple:
         """Retourne (x0, y0, x1, y1) du rectangle de l'image en coordonnées canvas."""
-        z = self.zoom
-        x0 = int(self.map_ox * z) if False else self.map_ox   # map_ox est déjà en px canvas
-        y0 = self.map_oy
-        x1 = x0 + int(self.map_w * self.zoom)
-        y1 = y0 + int(self.map_h * self.zoom)
+        scale = self._cp / self.cell_px
+        x0 = int(self.map_ox * scale)
+        y0 = int(self.map_oy * scale)
+        x1 = x0 + int(self.map_w * scale)
+        y1 = y0 + int(self.map_h * scale)
         return x0, y0, x1, y1
 
     def _draw_map_handles(self):
@@ -850,7 +1207,8 @@ class CombatMapWindow:
         s = self._map_resize_start
         dx = cx - s["cx"]
         dy = cy - s["cy"]
-        z  = self.zoom
+        cp   = self._cp
+        inv  = self.cell_px / cp
         lock = self._lock_ratio or bool(event.state & 0x0001)
 
         ox, oy = s["map_ox"], s["map_oy"]
@@ -861,45 +1219,38 @@ class CombatMapWindow:
         handle = self._map_resize_handle
 
         if handle == "move":
-            # Déplacer l'image entière
-            self.map_ox = int(ox + dx)
-            self.map_oy = int(oy + dy)
-
+            self.map_ox = int(ox + dx * inv)
+            self.map_oy = int(oy + dy * inv)
         else:
-            # Convertir delta canvas → delta espace-image (dé-zoomer)
-            ddx = dx / z
-            ddy = dy / z
-
+            ddx = dx * inv
+            ddy = dy * inv
             new_ox, new_oy = ox, oy
             new_w,  new_h  = mw, mh
-
-            if "w" in handle:   # bord gauche : tire l'origine + réduit largeur
+            if "w" in handle:
                 delta_w = -ddx
                 new_w  = max(20, mw + delta_w)
-                new_ox = ox - int((new_w - mw) * z)
-            if "e" in handle:   # bord droit : étire la largeur
+                new_ox = ox - int(new_w - mw)
+            if "e" in handle:
                 new_w  = max(20, mw + ddx)
-            if "n" in handle:   # bord haut
+            if "n" in handle:
                 delta_h = -ddy
                 new_h  = max(20, mh + delta_h)
-                new_oy = oy - int((new_h - mh) * z)
-            if "s" in handle:   # bord bas
+                new_oy = oy - int(new_h - mh)
+            if "s" in handle:
                 new_h  = max(20, mh + ddy)
-
             if lock and new_w != mw:
-                # Ratio basé sur axe dominant
                 if abs(new_w - mw) >= abs(new_h - mh):
                     new_h = new_w / orig_ratio
                     if "n" in handle:
-                        new_oy = oy - int((new_h - mh) * z)
+                        new_oy = oy - int(new_h - mh)
                 else:
                     new_w = new_h * orig_ratio
                     if "w" in handle:
-                        new_ox = ox - int((new_w - mw) * z)
+                        new_ox = ox - int(new_w - mw)
             elif lock and new_h != mh:
                 new_w = new_h * orig_ratio
                 if "w" in handle:
-                    new_ox = ox - int((new_w - mw) * z)
+                    new_ox = ox - int(new_w - mw)
 
             self.map_w  = max(20, int(new_w))
             self.map_h  = max(20, int(new_h))
@@ -946,45 +1297,127 @@ class CombatMapWindow:
         self._save_state()
 
     def _change_cell_size(self, delta: int):
-        """Shift+↑/↓ : change la taille de case de 1 px. Déclenche un full redraw."""
+        """Shift+↑/↓ : change la taille de case de 1 px (rendu déboncé 80 ms)."""
         new_size = max(CELL_PX_MIN, min(CELL_PX_MAX, self.cell_px + delta))
         if new_size == self.cell_px:
             return
         self.cell_px = new_size
-        self._bg_pil  = None   # invalide le cache fond
-        self._fog_pil = None
-        self._full_redraw()
+        self._cellpx_lbl.config(text=f"{self.cell_px}px")
+        if getattr(self, "_cell_resize_pending", None):
+            self.win.after_cancel(self._cell_resize_pending)
+        def _do_redraw():
+            self._cell_resize_pending = None
+            self._bg_pil  = None
+            self._fog_pil = None
+            self._full_redraw()
+        self._cell_resize_pending = self.win.after(80, _do_redraw)
 
-    # ─── Drag tokens ─────────────────────────────────────────────────────────
+    # ─── Drag tokens (multi-sélection) ───────────────────────────────────────
 
     def _tok_press(self, event, tok):
         if self.tool != "select":
             return
-        self._drag_token = tok
+        shift = bool(event.state & 0x0001)
+        if shift:
+            if id(tok) in self._selected_tokens:
+                self._selected_tokens.discard(id(tok))
+            else:
+                self._selected_tokens.add(id(tok))
+            self._redraw_one_token(tok)
+            return
+        if id(tok) not in self._selected_tokens:
+            self._clear_selection()
+            self._selected_tokens.add(id(tok))
+            self._redraw_one_token(tok)
         cx, cy = self._canvas_xy(event)
         cp = self._cp
-        self._drag_offset = (cx - (tok["col"]+0.5)*cp,
-                             cy - (tok["row"]+0.5)*cp)
+        self._drag_token  = tok
+        self._drag_offset = (cx - (tok["col"] + 0.5) * cp,
+                             cy - (tok["row"] + 0.5) * cp)
+        self._drag_origins = {
+            id(t): (t["col"], t["row"])
+            for t in self.tokens if id(t) in self._selected_tokens
+        }
 
     def _tok_drag(self, event, tok):
-        if self._drag_token is not tok:
+        if self._drag_token is None:
             return
         cx, cy = self._canvas_xy(event)
         cp = self._cp
-        tok["col"] = max(0.0, min(self.cols-1.0,
-                                   (cx - self._drag_offset[0]) / cp - 0.5))
-        tok["row"] = max(0.0, min(self.rows-1.0,
-                                   (cy - self._drag_offset[1]) / cp - 0.5))
-        self._redraw_one_token(tok)
+        new_col = (cx - self._drag_offset[0]) / cp - 0.5
+        new_row = (cy - self._drag_offset[1]) / cp - 0.5
+        dcol = new_col - self._drag_origins[id(tok)][0]
+        drow = new_row - self._drag_origins[id(tok)][1]
+        for t in self.tokens:
+            if id(t) not in self._selected_tokens:
+                continue
+            oc, or_ = self._drag_origins[id(t)]
+            t["col"] = max(0.0, min(self.cols - 1.0, oc + dcol))
+            t["row"] = max(0.0, min(self.rows - 1.0, or_ + drow))
+            self._redraw_one_token(t)
 
     def _tok_release(self, event, tok):
-        if self._drag_token is not tok:
+        if self._drag_token is None:
             return
-        tok["col"] = round(max(0, min(self.cols-1, tok["col"])))
-        tok["row"] = round(max(0, min(self.rows-1, tok["row"])))
-        self._redraw_one_token(tok)
-        self._drag_token = None
+        for t in self.tokens:
+            if id(t) not in self._selected_tokens:
+                continue
+            t["col"] = round(max(0, min(self.cols - 1, t["col"])))
+            t["row"] = round(max(0, min(self.rows - 1, t["row"])))
+            self._redraw_one_token(t)
+        self._drag_token   = None
+        self._drag_origins = {}
         self._save_state()
+
+    # ─── Sélection rectangulaire ──────────────────────────────────────────────
+
+    def _clear_selection(self):
+        prev = set(self._selected_tokens)
+        self._selected_tokens.clear()
+        for t in self.tokens:
+            if id(t) in prev:
+                self._redraw_one_token(t)
+
+    def _box_select_begin(self, cx: float, cy: float):
+        self._box_select_start = (cx, cy)
+        if self._box_rect_id:
+            self.canvas.delete(self._box_rect_id)
+        self._box_rect_id = self.canvas.create_rectangle(
+            cx, cy, cx, cy,
+            outline="#ffffff", width=1, dash=(4, 3), tags="box_select")
+
+    def _box_select_update(self, cx: float, cy: float):
+        if not self._box_select_start:
+            return
+        x0, y0 = self._box_select_start
+        self.canvas.coords(self._box_rect_id, x0, y0, cx, cy)
+
+    def _box_select_end(self, cx: float, cy: float, shift: bool):
+        if not self._box_select_start:
+            return
+        x0, y0 = self._box_select_start
+        self._box_select_start = None
+        if self._box_rect_id:
+            self.canvas.delete(self._box_rect_id)
+            self._box_rect_id = 0
+        rx0, rx1 = min(x0, cx), max(x0, cx)
+        ry0, ry1 = min(y0, cy), max(y0, cy)
+        if rx1 - rx0 < 4 and ry1 - ry0 < 4:
+            if not shift:
+                self._clear_selection()
+            return
+        if not shift:
+            self._clear_selection()
+        cp = self._cp
+        for t in self.tokens:
+            tcx = (t["col"] + 0.5) * cp
+            tcy = (t["row"] + 0.5) * cp
+            if rx0 <= tcx <= rx1 and ry0 <= tcy <= ry1:
+                if shift and id(t) in self._selected_tokens:
+                    self._selected_tokens.discard(id(t))
+                else:
+                    self._selected_tokens.add(id(t))
+                self._redraw_one_token(t)
 
     # ─── Actions toolbar ─────────────────────────────────────────────────────
 
@@ -1039,6 +1472,8 @@ class CombatMapWindow:
             self.map_image_path   = path
             self._map_pil_cache   = None
             self._map_path_cached = ""
+            self._map_scaled_cache = None
+            self._map_scaled_size  = (-1, -1)
             # Initialise la taille à celle de l'image native (plafonnée si très grande),
             # pour préserver les proportions originales par défaut.
             try:
@@ -1060,13 +1495,17 @@ class CombatMapWindow:
             self._set_tool("resize_map")
 
     def _reveal_all(self):
-        self._fog[:] = False
+        mw, mh = self.cols * self.cell_px, self.rows * self.cell_px
+        self._fog_mask = Image.new("L", (mw, mh), 0)
+        self._fog_pil  = None
         self._rebuild_fog()
         self._composite()
         self._save_state()
 
     def _cover_all(self):
-        self._fog[:] = True
+        mw, mh = self.cols * self.cell_px, self.rows * self.cell_px
+        self._fog_mask = Image.new("L", (mw, mh), 255)
+        self._fog_pil  = None
         self._rebuild_fog()
         self._composite()
         self._save_state()
@@ -1080,18 +1519,25 @@ class CombatMapWindow:
             initialvalue=self.rows, minvalue=5, maxvalue=40, parent=self.win)
         if rows is None:
             return
-        old_fog = self._fog.copy()
-        new_fog = np.ones((rows, cols), dtype=bool)
-        rr = min(rows, self.rows)
-        cc = min(cols, self.cols)
-        new_fog[:rr, :cc] = old_fog[:rr, :cc]
-        # Met à jour map_w/map_h proportionnellement au nouveau nombre de cases
-        self.map_w = int(self.map_w * cols / self.cols) if self.cols else cols * self.cell_px
-        self.map_h = int(self.map_h * rows / self.rows) if self.rows else rows * self.cell_px
+
+        # Recadre / étend le fog mask
+        old_mw = self.cols * self.cell_px
+        old_mh = self.rows * self.cell_px
+        new_mw = cols * self.cell_px
+        new_mh = rows * self.cell_px
+        if self._fog_mask is None:
+            self._fog_mask = Image.new("L", (old_mw, old_mh), 255)
+        new_mask = Image.new("L", (new_mw, new_mh), 255)
+        new_mask.paste(self._fog_mask.crop((0, 0,
+                                            min(old_mw, new_mw),
+                                            min(old_mh, new_mh))), (0, 0))
+        self._fog_mask = new_mask
+
+        # map_w/map_h intentionnellement inchangés : ne touche que la grille.
         self.cols, self.rows = cols, rows
-        self._fog   = new_fog
         self.tokens = [t for t in self.tokens
                        if 0 <= t["col"] < cols and 0 <= t["row"] < rows]
+        self._fog_pil = None
         self._full_redraw()
         self._save_state()
 
@@ -1102,7 +1548,7 @@ class CombatMapWindow:
                 self._player_win.win.deiconify()
                 self._player_win.win.lift()
                 # Rafraîchit au cas où le fog a changé depuis
-                self._player_win.refresh(self._bg_pil, self._fog, self._cp,
+                self._player_win.refresh(self._bg_pil, self._fog_mask, self._cp,
                                          self.cols, self.rows, self.tokens)
                 return
             except Exception:
@@ -1114,11 +1560,12 @@ class CombatMapWindow:
         )
         # Rendu initial
         if self._bg_pil is not None:
-            self._player_win.refresh(self._bg_pil, self._fog, self._cp,
+            self._player_win.refresh(self._bg_pil, self._fog_mask, self._cp,
                                      self.cols, self.rows, self.tokens)
 
     def _send_to_agents(self):
-        """Génère une description textuelle + image de la carte et l'injecte aux agents."""
+        """Génère une description textuelle + image de la carte et l'injecte aux agents.
+        L'image est sauvegardée dans campagne/<nom_campagne>/ avec horodatage."""
         if self.inject_fn is None and self.msg_queue is None:
             messagebox.showinfo(
                 "Agents non disponibles",
@@ -1129,34 +1576,57 @@ class CombatMapWindow:
 
         desc = self._build_map_description()
 
-        # Sauvegarde l'image vue-joueurs dans un fichier tmp
+        # ── Dossier de sauvegarde campagne ────────────────────────────────────
+        import datetime as _dt
+        try:
+            from app_config import get_campaign_name
+            camp_name = get_campaign_name()
+        except Exception:
+            camp_name = "campagne"
+        camp_name = "".join(c for c in camp_name if c.isalnum() or c in (" ", "-", "_")).strip() or "campagne"
+        camp_dir  = os.path.join("campagne", camp_name)
+        os.makedirs(camp_dir, exist_ok=True)
+
+        # ── Rendu et sauvegarde de l'image ────────────────────────────────────
         img_path = ""
         try:
             player_img = self._render_player_image()
-            fd, img_path = tempfile.mkstemp(suffix=".png", prefix="combat_map_")
-            os.close(fd)
+            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            fname = f"carte_{ts}.png"
+            img_path = os.path.join(camp_dir, fname)
             player_img.save(img_path, "PNG")
             desc += f"\n[Image carte sauvegardée : {img_path}]"
+            print(f"[CombatMap] Image sauvegardée → {img_path}")
         except Exception as e:
             print(f"[CombatMap] export image : {e}")
 
-        # Affichage dans le chat
+        # ── Affichage dans le chat ─────────────────────────────────────────────
         if self.msg_queue is not None:
             self.msg_queue.put({
                 "sender": "Carte de Combat",
-                "text":   desc,
+                "text":   desc + (f"\n📁 {img_path}" if img_path else ""),
                 "color":  "#64b5f6",
             })
 
-        # Injection dans autogen (text uniquement — compatible tous modèles)
+        # ── Injection dans autogen (texte uniquement — compatible tous modèles) ──
         if self.inject_fn is not None:
             self.inject_fn(desc)
 
     def _build_map_description(self) -> str:
         """Construit une description textuelle de la carte visible par les joueurs."""
-        cp = self._cp
-        total = self.cols * self.rows
-        hidden = int(self._fog.sum())
+        total   = self.cols * self.rows
+        cp_px   = self.cell_px
+        mw, mh  = self.cols * cp_px, self.rows * cp_px
+        mask    = self._fog_mask if self._fog_mask else Image.new("L", (mw, mh), 255)
+        mask_arr = np.array(mask)
+
+        def _cell_covered(c, r):
+            px = min(int((c + 0.5) * cp_px), mw - 1)
+            py = min(int((r + 0.5) * cp_px), mh - 1)
+            return mask_arr[py, px] > 127
+
+        hidden  = sum(1 for r in range(self.rows)
+                      for c in range(self.cols) if _cell_covered(c, r))
         visible = total - hidden
 
         lines = [
@@ -1166,63 +1636,528 @@ class CombatMapWindow:
             "",
         ]
 
-        # Tokens visibles (cases non couvertes)
-        visible_tokens = []
-        hidden_tokens  = []
+        visible_tokens, hidden_tokens = [], []
         for tok in self.tokens:
-            c, r = int(tok["col"]), int(tok["row"])
+            c, r  = int(tok["col"]), int(tok["row"])
             label = f"{tok['name']} ({tok['type']}) → Col {c+1}, Lig {r+1}"
-            if 0 <= r < self.rows and 0 <= c < self.cols and not self._fog[r, c]:
+            if 0 <= r < self.rows and 0 <= c < self.cols and not _cell_covered(c, r):
                 visible_tokens.append(label)
             else:
                 hidden_tokens.append(label)
 
         if visible_tokens:
             lines.append("Tokens visibles :")
-            for t in visible_tokens:
-                lines.append(f"  • {t}")
+            for t in visible_tokens: lines.append(f"  • {t}")
         else:
             lines.append("Aucun token visible (tout est sous brouillard).")
-
         if hidden_tokens:
-            lines.append("Tokens sous brouillard (positions inconnues des joueurs) :")
-            for t in hidden_tokens:
-                lines.append(f"  ? {t}")
+            lines.append("Tokens sous brouillard :")
+            for t in hidden_tokens: lines.append(f"  ? {t}")
 
         lines.append("")
         lines.append("Zones révélées (colonnes × lignes, numérotation 1-based) :")
-
-        # Résumé des blocs révélés par ligne
         revealed_rows = []
         for r in range(self.rows):
-            revealed_cols = [c+1 for c in range(self.cols) if not self._fog[r, c]]
+            revealed_cols = [c+1 for c in range(self.cols) if not _cell_covered(c, r)]
             if revealed_cols:
-                # Compresse en plages
                 ranges = _compress_ranges(revealed_cols)
                 revealed_rows.append(f"  Lig {r+1} : colonnes {ranges}")
         if revealed_rows:
-            lines.extend(revealed_rows[:20])  # max 20 lignes pour ne pas saturer
+            lines.extend(revealed_rows[:20])
             if len(revealed_rows) > 20:
                 lines.append(f"  … ({len(revealed_rows) - 20} lignes supplémentaires)")
         else:
             lines.append("  (aucune case révélée)")
 
+        # Notes flottantes MJ
+        notes_txt = self._notes_description()
+        if notes_txt:
+            lines.append(notes_txt)
+
         return "\n".join(lines)
 
     def _render_player_image(self) -> "Image.Image":
-        """Rend la carte avec fog opaque (vue joueurs) sans modifier l'état courant."""
-        if self._bg_pil is None:
-            self._rebuild_bg()
+        """
+        Rend la carte ENTIÈRE avec fog opaque (vue joueurs) + notes flottantes.
+        Indépendant du viewport actuel — utilise self.cell_px (zoom 1.0) pour
+        garder une résolution raisonnable quelle que soit la position du scroll.
+        """
+        cp = self.cell_px          # résolution fixe zoom 1.0 — toujours cohérente
+        W  = self.cols * cp
+        H  = self.rows  * cp
 
-        # Fog opaque temporaire
+        # ── Damier ────────────────────────────────────────────────────────────
+        ri  = np.arange(H) // cp
+        ci  = np.arange(W) // cp
+        chk = (ri[:, None] + ci[None, :]) % 2
+        arr = np.where(chk[:, :, None] == 0,
+                       np.array(_C_BG_A, dtype=np.uint8),
+                       np.array(_C_BG_B, dtype=np.uint8))
+        bg = Image.fromarray(arr.astype(np.uint8), "RGBA")
+
+        # ── Image de fond (carte) à zoom 1.0 ──────────────────────────────────
+        if self.map_image_path and os.path.exists(self.map_image_path):
+            try:
+                src = self._map_pil_cache
+                if src is None or self._map_path_cached != self.map_image_path:
+                    src = Image.open(self.map_image_path).convert("RGBA")
+                scale   = 1.0   # zoom 1.0
+                mw      = max(1, int(self.map_w * scale))
+                mh      = max(1, int(self.map_h * scale))
+                paste_x = int(self.map_ox * scale)
+                paste_y = int(self.map_oy * scale)
+                map_img = src.resize((mw, mh), Image.LANCZOS)
+                map_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+                map_layer.paste(map_img, (paste_x, paste_y))
+                bg = Image.alpha_composite(bg, map_layer)
+            except Exception as e:
+                print(f"[CombatMap] render_player_image fond : {e}")
+
+        # ── Grille ────────────────────────────────────────────────────────────
+        if self._show_grid and cp >= 4:
+            bg_arr = np.array(bg, dtype=np.float32)
+            gc = np.array(_C_GRID[:3], dtype=np.float32)
+            ga = _C_GRID[3] / 255.0
+            for c in range(self.cols + 1):
+                x = min(c * cp, W - 1)
+                bg_arr[:, x, :3] = ga * gc + (1 - ga) * bg_arr[:, x, :3]
+            for r in range(self.rows + 1):
+                y = min(r * cp, H - 1)
+                bg_arr[y, :, :3] = ga * gc + (1 - ga) * bg_arr[y, :, :3]
+            bg_arr[:, :, 3] = 255
+            bg = Image.fromarray(bg_arr.astype(np.uint8), "RGBA")
+
+        # ── Fog opaque (vue joueurs) ───────────────────────────────────────────
+        mw_fog, mh_fog = self.cols * self.cell_px, self.rows * self.cell_px
+        mask = self._fog_mask if self._fog_mask else Image.new("L", (mw_fog, mh_fog), 255)
+        scaled = mask.resize((W, H), Image.NEAREST)
+        fog_arr = np.array(scaled, dtype=np.uint8)
+        fog_rgba = np.zeros((H, W, 4), dtype=np.uint8)
+        fog_rgba[fog_arr > 0] = _C_FOG_PLAYER
+        fog_opaque = Image.fromarray(fog_rgba, "RGBA")
+        scene = Image.alpha_composite(bg, fog_opaque)
+
+        # ── Notes flottantes ──────────────────────────────────────────────────
+        if self._notes:
+            scene = self._composite_notes_pil(scene, W, H, zoom_override=1.0)
+        return scene
+
+    def _composite_notes_pil(self, base: "Image.Image", W: int, H: int,
+                              zoom_override: float | None = None) -> "Image.Image":
+        """Surimprime les notes (fond noir transparent + texte coloré) sur l'image exportée."""
+        from PIL import ImageDraw as _ID, ImageFont as _IF
+        overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        draw    = _ID.Draw(overlay)
+        z       = zoom_override if zoom_override is not None else self.zoom
+        hw      = self.NOTE_W / 2
+        hh      = self.NOTE_H / 3
+
+        for n in self._notes:
+            cx = int(n["px"] * z)
+            cy = int(n["py"] * z)
+
+            # Fond noir semi-transparent (alpha 128 ≈ 50%)
+            draw.rectangle(
+                [cx - hw, cy - hh, cx + hw, cy + hh],
+                fill=(0, 0, 0, 128))
+
+            font_size = max(9, int(9 * z))
+            try:
+                font = _IF.truetype(
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+                    font_size)
+            except Exception:
+                font = _IF.load_default()
+
+            col_hex = n["color"].lstrip("#")
+            r, g, b = int(col_hex[0:2], 16), int(col_hex[2:4], 16), int(col_hex[4:6], 16)
+
+            # Halo noir pour lisibilité
+            for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+                draw.text((cx + dx, cy + dy), n["text"],
+                          fill=(0, 0, 0, 220), font=font, anchor="mm", align="center")
+            # Texte coloré
+            draw.text((cx, cy), n["text"],
+                      fill=(r, g, b, 255), font=font, anchor="mm", align="center")
+
+        return Image.alpha_composite(base, overlay)
+
+    # ─── Notes flottantes (post-its déplaçables) ────────────────────────────
+
+    NOTE_COLORS = ["#ffe082", "#80cbc4", "#ef9a9a", "#ce93d8",
+                   "#80deea", "#a5d6a7", "#ffcc80", "#f48fb1"]
+    # Largeur fixe d'un post-it en px canvas (indépendante du zoom)
+    NOTE_W = 120
+    NOTE_H = 68
+
+    # ── Helpers hit-test ──────────────────────────────────────────────────────
+
+    def _note_at(self, cx: float, cy: float) -> "dict | None":
+        """Retourne la note dont le cadre contient (cx, cy), ou None."""
+        z = self.zoom
+        hw, hh = self.NOTE_W / 2, self.NOTE_H / 2
+        for n in reversed(self._notes):   # reversed = dessus en premier
+            nx, ny = n["px"] * z, n["py"] * z
+            if (nx - hw <= cx <= nx + hw) and (ny - hh <= cy <= ny + hh):
+                return n
+        return None
+
+    # ── Création / édition ────────────────────────────────────────────────────
+
+    def _create_note(self, cx: float, cy: float):
+        """Ouvre le dialogue de saisie et place une note à (cx, cy) canvas."""
+        text = simpledialog.askstring(
+            "Nouvelle note",
+            "Texte de la note :",
+            parent=self.win)
+        if not text or not text.strip():
+            return
+        color = self.NOTE_COLORS[len(self._notes) % len(self.NOTE_COLORS)]
+        n = {
+            "px":  cx / self.zoom,
+            "py":  cy / self.zoom,
+            "text": text.strip(),
+            "color": color,
+            "canvas_ids": [],
+        }
+        self._notes.append(n)
+        self._draw_one_note(n)
+        self._save_state()
+
+    def _edit_note(self, n: dict):
+        """Dialogue d'édition du texte d'une note existante."""
+        text = simpledialog.askstring(
+            "Modifier la note",
+            "Nouveau texte (vide = supprimer) :",
+            initialvalue=n["text"],
+            parent=self.win)
+        if text is None:
+            return   # annulé
+        if not text.strip():
+            self._delete_note(n)
+            return
+        n["text"] = text.strip()
+        self._redraw_one_note(n)
+        self._save_state()
+
+    def _delete_note(self, n: dict):
+        """Supprime une note du canvas et de la liste."""
+        for cid in n.get("canvas_ids", []):
+            self.canvas.delete(cid)
+        if n in self._notes:
+            self._notes.remove(n)
+        self._save_state()
+
+    # ── Rendu ─────────────────────────────────────────────────────────────────
+
+    def _draw_one_note(self, n: dict):
+        """Dessine une note minimaliste : fond noir transparent + texte lisible."""
+        z   = self.zoom
+        cx  = n["px"] * z
+        cy  = n["py"] * z
+        col = n["color"]
+        fs  = max(7, int(9 * z))
+
+        # Fond noir semi-transparent (stipple gray50 ≈ 50%)
+        # On dimensionne dynamiquement selon le texte approximatif
+        hw = self.NOTE_W / 2
+        hh = self.NOTE_H / 3   # plus compact, juste pour le texte
+
+        bg = self.canvas.create_rectangle(
+            cx - hw, cy - hh, cx + hw, cy + hh,
+            fill="#000000", outline="", stipple="gray50",
+            tags=("note",))
+
+        # Halo noir (lisibilité) — décalé 1 px dans toutes directions
+        halos = []
+        for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            halos.append(self.canvas.create_text(
+                cx + dx, cy + dy,
+                text=n["text"],
+                fill="#000000",
+                font=("Consolas", fs, "bold"),
+                width=int(hw * 2) - 8,
+                justify=tk.CENTER,
+                tags=("note",)))
+
+        # Texte principal (couleur de la note — vive sur fond sombre)
+        txt = self.canvas.create_text(
+            cx, cy,
+            text=n["text"],
+            fill=col,
+            font=("Consolas", fs, "bold"),
+            width=int(hw * 2) - 8,
+            justify=tk.CENTER,
+            tags=("note",))
+
+        ids = [bg] + halos + [txt]
+        n["canvas_ids"] = ids
+
+        for iid in ids:
+            self.canvas.tag_bind(iid, "<ButtonPress-1>",
+                lambda e, note=n: self._note_press(e, note))
+            self.canvas.tag_bind(iid, "<Double-Button-1>",
+                lambda e, note=n: self._edit_note(note))
+            self.canvas.tag_bind(iid, "<ButtonPress-3>",
+                lambda e, note=n: self._delete_note(note))
+
+        self.canvas.tag_raise("note")
+        self.canvas.tag_raise("token")
+
+    def _redraw_one_note(self, n: dict):
+        """Efface et redessine une note."""
+        for cid in n.get("canvas_ids", []):
+            self.canvas.delete(cid)
+        n["canvas_ids"] = []
+        self._draw_one_note(n)
+
+    def _redraw_all_notes(self):
+        """Efface et redessine toutes les notes (après zoom/resize)."""
+        self.canvas.delete("note")
+        for n in self._notes:
+            n["canvas_ids"] = []
+        for n in self._notes:
+            self._draw_one_note(n)
+
+    @staticmethod
+    def _darken(hex_color: str, factor: float = 0.65) -> str:
+        """Assombrit une couleur hexadécimale."""
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return "#{:02x}{:02x}{:02x}".format(
+            int(r * factor), int(g * factor), int(b * factor))
+
+    # ── Drag depuis items de la note ──────────────────────────────────────────
+
+    def _note_press(self, event, note: dict):
+        """Initie un drag depuis un item canvas appartenant à une note."""
+        if self.tool != "note":
+            return
+        cx, cy = self._canvas_xy(event)
+        self._drag_note = note
+        self._drag_note_off = (cx - note["px"] * self.zoom,
+                               cy - note["py"] * self.zoom)
+
+    # ── Double-clic canvas (hors items bindés) ────────────────────────────────
+
+    def _mb1_double(self, event):
+        cx, cy = self._canvas_xy(event)
+        hit = self._note_at(cx, cy)
+        if hit is not None:
+            self._edit_note(hit)
+
+    # ── Build map description (inclure les notes) ─────────────────────────────
+
+
+    # ─── Outil Porte ─────────────────────────────────────────────────────────
+
+    def _door_at(self, col: int, row: int) -> "dict | None":
+        """Retourne la porte à (col, row) ou None."""
+        for d in self._doors:
+            if d["col"] == col and d["row"] == row:
+                return d
+        return None
+
+    def _door_toggle_or_create(self, col: int, row: int):
+        """Clic gauche : si une porte existe, bascule ouvert/fermé. Sinon ouvre
+        une mini-fenêtre pour saisir un label et crée la porte (fermée)."""
+        existing = self._door_at(col, row)
+        if existing is not None:
+            existing["open"] = not existing["open"]
+            self._redraw_one_door(existing)
+            self._save_state()
+            state_txt = "ouverte" if existing["open"] else "fermée"
+            label_txt = f" ({existing['label']})" if existing["label"] else ""
+            if hasattr(self, "_status_var"):
+                self._status_var.set(
+                    f"Porte{label_txt} — maintenant {state_txt} "
+                    f"(Col {col+1}, Lig {row+1})"
+                )
+            return
+
+        # Nouvelle porte : demander un label optionnel
+        dw = tk.Toplevel(self.win)
+        dw.title("Nouvelle porte")
+        dw.geometry("280x110")
+        dw.configure(bg="#0d1018")
+        dw.resizable(False, False)
+        dw.wait_visibility()
+        dw.grab_set()
+
+        tk.Label(dw, text=f"Porte — Col {col+1}, Lig {row+1}",
+                 bg="#0d1018", fg="#ff9966",
+                 font=("Consolas", 10, "bold")).pack(pady=(10, 2))
+        tk.Label(dw, text="Label (optionnel) :",
+                 bg="#0d1018", fg="#aaaacc",
+                 font=("Consolas", 8)).pack()
+        entry = tk.Entry(dw, bg="#252538", fg="#eeeeee",
+                         font=("Consolas", 10), insertbackground="#ff9966",
+                         relief="flat", width=24)
+        entry.pack(padx=14, ipady=3)
+        entry.focus_set()
+
+        def _confirm(event=None):
+            label = entry.get().strip()
+            dw.destroy()
+            door = {"col": col, "row": row, "open": False,
+                    "label": label, "canvas_ids": []}
+            self._doors.append(door)
+            self._redraw_one_door(door)  # utilise _cp courant
+            self._save_state()
+
+        entry.bind("<Return>", _confirm)
+        tk.Button(dw, text="Créer (fermée)", bg="#2c1200", fg="#ff9966",
+                  font=("Consolas", 9, "bold"), relief="flat",
+                  command=_confirm).pack(pady=6)
+
+    def _delete_door(self, door: dict):
+        for cid in door.get("canvas_ids", []):
+            self.canvas.delete(cid)
+        if door in self._doors:
+            self._doors.remove(door)
+        self._save_state()
+
+    def _draw_one_door(self, door: dict):
+        """Overlay d'état de porte sur l'image — couvre visuellement la porte dessinée.
+
+        Porte FERMÉE : fond opaque rouge foncé + barres croisées + texte "FERMÉE"
+                       → écrase une porte ouverte dans l'image.
+        Porte OUVERTE : fond opaque vert foncé + arc ouvert + texte "OUVERTE"
+                       → écrase une porte fermée dans l'image.
+        """
         cp   = self._cp
-        W, H = self._wh
-        fog_px = np.repeat(np.repeat(self._fog, cp, axis=0), cp, axis=1)
-        arr    = np.zeros((H, W, 4), dtype=np.uint8)
-        arr[fog_px] = _C_FOG_PLAYER
-        fog_opaque = Image.fromarray(arr, "RGBA")
+        col, row = door["col"], door["row"]
+        x0   = col * cp
+        y0   = row * cp
+        x1   = x0 + cp
+        y1   = y0 + cp
+        cx_  = x0 + cp * 0.5
+        cy_  = y0 + cp * 0.5
+        ids  = []
+        pad  = max(2, int(cp * 0.06))   # marge intérieure
 
-        return Image.alpha_composite(self._bg_pil, fog_opaque)
+        if door["open"]:
+            # ── OUVERTE : fond vert opaque + arc D&D style + "OUVERT" ───────
+            # Fond semi-opaque couvrant la case entière
+            ids.append(self.canvas.create_rectangle(
+                x0 + pad, y0 + pad, x1 - pad, y1 - pad,
+                fill="#0a2a0a", outline="#44cc66", width=2, tags="door"))
+            # Arc ouvert (porte pivotée) — style plan architectural
+            r = cp * 0.36
+            ids.append(self.canvas.create_arc(
+                cx_ - r, cy_ - r, cx_ + r, cy_ + r,
+                start=0, extent=90, style="arc",
+                outline="#44ee66", width=max(2, int(cp * 0.07)), tags="door"))
+            # Ligne du battant
+            ids.append(self.canvas.create_line(
+                cx_, cy_, cx_ + r, cy_,
+                fill="#44ee66", width=max(2, int(cp * 0.07)), tags="door"))
+            # Label état
+            font_sz = max(6, int(cp * 0.20))
+            label_txt = door["label"] if door.get("label") else "OUVERT"
+            ids.append(self.canvas.create_text(
+                cx_, y1 - max(5, int(cp * 0.16)),
+                text=label_txt, fill="#88ffaa",
+                font=("Consolas", font_sz, "bold"), tags="door"))
+        else:
+            # ── FERMÉE : fond rouge opaque + barres + cadenas + "FERMÉ" ────
+            ids.append(self.canvas.create_rectangle(
+                x0 + pad, y0 + pad, x1 - pad, y1 - pad,
+                fill="#1e0000", outline="#cc3300", width=2, tags="door"))
+            # Deux barres croisées (verrou visuel)
+            m = int(cp * 0.22)
+            ids.append(self.canvas.create_line(
+                cx_ - m, cy_, cx_ + m, cy_,
+                fill="#cc3300", width=max(3, int(cp * 0.09)), tags="door"))
+            ids.append(self.canvas.create_line(
+                cx_, cy_ - m, cx_, cy_ + m,
+                fill="#cc3300", width=max(3, int(cp * 0.09)), tags="door"))
+            # Petit carré central (cadenas)
+            hs = max(3, int(cp * 0.10))
+            ids.append(self.canvas.create_rectangle(
+                cx_ - hs, cy_ - hs, cx_ + hs, cy_ + hs,
+                outline="#ff6633", fill="#3a0000",
+                width=1, tags="door"))
+            # Label état
+            font_sz = max(6, int(cp * 0.20))
+            label_txt = door["label"] if door.get("label") else "FERMÉ"
+            ids.append(self.canvas.create_text(
+                cx_, y1 - max(5, int(cp * 0.16)),
+                text=label_txt, fill="#ff8866",
+                font=("Consolas", font_sz, "bold"), tags="door"))
+
+        door["canvas_ids"] = ids
+
+    def _redraw_one_door(self, door: dict):
+        for cid in door.get("canvas_ids", []):
+            self.canvas.delete(cid)
+        door["canvas_ids"] = []
+        self._draw_one_door(door)
+
+    def _redraw_all_doors(self):
+        self.canvas.delete("door")
+        for d in self._doors:
+            d["canvas_ids"] = []
+            self._draw_one_door(d)
+
+    def _doors_description(self) -> str:
+        """Description textuelle des portes pour les agents."""
+        if not self._doors:
+            return ""
+        lines = ["\n🚪 PORTES :"]
+        for d in self._doors:
+            state  = "ouverte" if d["open"] else "FERMÉE"
+            label  = f" — {d['label']}" if d.get("label") else ""
+            lines.append(
+                f"  • Col {d['col']+1}, Lig {d['row']+1}{label} : {state}")
+        return "\n".join(lines)
+
+    def _notes_description(self) -> str:
+        if not self._notes:
+            return ""
+        lines = ["\nNotes MJ sur la carte :"]
+        for n in self._notes:
+            # px/py sont en espace-map (indépendant du zoom)
+            col = int(n["px"] / self.cell_px)
+            row = int(n["py"] / self.cell_px)
+            lines.append(f"  📌 Col {col+1}, Lig {row+1} : {n['text']}")
+        return "\n".join(lines)
+
+    def move_token(self, name: str, new_col: int, new_row: int) -> str:
+        """
+        Déplace le token du personnage 'name' vers (new_col, new_row).
+        Appelé depuis autogen_engine quand un agent déclare un mouvement confirmé.
+        Thread-safe uniquement si appelé via root.after() depuis le thread Tk.
+        Retourne un message descriptif du déplacement pour le chat.
+        """
+        for tok in self.tokens:
+            if tok.get("name") == name:
+                old_col = int(round(tok["col"]))
+                old_row = int(round(tok["row"]))
+                tok["col"] = max(0, min(self.cols - 1, new_col))
+                tok["row"] = max(0, min(self.rows - 1, new_row))
+                actual_col = int(tok["col"])
+                actual_row = int(tok["row"])
+                self._redraw_one_token(tok)
+                self._save_state()
+                # Mise à jour vue joueurs si ouverte
+                if self._player_win is not None:
+                    try:
+                        self._player_win.refresh(
+                            self._bg_pil, self._fog_mask, self._cp,
+                            self.cols, self.rows, self.tokens)
+                    except Exception:
+                        self._player_win = None
+                dcol = actual_col - old_col
+                drow = actual_row - old_row
+                dist_m = max(abs(dcol), abs(drow)) * 1.5
+                return (
+                    f"[Carte] {name} déplacé : "
+                    f"Col {old_col+1},Lig {old_row+1} → "
+                    f"Col {actual_col+1},Lig {actual_row+1} "
+                    f"({dist_m:.1f} m)"
+                )
+        return f"[Carte] Token '{name}' introuvable — vérifiez qu'il est placé sur la carte."
 
     def _on_close(self):
         self._save_state()
@@ -1234,6 +2169,13 @@ class CombatMapWindow:
 def _sep(parent):
     tk.Frame(parent, bg="#3a3a55", width=1, height=26).pack(
         side=tk.LEFT, padx=6, pady=2)
+
+def _darken_rgb(r: int, g: int, b: int, factor: float = 0.65):
+    """Retourne un tuple RGB assombri (utilisé pour les outlines PIL)."""
+    return (int(r * factor), int(g * factor), int(b * factor))
+
+def _darken_rgb_tuple(r: int, g: int, b: int, factor: float = 0.65):
+    return (int(r * factor), int(g * factor), int(b * factor))
 
 def _compress_ranges(cols: list) -> str:
     """Convertit [1,2,3,5,6,9] → '1-3, 5-6, 9'."""
@@ -1289,19 +2231,30 @@ class PlayerMapView:
         self._img_id = 0
         self._tok_drawn = []
 
-    def refresh(self, bg_pil, fog: "np.ndarray", cp: int,
+    def refresh(self, bg_pil, fog_mask, cp: int,
                 cols: int, rows: int, tokens: list,
                 ox: int = 0, oy: int = 0):
         """Reçoit les données du MJ et re-rend la vue joueurs (fog opaque)."""
         if bg_pil is None:
             return
 
-        # Fog opaque
-        W, H   = cols * cp, rows * cp
-        fog_px = np.repeat(np.repeat(fog, cp, axis=0), cp, axis=1)
-        arr    = np.zeros((H, W, 4), dtype=np.uint8)
-        arr[fog_px] = _C_FOG_PLAYER
-        fog_opaque = Image.fromarray(arr, "RGBA")
+        W, H = cols * cp, rows * cp
+        # Redimensionner le fog mask à la résolution courante
+        if fog_mask is not None:
+            scaled = fog_mask.resize((W, H), Image.NEAREST)
+            arr    = np.array(scaled, dtype=np.uint8)
+        else:
+            arr = np.full((H, W), 255, dtype=np.uint8)
+        rgba = np.zeros((H, W, 4), dtype=np.uint8)
+        rgba[arr > 0] = _C_FOG_PLAYER
+        fog_opaque = Image.fromarray(rgba, "RGBA")
+
+        # Ensure bg_pil matches the computed (W, H) before compositing.
+        # A mismatch occurs when the grid dimensions (cols/rows/cp) differ
+        # from the size at which bg_pil was last rendered (e.g. after a
+        # resize that regenerated the fog mask but not the tile cache).
+        if bg_pil.size != (W, H):
+            bg_pil = bg_pil.resize((W, H), Image.LANCZOS)
 
         scene = Image.alpha_composite(bg_pil, fog_opaque)
         self._photo = ImageTk.PhotoImage(scene)
@@ -1322,10 +2275,16 @@ class PlayerMapView:
             self.canvas.delete(iid)
         self._tok_drawn.clear()
 
+        # Pré-calculer le fog array une seule fois pour la visibilité des tokens
+        fog_arr = np.array(fog.resize((W, H), Image.NEAREST)) if fog is not None else None
+
         for tok in tokens:
             c, r = int(tok["col"]), int(tok["row"])
-            if 0 <= r < rows and 0 <= c < cols and not fog[r, c]:
-                self._draw_token(tok, cp, ox, oy)
+            if 0 <= r < rows and 0 <= c < cols:
+                px = min(int((c + 0.5) * cp), W - 1)
+                py = min(int((r + 0.5) * cp), H - 1)
+                if fog_arr is None or fog_arr[py, px] <= 127:
+                    self._draw_token(tok, cp, ox, oy)
 
         self.canvas.tag_raise("ptok")
 
@@ -1382,3 +2341,113 @@ def open_combat_map(parent, win_state: dict, save_fn, track_fn,
     return CombatMapWindow(parent, win_state=win_state,
                            save_fn=save_fn, track_fn=track_fn,
                            msg_queue=msg_queue, inject_fn=inject_fn)
+
+
+# ─── Export textuel de la carte pour les agents LLM ──────────────────────────
+
+def get_map_prompt(win_state: dict) -> str:
+    """
+    Génère une description textuelle de la carte de combat (positions des tokens,
+    distances clés) à partir de win_state["combat_map_data"].
+
+    Retourne "" si aucune carte n'est chargée ou si elle est vide de tokens.
+    1 case = 1,5 m (équivalent D&D 5ft square).
+    Les distances sont calculées en distance de Chebyshev (mouvement diagonale libre 5e).
+    """
+    data = win_state.get("combat_map_data", {})
+    tokens = data.get("tokens", [])
+    if not tokens:
+        return ""
+
+    cols = data.get("cols", 30)
+    rows = data.get("rows", 20)
+
+    heroes    = [t for t in tokens if t.get("type") == "hero"]
+    monsters  = [t for t in tokens if t.get("type") == "monster"]
+    traps     = [t for t in tokens if t.get("type") == "trap"]
+    notes     = data.get("notes", [])
+
+    def _coord(t):
+        return int(round(t.get("col", 0))), int(round(t.get("row", 0)))
+
+    def _label(t):
+        return t.get("name") or t.get("type", "?")
+
+    def _dist_m(t1, t2):
+        """Distance Chebyshev en mètres (1 case = 1,5 m)."""
+        c1, r1 = _coord(t1)
+        c2, r2 = _coord(t2)
+        return max(abs(c1 - c2), abs(r1 - r2)) * 1.5
+
+    lines = [
+        f"\n\n🗺️ ═══ CARTE DE COMBAT ({cols}×{rows} cases — 1 case = 1,5 m) ═══"
+    ]
+
+    # ── Positions des héros ────────────────────────────────────────────────────
+    if heroes:
+        lines.append("\n🔵 HÉROS — positions :")
+        for h in heroes:
+            c, r = _coord(h)
+            lines.append(f"  • {_label(h)} → colonne {c}, rangée {r}")
+
+    # ── Positions des monstres ─────────────────────────────────────────────────
+    if monsters:
+        lines.append("\n🔴 ENNEMIS — positions :")
+        for m in monsters:
+            c, r = _coord(m)
+            lines.append(f"  • {_label(m)} → colonne {c}, rangée {r}")
+
+    # ── Pièges / éléments spéciaux ────────────────────────────────────────────
+    if traps:
+        lines.append("\n⚠️ PIÈGES / ZONES :")
+        for tr in traps:
+            c, r = _coord(tr)
+            lines.append(f"  • {_label(tr)} → colonne {c}, rangée {r}")
+
+    # ── Distances héros ↔ ennemis les plus proches ────────────────────────────
+    if heroes and monsters:
+        lines.append("\n📏 DISTANCES (portée de mêlée ≤ 1,5 m = case adjacente) :")
+        for h in heroes:
+            nearest = min(monsters, key=lambda m: _dist_m(h, m))
+            d = _dist_m(h, nearest)
+            reach = "portée mêlée ✅" if d <= 1.5 else f"{d:.1f} m"
+            lines.append(f"  • {_label(h)} → {_label(nearest)} : {reach}")
+
+    # ── Distances héros ↔ héros ────────────────────────────────────────────────
+    if len(heroes) >= 2:
+        lines.append("\n🤝 DISTANCES ENTRE ALLIÉS :")
+        for i, h1 in enumerate(heroes):
+            for h2 in heroes[i + 1:]:
+                d = _dist_m(h1, h2)
+                adj = " (adjacents)" if d <= 1.5 else ""
+                lines.append(
+                    f"  • {_label(h1)} ↔ {_label(h2)} : {d:.1f} m{adj}"
+                )
+
+    # ── Notes de carte visibles ────────────────────────────────────────────────
+    if notes:
+        note_texts = [n.get("text", "").strip() for n in notes if n.get("text", "").strip()]
+        if note_texts:
+            lines.append("\n📌 NOTES SUR LA CARTE :")
+            for nt in note_texts[:6]:   # max 6 pour ne pas surcharger
+                lines.append(f"  • {nt}")
+
+    # ── Portes (état réel — priorité sur l'image) ─────────────────────────────
+    doors = data.get("doors", [])
+    if doors:
+        lines.append("\n🚪 PORTES — état réel (priorité absolue sur l'image de fond) :")
+        lines.append("  ⚠ L'image peut montrer un état différent — ces données font foi.")
+        for d in doors:
+            state = "OUVERTE" if d.get("open") else "FERMÉE"
+            label = f" ({d['label']})" if d.get("label") else ""
+            override = ("l'image montre une porte fermée — elle est en réalité OUVERTE"
+                        if d.get("open")
+                        else "l'image montre une porte ouverte — elle est en réalité FERMÉE")
+            lines.append(
+                f"  • Col {d['col']+1}, Lig {d['row']+1}{label} : {state} — {override}")
+
+    lines.append(
+        "\nUtilise ces positions pour décider de ton mouvement et de ta portée d'attaque."
+    )
+
+    return "\n".join(lines)
