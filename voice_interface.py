@@ -247,10 +247,10 @@ def _play_file(tmp_path):
 
 # --- Prefetch : génère tous les chunks en avance, retourne la liste de fichiers ---
 
-def prefetch_voice(text: str, character_name: str) -> list[str]:
+def _prefetch_voice_edgetts(text: str, character_name: str) -> list[str]:
     """
-    Génère tous les chunks audio en avance (sans les jouer).
-    Retourne une liste de chemins de fichiers mp3 prêts à lire, dans l'ordre.
+    [Interne] Génère tous les chunks audio edge-tts en avance (sans les jouer).
+    Retourne une liste de chemins mp3 prêts à lire, dans l'ordre.
     Appelé depuis un thread de préfetch pendant que la voix précédente joue.
     """
     use_async = _check_edge_tts_async()
@@ -303,9 +303,9 @@ def record_audio_and_transcribe():
         return "[Erreur réseau Google Speech.]"
 
 
-def play_voice(text, character_name):
+def _play_voice_edgetts(text, character_name):
     """
-    Génère et joue la voix via edge_tts async (si dispo) ou CLI.
+    [Interne] edge-tts async (si dispo) ou CLI.
     Pipeline : génération chunk N+1 en parallèle de la lecture chunk N.
     """
     if not FFPLAY_AVAILABLE:
@@ -344,4 +344,100 @@ def play_voice(text, character_name):
             any_played = True
 
     gen_thread.join(timeout=15)
+    return any_played
+
+# ─── Pause / Reprise audio ───────────────────────────────────────────────────
+#
+# _AUDIO_PAUSE_EVENT.set()   = actif (lecture normale)
+# _AUDIO_PAUSE_EVENT.clear() = en pause (toute demande play_voice() est ignorée)
+
+_AUDIO_PAUSE_EVENT = threading.Event()
+_AUDIO_PAUSE_EVENT.set()   # actif par défaut au démarrage
+
+
+def pause_audio():
+    """Stoppe immédiatement la lecture en cours ET bloque les appels suivants."""
+    _kill_all_audio()          # tue ffplay immédiatement
+    _AUDIO_PAUSE_EVENT.clear() # bloque play_voice / prefetch futurs
+
+
+def resume_audio():
+    """Débloque la lecture audio après une pause."""
+    _AUDIO_PAUSE_EVENT.set()
+
+
+# ─── API publique routée (edge-tts ↔ Piper local) ────────────────────────────
+#
+# Ces trois fonctions remplacent les anciennes `play_voice` / `prefetch_voice` /
+# `play_prefetched`. Le backend est choisi dynamiquement depuis APP_CONFIG.
+#
+# backend = "edge-tts"  → Microsoft Neural (en ligne, fr-CA disponible)
+# backend = "piper"     → Piper TTS         (hors-ligne, fr_FR)
+
+def _get_backend() -> str:
+    """Lit le backend TTS actif depuis APP_CONFIG (rechargé à chaque appel)."""
+    try:
+        from app_config import APP_CONFIG
+        return APP_CONFIG.get("voice", {}).get("backend", "edge-tts")
+    except Exception:
+        return "edge-tts"
+
+
+def _get_piper_voice_id(character_name: str) -> tuple[str, str]:
+    """Retourne (voice_id, models_dir) Piper pour un personnage."""
+    try:
+        from app_config import APP_CONFIG
+        pcfg      = APP_CONFIG.get("piper", {})
+        voices    = pcfg.get("voices", {})
+        voice_id  = voices.get(character_name, voices.get("default", "fr_FR-upmc-medium"))
+        models_dir = pcfg.get("models_dir", "piper_models")
+        return voice_id, models_dir
+    except Exception:
+        return "fr_FR-upmc-medium", "piper_models"
+
+
+def play_voice(text: str, character_name: str) -> bool:
+    """
+    Point d'entrée principal TTS.
+    Route vers edge-tts (en ligne) ou Piper (local) selon APP_CONFIG['voice']['backend'].
+    Retourne silencieusement False si la session est en pause.
+    """
+    if not _AUDIO_PAUSE_EVENT.is_set():
+        return False   # session en pause — ignorer silencieusement
+    if _get_backend() == "piper":
+        voice_id, models_dir = _get_piper_voice_id(character_name)
+        from piper_tts import play_piper_voice
+        from app_config import get_piper_pitch
+        return play_piper_voice(text, character_name, voice_id, models_dir,
+                                pitch_semitones=get_piper_pitch(character_name))
+    return _play_voice_edgetts(text, character_name)
+
+
+def prefetch_voice(text: str, character_name: str) -> list[str]:
+    """
+    Pré-génère les chunks audio en avance sans les jouer.
+    Route vers edge-tts ou Piper selon la config.
+    Retourne [] si la session est en pause (rien à pré-générer).
+    """
+    if not _AUDIO_PAUSE_EVENT.is_set():
+        return []
+    if _get_backend() == "piper":
+        voice_id, models_dir = _get_piper_voice_id(character_name)
+        from piper_tts import prefetch_piper_voice
+        from app_config import get_piper_pitch
+        return prefetch_piper_voice(text, character_name, voice_id, models_dir,
+                                    pitch_semitones=get_piper_pitch(character_name))
+    return _prefetch_voice_edgetts(text, character_name)
+
+
+def play_prefetched(files: list[str]) -> bool:
+    """
+    Joue une liste de fichiers pré-générés (mp3 edge-tts ou wav Piper).
+    ffplay gère les deux formats transparentement.
+    """
+    any_played = False
+    for f in files:
+        if f and os.path.exists(f):
+            if _play_file(f):
+                any_played = True
     return any_played

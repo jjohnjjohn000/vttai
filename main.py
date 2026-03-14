@@ -57,6 +57,7 @@ from panels_mixin      import PanelsMixin
 
 # ── Imports des mixins issus du découpage de main.py ──────────────────────────
 from session_mixin         import SessionMixin           # trigger_save, résumé session, reset
+from session_pause_mixin   import SessionPauseMixin      # pause/reprise globale de la session
 from combat_tracker_mixin  import CombatTrackerMixin     # open_combat_tracker, callbacks de tour
 from image_broadcast_mixin import ImageBroadcastMixin    # _broadcast_location_image
 from llm_control_mixin     import LLMControlMixin        # stop_llms, send_text, vote, skill check
@@ -104,6 +105,7 @@ class DnDApp(
     PanelsMixin,
     # ── Nouveaux mixins issus du découpage de main.py ─────────────────────────
     SessionMixin,           # session_mixin.py        — cycle de vie des sessions
+    SessionPauseMixin,      # session_pause_mixin.py  — pause/reprise globale
     CombatTrackerMixin,     # combat_tracker_mixin.py — tracker de combat D&D
     ImageBroadcastMixin,    # image_broadcast_mixin.py — images de lieu aux agents
     LLMControlMixin,        # llm_control_mixin.py   — contrôle LLM + MJ commands
@@ -186,6 +188,10 @@ class DnDApp(
         # Nécessaire car root.after(0,...) peut s'exécuter AVANT que get_human_input soit appelé,
         # soit quand _waiting_for_mj est encore False → le trigger serait perdu sans ce buffer.
         self._pending_combat_trigger: str | None = None
+
+        # --- PAUSE SESSION ---
+        self._session_paused: bool = False
+        self._was_llm_running_at_pause: bool = False
 
         # --- VISAGES & COMBAT ---
         self.face_windows: dict = {}

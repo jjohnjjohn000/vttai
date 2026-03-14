@@ -197,8 +197,14 @@ class ChatMixin:
             "tag":    tag_name,
         })
 
-        # ── Noms de sorts cliquables ──────────────────────────────────────────
-        self._tag_spells_in_message(tag_name, text)
+        # ── Noms de sorts cliquables ─────────────────────────────────────────
+        # Seulement pour les messages narratifs des agents joueurs et du MJ.
+        # Les messages système / simulation sont souvent très longs et bourrés
+        # de noms qui feraient tourner search() Tk des centaines de fois → segfault.
+        _SPELL_TAG_SENDERS = {"Kaelen", "Elara", "Thorne", "Lyra",
+                               "Alexis_Le_MJ", "Alexis_Le_MJ (Vocal)"}
+        if sender in _SPELL_TAG_SENDERS or sender.startswith("🎭 "):
+            self._tag_spells_in_message(tag_name, text)
 
         # ── Détection *mots-clés* dans les messages MJ ────────────────────────
         # Si le message vient du MJ et contient *...*, on vérifie la mémoire
@@ -221,7 +227,15 @@ class ChatMixin:
         Après insertion d'un message, détecte les noms de sorts connus dans le
         texte et les rend cliquables (ouvre SpellSheetWindow au clic).
         Thread-safe : appelé depuis le thread Tk uniquement (via append_message).
+
+        Sécurités anti-segfault :
+          - Max _MAX_SPELL_TAGS tags créés par message (évite boucles trop longues).
+          - Garde trace des positions déjà taggées pour éviter les boucles infinies.
+          - Un seul tag par position (pas de doublons de binding).
+          - Limitée aux messages narratifs (agents + MJ) — voir append_message.
         """
+        _MAX_SPELL_TAGS = 12   # max d'occurrences cliquables par message
+
         try:
             from spell_data import get_spell_pattern, get_spell, SpellSheetWindow, _SPELL_DATA
         except ImportError:
@@ -234,7 +248,11 @@ class ChatMixin:
         if pattern is None:
             return
 
-        matches = list(pattern.finditer(text))
+        # Déduplication : on ne traite chaque nom de sort qu'une seule fois par message
+        seen_names: set[str] = set()
+        matches = [m for m in pattern.finditer(text)
+                   if m.group(0).lower() not in seen_names
+                   and not seen_names.add(m.group(0).lower())]  # type: ignore[func-returns-value]
         if not matches:
             return
 
@@ -245,17 +263,27 @@ class ChatMixin:
         tag_start = str(ranges[0])
         tag_end   = str(ranges[-1])
 
+        # Tags déjà posés dans ce widget (évite les doublons)
+        _existing_tags: set[str] = set(self.chat_display.tag_names())
+
         self.chat_display.config(state=tk.NORMAL)
+        _total_tagged = 0
         try:
             for match in matches:
-                spell_name = match.group(0)  # casse originale dans le texte
+                if _total_tagged >= _MAX_SPELL_TAGS:
+                    break
+
+                spell_name = match.group(0)   # casse originale dans le texte
                 sp = get_spell(spell_name)
                 if not sp:
                     continue
 
-                # Cherche toutes les occurrences dans la plage du message
+                # Cherche UNE SEULE occurrence par nom de sort par message
+                # (pas de while True — évite la boucle infinie)
                 search_from = tag_start
-                while True:
+                _occurrences = 0
+                _MAX_OCC = 3   # max 3 occurrences du même sort dans un message
+                while _occurrences < _MAX_OCC and _total_tagged < _MAX_SPELL_TAGS:
                     idx = self.chat_display.search(
                         spell_name, search_from,
                         stopindex=tag_end,
@@ -263,32 +291,46 @@ class ChatMixin:
                     )
                     if not idx:
                         break
+
                     end_idx = f"{idx}+{len(spell_name)}c"
 
-                    # Tag unique par position pour éviter les conflits de binding
-                    spell_tag = f"clickspell_{idx.replace('.', '_')}"
-                    self.chat_display.tag_add(spell_tag, idx, end_idx)
-                    self.chat_display.tag_config(
-                        spell_tag,
-                        foreground="#e8c84a",
-                        underline=True,
-                        font=("Consolas", 10, "bold"),
-                    )
+                    # Vérifier que end_idx > search_from pour éviter boucle infinie
+                    try:
+                        if not self.chat_display.compare(end_idx, ">", search_from):
+                            break
+                    except tk.TclError:
+                        break
 
-                    # Binding clic → fiche sort
-                    def _open_sheet(event, _sp=sp):
-                        SpellSheetWindow(self.root, _sp)
-                    self.chat_display.tag_bind(spell_tag, "<Button-1>", _open_sheet)
-                    self.chat_display.tag_bind(
-                        spell_tag, "<Enter>",
-                        lambda e: self.chat_display.config(cursor="hand2"),
-                    )
-                    self.chat_display.tag_bind(
-                        spell_tag, "<Leave>",
-                        lambda e: self.chat_display.config(cursor=""),
-                    )
+                    # Tag unique par position
+                    spell_tag = f"clickspell_{idx.replace('.', '_')}"
+
+                    # Ne pas re-créer un tag déjà existant (pas de doublons de binding)
+                    if spell_tag not in _existing_tags:
+                        self.chat_display.tag_add(spell_tag, idx, end_idx)
+                        self.chat_display.tag_config(
+                            spell_tag,
+                            foreground="#e8c84a",
+                            underline=True,
+                            font=("Consolas", 10, "bold"),
+                        )
+                        def _open_sheet(event, _sp=sp):
+                            SpellSheetWindow(self.root, _sp)
+                        self.chat_display.tag_bind(spell_tag, "<Button-1>", _open_sheet)
+                        self.chat_display.tag_bind(
+                            spell_tag, "<Enter>",
+                            lambda e: self.chat_display.config(cursor="hand2"),
+                        )
+                        self.chat_display.tag_bind(
+                            spell_tag, "<Leave>",
+                            lambda e: self.chat_display.config(cursor=""),
+                        )
+                        _existing_tags.add(spell_tag)
+                        _total_tagged += 1
 
                     search_from = end_idx
+                    _occurrences += 1
+        except tk.TclError:
+            pass   # widget détruit ou état invalide — on abandonne silencieusement
         finally:
             self.chat_display.config(state=tk.DISABLED)
 

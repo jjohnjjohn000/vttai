@@ -20,6 +20,7 @@ from app_config import (
     APP_CONFIG, DEFAULTS, KNOWN_MODELS,
     load_app_config, save_app_config, reload_app_config,
 )
+from piper_tts import KNOWN_PIPER_VOICES, piper_available
 
 # ─── Palette cohérente avec l'app principale ──────────────────────────────────
 BG       = "#0d1117"
@@ -274,39 +275,340 @@ def _tab_memories(nb, cfg, vars_):
     return tab
 
 
+def _scan_installed_voices(models_dir: str) -> list[str]:
+    """
+    Scanne models_dir pour les fichiers .onnx installés.
+    Retourne une liste triée : d'abord les installés, ensuite les connus non installés
+    (préfixés '↓ ' pour indiquer qu'ils seraient téléchargeables).
+    Si le dossier est vide ou absent, retourne uniquement KNOWN_PIPER_VOICES.
+    """
+    import os
+    installed = []
+    try:
+        if os.path.isdir(models_dir):
+            installed = sorted(
+                os.path.splitext(f)[0]
+                for f in os.listdir(models_dir)
+                if f.endswith(".onnx")
+            )
+    except Exception:
+        pass
+
+    known_not_installed = [
+        f"↓ {v}" for v in KNOWN_PIPER_VOICES if v not in installed
+    ]
+    return installed + known_not_installed if (installed or known_not_installed) else list(KNOWN_PIPER_VOICES)
+
+
+def _piper_voice_dropdown(parent, var, voices: list[str]):
+    """Dropdown Piper avec liste dynamique + entrée libre."""
+    frame = tk.Frame(parent, bg=BG2)
+    frame.pack(side=tk.LEFT, fill=tk.X, expand=True)  # ← rattache le frame au parent (row)
+    options = voices if voices else ["(aucun modèle installé)"]
+    menu = tk.OptionMenu(frame, var, *options)
+    menu.config(bg=BG3, fg=FG, activebackground=BG, activeforeground=ACCENT,
+                highlightthickness=0, relief="flat", font=FONT, width=26)
+    menu["menu"].config(bg=BG3, fg=FG, activebackground=BG,
+                        activeforeground=ACCENT, font=FONT)
+    menu.pack(side=tk.LEFT)
+    entry = tk.Entry(frame, textvariable=var, bg=BG3, fg=ACCENT,
+                     font=FONT, insertbackground=ACCENT, relief="flat", width=28)
+    entry.pack(side=tk.LEFT, padx=(6, 0), ipady=3)
+    return frame, menu
+
+
 def _tab_voice_ui(nb, cfg, vars_):
-    """Onglet : voix TTS et paramètres UI."""
+    """Onglet : voix TTS (edge-tts en ligne / Piper local) et paramètres UI."""
     tab = tk.Frame(nb, bg=BG)
 
+    # ── En-tête ──────────────────────────────────────────────────────────────
     header = tk.Frame(tab, bg="#0a1520", pady=8)
     header.pack(fill=tk.X)
-    tk.Label(header, text="🎤 Voix & Interface",
+    tk.Label(header, text="Voix & Interface",
              bg="#0a1520", fg=GREEN, font=("Arial", 11, "bold")).pack(side=tk.LEFT, padx=16)
-    tk.Label(header, text="TTS edge-tts / ffplay et rafraîchissement UI",
+    tk.Label(header, text="edge-tts (en ligne) ou Piper TTS (local, hors-ligne)",
              bg="#0a1520", fg=FG_DIM, font=("Arial", 8)).pack(side=tk.RIGHT, padx=16)
 
-    voice = cfg.get("voice", DEFAULTS["voice"])
-    ui    = cfg.get("ui",    DEFAULTS["ui"])
+    voice  = cfg.get("voice",  DEFAULTS["voice"])
+    piper  = cfg.get("piper",  DEFAULTS["piper"])
+    ui_cfg = cfg.get("ui",     DEFAULTS["ui"])
 
+    # ── Activer/désactiver TTS global ────────────────────────────────────────
     _section(tab, "Synthèse vocale (TTS)", GREEN)
-
     v_var = tk.BooleanVar(value=voice.get("enabled", True))
-    _checkbox(tab, v_var, "Activer la synthèse vocale (edge-tts + ffplay)")
+    _checkbox(tab, v_var, "Activer la synthèse vocale")
 
+    # ── Sélecteur de backend ─────────────────────────────────────────────────
+    _section(tab, "Backend TTS", GREEN)
+
+    backend_var = tk.StringVar(value=voice.get("backend", "edge-tts"))
+
+    backend_frame = tk.Frame(tab, bg=BG)
+    backend_frame.pack(fill=tk.X, padx=20, pady=(4, 0))
+
+    # Panneaux conditionnels
+    edgetts_panel = tk.Frame(tab, bg=BG2, relief="flat", bd=0)
+    piper_panel   = tk.Frame(tab, bg=BG2, relief="flat", bd=0)
+
+    def _update_panels(*_):
+        if backend_var.get() == "piper":
+            edgetts_panel.pack_forget()
+            piper_panel.pack(fill=tk.X, padx=20, pady=(0, 8))
+        else:
+            piper_panel.pack_forget()
+            edgetts_panel.pack(fill=tk.X, padx=20, pady=(0, 8))
+
+    for label, value in [
+        (" En ligne  —  edge-tts (Microsoft Neural, qualité haute, fr-CA disponible)", "edge-tts"),
+        (" Local     —  Piper TTS (ONNX, hors-ligne, fr_FR, ~60-80 Mo par voix)",      "piper"),
+    ]:
+        tk.Radiobutton(
+            backend_frame, text=label, variable=backend_var, value=value,
+            bg=BG, fg=FG, selectcolor=BG2, activebackground=BG,
+            activeforeground=ACCENT, font=FONT,
+            command=_update_panels,
+        ).pack(anchor="w", pady=1)
+
+    # ── Panneau edge-tts ──────────────────────────────────────────────────────
+    tk.Label(edgetts_panel,
+             text=(
+                 "  Voix actives :\n"
+                 "    Kaelen → fr-FR-HenriNeural\n"
+                 "    Elara  → fr-FR-DeniseNeural\n"
+                 "    Thorne → fr-CA-AntoineNeural  ← accent québécois\n"
+                 "    Lyra   → fr-FR-EloiseNeural\n\n"
+                 "  Modifier dans voice_interface.py > VOICE_MAPPING"
+             ),
+             bg=BG2, fg=FG_DIM, font=("Consolas", 8), justify=tk.LEFT,
+             ).pack(anchor="w", padx=12, pady=8)
+
+    # ── Panneau Piper ─────────────────────────────────────────────────────────
+    piper_voices_cfg = piper.get("voices", DEFAULTS["piper"]["voices"])
+
+    # ── Dossier modèles + bouton Rafraîchir ───────────────────────────────────
+    pdir_frame = tk.Frame(piper_panel, bg=BG2)
+    pdir_frame.pack(fill=tk.X, padx=8, pady=(8, 4))
+    tk.Label(pdir_frame, text="Dossier modèles (.onnx) :", bg=BG2, fg=FG_DIM,
+             font=FONT_LBL, width=22, anchor="w").pack(side=tk.LEFT)
+    pdir_var = tk.StringVar(value=piper.get("models_dir", "piper_models"))
+    tk.Entry(pdir_frame, textvariable=pdir_var, bg=BG3, fg=ACCENT,
+             font=FONT, insertbackground=ACCENT, relief="flat", width=26,
+             ).pack(side=tk.LEFT, padx=(4, 4), ipady=3)
+
+    # Compteur de modèles installés
+    models_count_var = tk.StringVar(value="")
+    tk.Label(pdir_frame, textvariable=models_count_var, bg=BG2, fg=FG_DIM,
+             font=("Consolas", 8)).pack(side=tk.LEFT, padx=(0, 6))
+
+    # ── Voix par personnage (dans un sous-frame à position fixe) ─────────────
+    tk.Label(piper_panel, text="  Voix par personnage :", bg=BG2, fg=FG_DIM,
+             font=FONT_LBL).pack(anchor="w", padx=8, pady=(6, 0))
+
+    # Conteneur dédié — position fixe dans piper_panel, toujours AVANT warning et check
+    chars_container = tk.Frame(piper_panel, bg=BG2)
+    chars_container.pack(fill=tk.X, padx=0, pady=0)
+
+    piper_voice_vars: dict[str, tk.StringVar]  = {}
+    piper_pitch_vars: dict[str, tk.DoubleVar]  = {}
+    _row_frames:      dict[str, tk.Frame]      = {}
+
+    CHARS = ["Kaelen", "Elara", "Thorne", "Lyra"]
+
+    # Textes de test personnalisés par personnage
+    _PREVIEW_TEXTS = {
+        "Kaelen": "Je suis Kaelen. Mon épée est prête, et mon cœur ne tremble pas.",
+        "Elara":  "Je suis Elara. La magie coule en moi comme une rivière de lumière.",
+        "Thorne": "Moi, c'est Thorne. J'ai survécu à pire, croyez-moi.",
+        "Lyra":   "Je suis Lyra. Les dieux me guident, et leur lumière éclaire mon chemin.",
+    }
+
+    def _preview_voice(char: str, voice_var: tk.StringVar, btn: tk.Button):
+        """Lance un aperçu TTS Piper pour le personnage dans un thread daemon."""
+        import threading
+        voice_id = voice_var.get().strip()
+        if not voice_id or voice_id.startswith("↓") or voice_id == "(aucun modèle installé)":
+            return
+        models_dir   = pdir_var.get().strip() or "piper_models"
+        pitch        = piper_pitch_vars.get(char, tk.DoubleVar(value=0.0)).get()
+        text         = _PREVIEW_TEXTS.get(char, f"Bonjour, je suis {char}.")
+
+        def _run():
+            try:
+                btn.config(state="disabled", text="…")
+            except Exception:
+                pass
+            try:
+                from piper_tts import play_piper_voice
+                play_piper_voice(text, char, voice_id, models_dir,
+                                 pitch_semitones=pitch)
+            except Exception as e:
+                print(f"[Preview TTS] Erreur {char} : {e}")
+            finally:
+                try:
+                    btn.config(state="normal", text="▶")
+                except Exception:
+                    pass
+
+        threading.Thread(target=_run, daemon=True, name=f"piper-preview-{char}").start()
+
+    # Config pitch sauvegardée
+    _pitch_cfg = piper.get("pitch", DEFAULTS["piper"]["pitch"])
+
+    def _rebuild_dropdowns(voices: list[str]):
+        """Reconstruit les OptionMenu dans chars_container (position fixe)."""
+        for char in CHARS:
+            old_frame = _row_frames.pop(char, None)
+            if old_frame:
+                old_frame.destroy()
+
+        for char in CHARS:
+            color = CHAR_COLORS.get(char, FG)
+
+            # ── Ligne principale : nom + dropdown + bouton aperçu ─────────────
+            row = tk.Frame(chars_container, bg=BG2)
+            row.pack(fill=tk.X, padx=12, pady=(4, 0))
+            _row_frames[char] = row
+
+            tk.Label(row, text=char, bg=BG2, fg=color,
+                     font=("Arial", 9, "bold"), width=8, anchor="w").pack(side=tk.LEFT)
+
+            pv = piper_voice_vars.get(char)
+            if pv is None:
+                default_v = piper_voices_cfg.get(
+                    char, DEFAULTS["piper"]["voices"].get(char, "fr_FR-upmc-medium"))
+                pv = tk.StringVar(value=default_v)
+                piper_voice_vars[char] = pv
+
+            _, _menu = _piper_voice_dropdown(row, pv, voices)
+
+            # Bouton aperçu
+            _btn_preview = tk.Button(
+                row, text="▶",
+                bg=BG3, fg=GREEN, font=("Arial", 9, "bold"),
+                relief="flat", padx=6, pady=1, cursor="hand2",
+            )
+            _btn_preview.config(
+                command=lambda c=char, v=pv, b=_btn_preview: _preview_voice(c, v, b)
+            )
+            _btn_preview.pack(side=tk.LEFT, padx=(8, 0))
+
+            # ── Ligne pitch : slider + valeur ─────────────────────────────────
+            pitch_row = tk.Frame(chars_container, bg=BG2)
+            pitch_row.pack(fill=tk.X, padx=12, pady=(0, 4))
+
+            tk.Label(pitch_row, text="", bg=BG2, width=8).pack(side=tk.LEFT)  # indent
+            tk.Label(pitch_row, text="Pitch", bg=BG2, fg=FG_DIM,
+                     font=("Consolas", 8), width=5, anchor="w").pack(side=tk.LEFT)
+
+            ppv = piper_pitch_vars.get(char)
+            if ppv is None:
+                default_p = float(_pitch_cfg.get(char, _pitch_cfg.get("default", 0.0)))
+                ppv = tk.DoubleVar(value=default_p)
+                piper_pitch_vars[char] = ppv
+
+            pitch_val_label = tk.Label(pitch_row, text=f"{ppv.get():+.1f} st",
+                                       bg=BG2, fg=ACCENT, font=("Consolas", 8), width=7)
+
+            def _on_pitch_change(val, lbl=pitch_val_label, var=ppv):
+                lbl.config(text=f"{float(val):+.1f} st")
+
+            scale = tk.Scale(
+                pitch_row, variable=ppv,
+                from_=-8.0, to=8.0, resolution=0.5,
+                orient=tk.HORIZONTAL, bg=BG2, fg=FG, troughcolor=BG3,
+                activebackground=ACCENT, highlightthickness=0,
+                length=200, showvalue=False, font=("Consolas", 8),
+                command=_on_pitch_change,
+            )
+            scale.pack(side=tk.LEFT, padx=(4, 4))
+            pitch_val_label.pack(side=tk.LEFT)
+
+            tk.Label(pitch_row, text="-8  grave  ←  0  →  aigu  +8",
+                     bg=BG2, fg=FG_DIM, font=("Consolas", 7)).pack(side=tk.LEFT, padx=(6, 0))
+
+    def _refresh_voices(*_):
+        """Scanne le dossier et reconstruit tous les menus."""
+        models_dir = pdir_var.get().strip() or "piper_models"
+        voices = _scan_installed_voices(models_dir)
+        n_installed = sum(1 for v in voices if not v.startswith("↓"))
+        models_count_var.set(
+            f"({n_installed} installé{'s' if n_installed > 1 else ''})"
+            if n_installed else "(aucun installé)"
+        )
+        _rebuild_dropdowns(voices)
+
+    # Bouton rafraîchir dans la ligne dossier
+    tk.Button(pdir_frame, text="↺ Scanner",
+              bg=BG3, fg=ACCENT, font=("Arial", 8), relief="flat", padx=8,
+              command=_refresh_voices).pack(side=tk.LEFT)
+
+    # Premier rendu initial
+    _rebuild_dropdowns(_scan_installed_voices(piper.get("models_dir", "piper_models")))
+
+    # Mise à jour automatique du compteur dès l'ouverture
+    _models_dir_init = piper.get("models_dir", "piper_models")
+    n = sum(1 for v in _scan_installed_voices(_models_dir_init) if not v.startswith("↓"))
+    models_count_var.set(f"({n} installé{'s' if n > 1 else ''})" if n else "(aucun installé)")
+
+    # ── Avertissement fr-CA ───────────────────────────────────────────────────
+    warning_frame = tk.Frame(piper_panel, bg=BG2)
+    warning_frame.pack(fill=tk.X, padx=12, pady=(4, 2))
+    tk.Label(warning_frame,
+             text=(
+                 "  ↓ = disponible au téléchargement (pas encore installé)\n"
+                 "  Aucun modèle Piper fr-CA officiel — fr_FR-upmc-medium recommandé.\n"
+                 "  Pour l'accent québécois de Thorne : backend edge-tts (fr-CA-AntoineNeural)."
+             ),
+             bg=BG2, fg="#f0b429", font=("Consolas", 8), justify=tk.LEFT,
+             ).pack(anchor="w")
+
+    # ── Bouton vérification Piper ──────────────────────────────────────────────
+    status_piper = tk.StringVar(value="")
+    check_row  = tk.Frame(piper_panel, bg=BG2)
+    check_row.pack(fill=tk.X, padx=8, pady=(4, 8))
+
+    def _check_piper_install():
+        import importlib
+        importlib.invalidate_caches()
+        ok = piper_available()
+        if ok:
+            status_piper.set("✓ piper-tts est installé")
+        else:
+            status_piper.set("✗ Non installé — lancer : pip install piper-tts")
+
+    tk.Button(check_row, text="Vérifier installation Piper",
+              bg=BG3, fg=FG, font=("Arial", 9), relief="flat", padx=10,
+              command=_check_piper_install).pack(side=tk.LEFT)
+    tk.Label(check_row, textvariable=status_piper, bg=BG2, fg=ACCENT,
+             font=("Consolas", 8)).pack(side=tk.LEFT, padx=10)
+
+    # Affichage initial correct
+    _update_panels()
+
+    # ── Rafraîchissement interface ────────────────────────────────────────────
     _section(tab, "Rafraîchissement interface", GREEN)
 
-    pg_var = tk.IntVar(value=ui.get("poll_geometry_ms", 2000))
+    pg_var = tk.IntVar(value=ui_cfg.get("poll_geometry_ms", 2000))
     _row(tab, "Polling géométrie fenêtres (ms)", _int_slider,
-         var=pg_var, from_=500, to=10000,
-         label_suffix="  (2000 recommandé)")
+         var=pg_var, from_=500, to=10000, label_suffix="  (2000 recommandé)")
 
-    sr_var = tk.IntVar(value=ui.get("stats_refresh_ms", 2000))
+    sr_var = tk.IntVar(value=ui_cfg.get("stats_refresh_ms", 2000))
     _row(tab, "Rafraîchissement HP sidebar (ms)", _int_slider,
-         var=sr_var, from_=500, to=10000,
-         label_suffix="  (2000 recommandé)")
+         var=sr_var, from_=500, to=10000, label_suffix="  (2000 recommandé)")
 
-    vars_["voice"] = {"enabled": v_var}
-    vars_["ui"]    = {"poll_geometry_ms": pg_var, "stats_refresh_ms": sr_var}
+    vars_["voice"] = {
+        "enabled":          v_var,
+        "backend":          backend_var,
+    }
+    vars_["piper"] = {
+        "models_dir":       pdir_var,
+        "voice_vars":       piper_voice_vars,
+        "pitch_vars":       piper_pitch_vars,
+    }
+    vars_["ui"] = {
+        "poll_geometry_ms": pg_var,
+        "stats_refresh_ms": sr_var,
+    }
     return tab
 
 
@@ -357,7 +659,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
 
     vars_: dict = {
         "agents": {}, "chronicler": {}, "groupchat": {},
-        "memories": {}, "voice": {}, "ui": {}
+        "memories": {}, "voice": {}, "ui": {}, "piper": {},
     }
 
     # Créer les 5 onglets
@@ -395,6 +697,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
             "groupchat":  {},
             "memories":   {},
             "voice":      {},
+            "piper":      {},
             "ui":         {},
         }
 
@@ -425,7 +728,30 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
         }
 
         vv = vars_["voice"]
-        new_cfg["voice"] = {"enabled": vv["enabled"].get()}
+        new_cfg["voice"] = {
+            "enabled": vv["enabled"].get(),
+            "backend": vv["backend"].get(),
+        }
+
+        pv = vars_["piper"]
+        new_cfg["piper"] = {
+            "models_dir": pv["models_dir"].get().strip() or "piper_models",
+            "voices": {
+                char: sv.get().strip()
+                for char, sv in pv["voice_vars"].items()
+            },
+            "pitch": {
+                char: round(dv.get(), 1)
+                for char, dv in pv["pitch_vars"].items()
+            },
+        }
+        # Conserver la voix default si absente
+        if "default" not in new_cfg["piper"]["voices"]:
+            new_cfg["piper"]["voices"]["default"] = (
+                new_cfg["piper"]["voices"].get("Kaelen", "fr_FR-upmc-medium")
+            )
+        if "default" not in new_cfg["piper"]["pitch"]:
+            new_cfg["piper"]["pitch"]["default"] = 0.0
 
         uv = vars_["ui"]
         new_cfg["ui"] = {

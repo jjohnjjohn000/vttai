@@ -37,6 +37,7 @@ from state_manager import (
 from agent_logger  import log_tts_start
 from combat_tracker import COMBAT_STATE, _is_fully_silenced
 from combat_map_panel import get_map_prompt
+from chat_log_writer import ChatLogWriter
 
 
 class AutogenEngineMixin:
@@ -71,6 +72,14 @@ class AutogenEngineMixin:
         # ================================================================
 
         self.msg_queue.put({"sender": "Système", "text": "⚔️ MOTEUR INITIALISÉ. Connexion aux LLMs en cours...", "color": "#ffcc00"})
+
+        # ── Journal narratif de session ───────────────────────────────────────
+        _chat_log = ChatLogWriter()
+        self.msg_queue.put({
+            "sender": "📋 Système",
+            "text":   f"Journal de session ouvert → {_chat_log.path}",
+            "color":  "#607d8b",
+        })
 
         # ── Chargement des configs LLM par personnage ─────────────────────────
         _char_state = load_state().get("characters", {})
@@ -241,6 +250,7 @@ class AutogenEngineMixin:
                 "PERSONNALITÉ : Tu vois le monde en termes de risques, de profits et de qui manipule qui. "
                 "Tes questions portent sur les motivations cachées, les pièges potentiels, ce qu'on ne te dit pas, "
                 "et ce que rapporte concrètement la mission. Tu es sarcastique et tu n'accordes ta confiance à personne. "
+                "Tu parles avec un accent québécois."
                 "Tu ne poses JAMAIS une question qu'un autre personnage vient de poser — tu trouves ça embarrassant.\n"
                 "CAPACITÉS DE COMBAT (à utiliser de façon autonome lors de ton tour) :\n"
                 "  • ACTION : 1 attaque (Rogues n'ont pas Extra Attack sauf Arcane Trickster/Eldritch Knight). "
@@ -274,7 +284,6 @@ class AutogenEngineMixin:
                 "PERSONNALITÉ : Tu penses d'abord aux innocents qui souffrent, à la dimension spirituelle et divine "
                 "des événements, et à ce que les dieux pourraient vouloir ici. Tu poses des questions sur les victimes, "
                 "la souffrance des gens ordinaires, les signes divins, et ce que signifie moralement la situation. "
-                "Tu parles avec un accent québécois."
                 "Tu ne poses JAMAIS une question qu'un autre personnage vient de poser — chaque voix doit être unique.\n"
                 "CAPACITÉS DE COMBAT (à utiliser de façon autonome lors de ton tour) :\n"
                 "  • ACTION : lancer un sort (Mot de Mort, Gardiens Spirituels, Soins, Flamme Sacrée…), "
@@ -419,45 +428,75 @@ class AutogenEngineMixin:
 
         def combat_speaker_selector(last_speaker, groupchat):
             """
-            Hors combat : sélection auto normale.
-            En combat : les agents hors-tour qui ont déjà réagi sont exclus.
-            Les agents inactifs (hors scène) sont toujours exclus.
+            Sélecteur de speaker entièrement déterministe — ne retourne JAMAIS "auto".
+
+            Retourner "auto" déclenche _auto_select_speaker() dans autogen, qui
+            appelle _create_internal_agents() → instancie des agents LLM temporaires
+            → références circulaires → GC pendant inspect.getfullargspec() → SEGFAULT.
+
+            Stratégie :
+              - Hors combat : rotation MJ → joueur → MJ → joueur suivant…
+              - En combat    : même rotation mais en respectant les silences
+                               (agents hors-tour déjà épuisés exclus).
             """
-            # Recalcul dynamique des joueurs actifs (peut changer entre sessions)
-            PLAYER_NAMES = get_active_characters()
-
-            # Recalcul des actifs en temps réel (peut changer pendant la session)
             _currently_active = get_active_characters()
+            _ALL_PLAYERS = ["Kaelen", "Elara", "Thorne", "Lyra"]
 
-            if not COMBAT_STATE["active"]:
-                # Hors combat : exclure les agents désactivés en cours de session
-                _eligible_hc = [
-                    a for a in groupchat.agents
-                    if a.name not in PLAYER_NAMES or a.name in _currently_active
-                ]
-                if len(_eligible_hc) != len(groupchat.agents):
-                    original_agents = groupchat.agents
-                    groupchat.agents = _eligible_hc
-                    groupchat.agents = original_agents
-                    return _eligible_hc  # AutoGen utilisera cette liste restreinte
-                return "auto"
+            def _eligible_agents():
+                if not COMBAT_STATE["active"]:
+                    return [
+                        a for a in groupchat.agents
+                        if a.name not in _ALL_PLAYERS or a.name in _currently_active
+                    ]
+                else:
+                    candidates = [
+                        a for a in groupchat.agents
+                        if (not _is_fully_silenced(a.name) or a.name not in _ALL_PLAYERS)
+                        and (a.name not in _ALL_PLAYERS or a.name in _currently_active)
+                    ]
+                    if not candidates:
+                        candidates = [a for a in groupchat.agents if a.name == "Alexis_Le_MJ"]
+                    return candidates
 
-            eligible = [
-                a for a in groupchat.agents
-                if (not _is_fully_silenced(a.name) or a.name not in PLAYER_NAMES)
-                and (a.name not in PLAYER_NAMES or a.name in _currently_active)
-            ]
-            # Garde au minimum le MJ + l'agent actif
+            eligible = _eligible_agents()
             if not eligible:
-                eligible = [a for a in groupchat.agents
-                            if a.name == "Alexis_Le_MJ"]
-            # Retire temporairement les agents silenciés de groupchat.agents
-            # pour forcer "auto" à les ignorer
-            original_agents = groupchat.agents
-            groupchat.agents = eligible
-            result = "auto"   # signale à AutoGen d'utiliser sa sélection LLM parmi eligible
-            groupchat.agents = original_agents
-            return result
+                mj = next((a for a in groupchat.agents if a.name == "Alexis_Le_MJ"), None)
+                return mj or groupchat.agents[0]
+
+            last_name = last_speaker.name if last_speaker else ""
+
+            # MJ vient de parler → donner la parole au prochain joueur éligible
+            if last_name == "Alexis_Le_MJ":
+                players_eligible = [a for a in eligible if a.name in _ALL_PLAYERS]
+                if players_eligible:
+                    recent_players = [
+                        m.get("name") for m in reversed(groupchat.messages[-20:])
+                        if m.get("name") in _ALL_PLAYERS
+                    ]
+                    last_player = next(iter(recent_players), None)
+                    if last_player:
+                        idx = next(
+                            (i for i, a in enumerate(players_eligible) if a.name == last_player),
+                            -1
+                        )
+                        return players_eligible[(idx + 1) % len(players_eligible)]
+                    return players_eligible[0]
+
+            # Un joueur vient de parler → donner la parole au MJ
+            if last_name in _ALL_PLAYERS:
+                mj = next((a for a in eligible if a.name == "Alexis_Le_MJ"), None)
+                if mj:
+                    return mj
+
+            # Fallback : round-robin simple parmi les éligibles
+            if last_name:
+                idx = next(
+                    (i for i, a in enumerate(eligible) if a.name == last_name),
+                    -1
+                )
+                return eligible[(idx + 1) % len(eligible)]
+
+            return eligible[0]
 
         # Sauvegarde de l'objet groupchat sur l'instance (self) pour pouvoir faire le résumé plus tard
         _gc_cfg   = get_groupchat_config()
@@ -1355,6 +1394,30 @@ class AutogenEngineMixin:
             )
 
         def patched_receive(self_mgr, message, sender, request_reply=None, silent=False):
+
+            def _strip_stars(text: str) -> str:
+                """Supprime tous les astérisques des messages des agents joueurs."""
+                return text.replace("*", "") if text else text
+
+            def _tts_clean(text: str) -> str:
+                """
+                Prépare le texte pour la lecture TTS.
+                Les moteurs TTS (Piper, edge-tts) s'arrêtent au premier \n —
+                on remplace chaque retour à la ligne par une virgule+espace
+                afin que la lecture soit continue et naturelle.
+                Les doubles retours à la ligne (paragraphes) deviennent une pause
+                plus marquée (point + espace).
+                """
+                if not text:
+                    return text
+                import re as _re_tts
+                text = text.replace("\n\n", ". ")
+                text = text.replace("\n", ", ")
+                text = _re_tts.sub(r',\s*\.', '.', text)
+                text = _re_tts.sub(r'\.\s*,', '.', text)
+                text = _re_tts.sub(r',\s*,', ',', text)
+                text = _re_tts.sub(r'\s{2,}', ' ', text)
+                return text.strip()
             if isinstance(message, dict):
                 content    = message.get("content", "")
                 name       = message.get("name", sender.name)
@@ -1542,10 +1605,11 @@ class AutogenEngineMixin:
 
                 # Affiche la partie roleplay sans la balise
                 if clean_content and clean_content != "[SILENCE]":
+                    clean_content = _strip_stars(clean_content)
                     _app.msg_queue.put({"sender": name, "text": clean_content,
                                         "color": _app.CHAR_COLORS.get(name, "#e0e0e0")})
                     log_tts_start(name, clean_content)
-                    _app.audio_queue.put((clean_content, name))
+                    _app.audio_queue.put((_tts_clean(clean_content), name))
 
                 # Bloque jusqu'à la décision du MJ (max 5 min)
                 _spell_confirm_event.wait(timeout=300)
@@ -1574,13 +1638,14 @@ class AutogenEngineMixin:
                 # Affiche le roleplay (tout ce qui précède les blocs [ACTION])
                 clean_content = _action_pattern.sub("", str(content)).strip()
                 if clean_content and clean_content != "[SILENCE]":
+                    clean_content = _strip_stars(clean_content)
                     _app.msg_queue.put({
                         "sender": name,
                         "text":   clean_content,
                         "color":  _app.CHAR_COLORS.get(name, "#e0e0e0"),
                     })
                     log_tts_start(name, clean_content)
-                    _app.audio_queue.put((clean_content, name))
+                    _app.audio_queue.put((_tts_clean(clean_content), name))
 
                 # Collecte toutes les sous-actions de tous les blocs [ACTION]
                 _all_subactions: list[dict] = []
@@ -2256,6 +2321,7 @@ class AutogenEngineMixin:
                         "text":   _result,
                         "color":  "#4fc3f7",
                     })
+                    _chat_log.log_dice(_char, _dice_formula, _result)
                     _original_receive(
                         self_mgr,
                         {"role": "user", "content": _auto_feedback, "name": "Alexis_Le_MJ"},
@@ -2267,6 +2333,10 @@ class AutogenEngineMixin:
 
             # Appel normal
             _original_receive(self_mgr, message, sender, request_reply, silent)
+
+            # ── JOURNAL NARRATIF ──────────────────────────────────────────────
+            if not is_system and content and str(content).strip() not in ("[SILENCE]", ""):
+                _chat_log.log_message(name, str(content))
 
             # ── MÉMOIRES CONTEXTUELLES : détection dynamique sur chaque message ──
             # Scan sur le contenu de TOUS les messages non-système (joueurs et MJ)
@@ -2352,10 +2422,13 @@ class AutogenEngineMixin:
                 elif content and str(content).strip() != "[SILENCE]":
                     display_name = "Système" if is_system else name
                     color        = "#ffcc00" if is_system else "#e0e0e0"
-                    _app.msg_queue.put({"sender": display_name, "text": content, "color": color})
+                    display_text = (_strip_stars(str(content))
+                                    if not is_system and display_name in PLAYER_NAMES
+                                    else content)
+                    _app.msg_queue.put({"sender": display_name, "text": display_text, "color": color})
                     if not is_system and display_name in PLAYER_NAMES:
-                        log_tts_start(display_name, str(content))
-                        _app.audio_queue.put((content, display_name))
+                        log_tts_start(display_name, str(display_text))
+                        _app.audio_queue.put((_tts_clean(display_text), display_name))
 
                 if tool_calls:
                     _app.msg_queue.put({"sender": name, "text": "✨[Est en train de préparer une action/un sort...]", "color": "#aaaaaa"})

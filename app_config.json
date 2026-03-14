@@ -1,0 +1,59 @@
+{
+  "agents": {
+    "Kaelen": {
+      "model": "gemini-2.5-pro",
+      "temperature": 0.7
+    },
+    "Elara": {
+      "model": "gemini-2.5-pro",
+      "temperature": 0.7
+    },
+    "Thorne": {
+      "model": "groq/llama-4-scout-17b-16e-instruct",
+      "temperature": 0.8
+    },
+    "Lyra": {
+      "model": "gemini-2.5-pro",
+      "temperature": 0.6
+    }
+  },
+  "chronicler": {
+    "model": "gemini-2.5-flash",
+    "temperature": 0.3,
+    "memories_importance": 1,
+    "system_prompt": "Tu es le Chroniqueur IA d'une campagne D&D. Ton but est de maintenir un résumé global à jour de l'histoire. Je vais te fournir l'ancien résumé de la campagne, le journal de quêtes actif, les mémoires clés du groupe, puis la transcription de la nouvelle session. Rédige un UNIQUE résumé mis à jour qui inclut l'essentiel de l'ancien résumé ET de façon fluide les nouveaux événements. Note si des objectifs de quête semblent avoir progressé ou été accomplis. Sois immersif, concis (pas de détails inutiles), et liste les objets majeurs trouvés."
+  },
+  "groupchat": {
+    "max_round": 100,
+    "allow_repeat_speaker": false
+  },
+  "memories": {
+    "compact_importance_min": 2,
+    "contextual_tag_min_length": 4
+  },
+  "voice": {
+    "enabled": true,
+    "backend": "piper"
+  },
+  "piper": {
+    "models_dir": "piper_models",
+    "voices": {
+      "Kaelen": "fr_FR-siwis-low",
+      "Elara": "fr_FR-siwis-medium",
+      "Thorne": "fr_FR-gilles-low",
+      "Lyra": "fr_FR-upmc-medium",
+      "default": "fr_FR-siwis-low"
+    },
+    "pitch": {
+      "Kaelen": -5.0,
+      "Elara": 0.0,
+      "Thorne": 2.0,
+      "Lyra": 4.0,
+      "default": 0.0
+    }
+  },
+  "ui": {
+    "poll_geometry_ms": 2000,
+    "stats_refresh_ms": 2000
+  }
+}

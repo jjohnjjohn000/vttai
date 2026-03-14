@@ -83,6 +83,29 @@ DEFAULTS: dict = {
     },
     "voice": {
         "enabled": True,
+        "backend": "edge-tts",          # "edge-tts" (en ligne) | "piper" (local, hors-ligne)
+    },
+    "piper": {
+        "models_dir": "piper_models",   # dossier de cache des modèles .onnx
+        "voices": {
+            # Voix Piper par personnage (format : locale-nom-qualité, ex: fr_FR-upmc-medium)
+            # Aucun modèle fr-CA officiel n'existe dans Piper — fr_FR est le meilleur choix local.
+            # Pour l'accent québécois, utiliser le backend edge-tts (fr-CA-AntoineNeural).
+            "Kaelen":  "fr_FR-upmc-medium",
+            "Elara":   "fr_FR-siwis-medium",
+            "Thorne":  "fr_FR-upmc-medium",
+            "Lyra":    "fr_FR-siwis-medium",
+            "default": "fr_FR-upmc-medium",
+        },
+        "pitch": {
+            # Décalage de pitch en demi-tons par personnage. 0 = voix naturelle du modèle.
+            # Valeurs typiques : +2 à +5 pour voix féminine plus aiguë, -2 à -4 pour voix grave.
+            "Kaelen":  0.0,
+            "Elara":   2.0,
+            "Thorne": -2.0,
+            "Lyra":    1.0,
+            "default": 0.0,
+        },
     },
     "ui": {
         "poll_geometry_ms":    2000,
@@ -145,6 +168,14 @@ def get_memories_config() -> dict:
 
 def get_voice_config() -> dict:
     return APP_CONFIG.get("voice", DEFAULTS["voice"])
+
+def get_piper_config() -> dict:
+    return APP_CONFIG.get("piper", DEFAULTS["piper"])
+
+def get_piper_pitch(char_name: str) -> float:
+    """Retourne le pitch shift (demi-tons) configuré pour un personnage Piper."""
+    pitch_cfg = APP_CONFIG.get("piper", {}).get("pitch", DEFAULTS["piper"]["pitch"])
+    return float(pitch_cfg.get(char_name, pitch_cfg.get("default", 0.0)))
 
 def get_campaign_name() -> str:
     """Retourne le nom de la campagne (utilisé pour le dossier de sauvegarde)."""

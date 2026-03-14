@@ -57,6 +57,14 @@ class UISetupMixin:
                                   font=("Arial", 10, "bold"), command=self.stop_llms, state=tk.DISABLED)
         self.btn_stop.pack(side=tk.LEFT)
 
+        self.btn_pause = tk.Button(
+            input_frame, text="⏸ Pause",
+            bg="#e67e22", fg="white",
+            font=("Arial", 10, "bold"),
+            command=self.toggle_session_pause,
+        )
+        self.btn_pause.pack(side=tk.LEFT, padx=(5, 0))
+
         # --- PANNEAU LATÉRAL (Stats & Actions) ---
         stats_frame = tk.Frame(self.root, bg="#252526", width=250)
         stats_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)

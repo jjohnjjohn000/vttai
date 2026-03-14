@@ -56,6 +56,15 @@ class CombatTrackerMixin:
             donc on ne peut pas se fier à ce flag ici.)
         4. Si le moteur attend déjà la saisie du MJ, on peut injecter directement.
         """
+        # Ne pas déclencher de tour si la session est en pause.
+        # Le tracker repassera par là quand la session reprend et qu'un tour est avancé.
+        if getattr(self, "_session_paused", False):
+            self.msg_queue.put({
+                "sender": "⏸ Combat",
+                "text":   f"Tour de {char_name} en attente — session en pause.",
+                "color":  "#888888",
+            })
+            return
         # Mise à jour des prompts (COMBAT_STATE déjà à jour dans _next_turn)
         if self._agents:
             self._rebuild_agent_prompts()
@@ -103,7 +112,10 @@ class CombatTrackerMixin:
     def _on_pc_turn_ended(self, char_name: str):
         """Appelé quand le moteur détecte [FIN_DE_TOUR] dans le message d'un PJ.
         Avance le combat tracker au tour suivant (thread-safe via root.after).
+        Ne fait rien si la session est en pause.
         """
+        if getattr(self, "_session_paused", False):
+            return   # l'avance de tour sera relancée manuellement à la reprise
         self.msg_queue.put({
             "sender": "⚔️ Combat",
             "text":   f"✅ {char_name} a terminé son tour — passage au combatant suivant.",
