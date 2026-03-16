@@ -926,6 +926,12 @@ class PanelsMixin:
     def _on_npc_selected(self, selected_name: str):
         """Callback quand le MJ sélectionne un PNJ ou revient en mode MJ normal."""
         self._npc_var.set(selected_name)
+        # Synchronise le bouton inline dans la zone de saisie
+        _inline_label = "MJ" if selected_name == "— MJ Normal —" else selected_name
+        try:
+            self._inline_npc_var.set(_inline_label)
+        except Exception:
+            pass
         if selected_name == "— MJ Normal —":
             self.active_npc = None
             self._npc_indicator.config(text="", fg="white")

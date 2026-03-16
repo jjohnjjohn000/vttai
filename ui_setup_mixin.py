@@ -44,8 +44,39 @@ class UISetupMixin:
         input_frame.pack(fill=tk.X)
 
         self.entry = tk.Entry(input_frame, bg="#3d3d3d", fg="white", font=("Consolas", 12), insertbackground="white")
-        self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10), ipady=5)
-        self.entry.bind("<Return>", lambda event: self.send_text())
+        self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6), ipady=5)
+        self.entry.bind("<Return>",   lambda event: self.send_text())
+        self.entry.bind("<KP_Enter>", lambda event: self.send_text())
+
+        # ── Bouton "Parler en tant que" inline ──────────────────────────────
+        # Affiche le PNJ actif (ou "MJ") et ouvre le même menu que le sélecteur
+        # latéral — permet de changer de voix sans quitter la zone de saisie.
+        self._inline_npc_var = tk.StringVar(value="MJ")
+
+        def _show_inline_npc_menu():
+            if self._npc_menu is None or not self._npc_menu.winfo_exists():
+                self._npc_menu = tk.Menu(
+                    self.root, tearoff=0,
+                    bg="#3d2d4d", fg="white", font=("Consolas", 10),
+                    activebackground="#5d3d7d", activeforeground="white",
+                )
+                self._rebuild_npc_menu()
+            btn = self._inline_npc_btn
+            self._npc_menu.tk_popup(
+                btn.winfo_rootx(),
+                btn.winfo_rooty() + btn.winfo_height(),
+            )
+
+        self._inline_npc_btn = tk.Button(
+            input_frame,
+            textvariable=self._inline_npc_var,
+            bg="#3d2d4d", fg="#c77dff",
+            font=("Consolas", 9, "bold"),
+            activebackground="#5d3d7d", activeforeground="white",
+            relief="flat", padx=6, pady=2,
+            command=_show_inline_npc_menu,
+        )
+        self._inline_npc_btn.pack(side=tk.LEFT, padx=(0, 5))
 
         btn_send = tk.Button(input_frame, text="Envoyer", bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), command=self.send_text)
         btn_send.pack(side=tk.LEFT, padx=(0, 5))
@@ -334,6 +365,54 @@ class UISetupMixin:
             "sender": "⚙ Scene",
             "text":   f"{char_name} {status}.",
             "color":  "#888899",
+        })
+
+        # ── Synchroniser groupchat.agents + prompts avec la nouvelle présence ──
+        # CRITIQUE : groupchat.agents est figé au démarrage de session. Sans cette
+        # synchronisation, un personnage ajouté mid-session n'est jamais retourné
+        # par _eligible_agents() (qui filtre depuis groupchat.agents), donc personne
+        # ne parle. Un personnage retiré et réintégré doit aussi être traité.
+        self._sync_groupchat_agents()
+        if self._agents:
+            self._rebuild_agent_prompts()
+
+    def _sync_groupchat_agents(self):
+        """Synchronise groupchat.agents avec la liste de présence actuelle.
+
+        Cas couverts :
+          - Personnage ajouté mid-session (absent au démarrage → absent de groupchat.agents)
+          - Personnage retiré mid-session (doit disparaître de _eligible_agents)
+          - Personnage réintégré après retrait (déjà dans groupchat.agents, re-éligible
+            dès que get_active_characters() le retourne à nouveau — pas besoin de re-add)
+
+        On reconstruit toujours la liste depuis self._agents (qui contient les 4 objets
+        agent) pour ne jamais perdre un objet agent même s'il avait été retiré.
+        """
+        if not self.groupchat or not self._agents:
+            return
+
+        from state_manager import get_active_characters as _get_active
+        _ALL_PLAYERS = ["Kaelen", "Elara", "Thorne", "Lyra"]
+        active_names = set(_get_active())
+
+        # Garder les agents non-joueurs (MJ, manager…) intacts
+        non_players = [a for a in self.groupchat.agents if a.name not in _ALL_PLAYERS]
+
+        # Reconstruire la liste des joueurs depuis self._agents (source de vérité)
+        # en respectant l'ordre canonique
+        players = [
+            self._agents[name]
+            for name in _ALL_PLAYERS
+            if name in active_names and name in self._agents
+        ]
+
+        self.groupchat.agents = non_players + players
+
+        active_str = ", ".join(a.name for a in players) if players else "aucun"
+        self.msg_queue.put({
+            "sender": "⚙ Groupchat",
+            "text":   f"Agents actifs mis à jour : {active_str}",
+            "color":  "#556677",
         })
 
     def _refresh_char_card(self, char_name: str):

@@ -478,7 +478,7 @@ class CharacterFaceWindow:
         c.delete("all")
 
         breath = math.sin(self._breath) * 1.8
-        fy = int(ch * 0.46 + breath)
+        fy = int(ch * 0.38 + breath)   # remonté de 0.46 → bouche dégagée des vêtements
 
         # ── Fond lumineux (pensée) ────────────────────────────────────────────
         if self._think_tick > 0:
@@ -498,6 +498,9 @@ class CharacterFaceWindow:
 
         # ── Cheveux arrière ───────────────────────────────────────────────────
         self._hair_back(c, cx, fy, cfg)
+
+        # ── Vêtements (dessinés AVANT le visage pour être derrière) ──────────
+        self._draw_clothes(c, cx, ch)
 
         # ── Visage ────────────────────────────────────────────────────────────
         fw, fh = 52, 60
@@ -528,9 +531,6 @@ class CharacterFaceWindow:
 
         # ── Feature spéciale ──────────────────────────────────────────────────
         self._draw_feature(c, cx, fy, cfg)
-
-        # ── Vêtements ─────────────────────────────────────────────────────────
-        self._draw_clothes(c, cx, ch)
 
         # ── Animation de réflexion ────────────────────────────────────────────
         if self._think_tick > 0:
@@ -695,8 +695,8 @@ class CharacterFaceWindow:
         color     = self.data["color"]
         bg        = self.data["bg"]
 
-        # Petite bulle (ellipse)
-        bx, by = cx + 16, fy - 44
+        # Petite bulle (ellipse) — y clampé pour rester dans le canvas
+        bx, by = cx + 16, max(8, fy - 44)
         c.create_oval(bx - 10, by - 6, bx + 10, by + 6,
                       fill=bg, outline=color, width=1)
 

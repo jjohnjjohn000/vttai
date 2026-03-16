@@ -68,6 +68,28 @@ TOKEN_STYLES = {
     "trap":    {"fill": (74,  48,   0), "outline": (240, 176, 48), "shape": "triangle"},
 }
 
+# Tailles de token : nombre de cases occupées (côté du carré)
+TOKEN_SIZES = {"Tiny": 0.5, "Small": 1, "Medium": 1, "Large": 2, "Huge": 3, "Gargantuan": 4}
+
+# Conditions D&D 5e avec couleur de badge
+DND_CONDITIONS = {
+    "Aveuglé":        "#888888",
+    "Charmé":         "#ff80ab",
+    "Épuisé":         "#bf9169",
+    "Effrayé":        "#b39ddb",
+    "Agrippé":        "#a5d6a7",
+    "Étourdi":        "#ffe082",
+    "Inconscient":    "#ef9a9a",
+    "Invisible":      "#e0e0e0",
+    "Paralysé":       "#fff9c4",
+    "Pétrifié":       "#bcaaa4",
+    "Empoisonné":     "#69f0ae",
+    "À terre":        "#ff8a65",
+    "Entravé":        "#ce93d8",
+    "Sourd":          "#90a4ae",
+    "Concentré":      "#40c4ff",
+}
+
 def _rgb_to_hex(rgb):
     return "#{:02x}{:02x}{:02x}".format(*rgb[:3])
 
@@ -142,6 +164,13 @@ class CombatMapWindow:
         self._last_fog_cell = None
         self._pending_render = None
 
+        # ── Undo fog (Ctrl+Z) — 15 états max ─────────────────────────────────
+        self._fog_undo_stack: list = []   # copies PIL Image "L" du fog_mask
+
+        # ── Outil règle ───────────────────────────────────────────────────────
+        self._ruler_start_pt: "tuple | None" = None
+        self._ruler_ids: list = []
+
         # ── Zoom fluide ───────────────────────────────────────────────────────
         # Durant le scroll : rebuild PIL throttlé à 16 ms (60 fps max).
         # Après 120 ms d'inactivité : rebuild PIL complet (image nette).
@@ -164,6 +193,17 @@ class CombatMapWindow:
         self._poly_points: list = []
         self._poly_ids:    list = []
 
+        # ── Obstacles (formes opaques permanentes) ────────────────────────────
+        # Chaque obstacle : {pts:[(x,y)…], color:str, label:str, type:"poly"|"free"}
+        # pts en coordonnées monde (indépendantes du zoom)
+        self._obstacles:     list          = []
+        self._obs_poly_pts:  list          = []   # sommets en cours (outil poly)
+        self._obs_poly_ids:  list          = []   # canvas ids de preview
+        self._obs_free_pts:  list          = []   # points main levée en cours
+        self._obs_free_id:   int           = 0    # canvas id ligne preview
+        self._obs_color:     str           = "#cc4400"  # couleur courante
+        self._obs_pil:       "Image.Image | None" = None  # calque PIL composité
+
         # ── Sélection multiple ────────────────────────────────────────────────
         self._selected_tokens:   set          = set()
         self._drag_origins:      dict         = {}
@@ -177,8 +217,14 @@ class CombatMapWindow:
         self._map_handle_ids: list = []              # canvas item ids des poignées
         self._lock_ratio: bool = False               # Shift = verrouiller ratio
 
+        # ── Système multi-cartes ──────────────────────────────────────────────
+        # Chaque carte est sauvegardée dans campagne/<nom>/maps/<nom_carte>.json
+        # win_state contient seulement active_map_name (persistance de la sélection)
+        self._active_map_name: str = ""   # nom de la carte courante
+        self._map_selector_var: "tk.StringVar | None" = None  # dropdown Tk
+
         # Charger état sauvegardé
-        self._load_from_saved(self.win_state.get("combat_map_data", {}))
+        self._init_maps_system()
         self._build_window()
 
     # ─── Système de calques ───────────────────────────────────────────────────
@@ -302,7 +348,12 @@ class CombatMapWindow:
                             fill=255)
 
         for t in data.get("tokens", []):
-            self.tokens.append({k: v for k, v in t.items() if k != "ids"})
+            tok = {k: v for k, v in t.items() if k != "ids"}
+            tok.setdefault("hp",         -1)
+            tok.setdefault("max_hp",     -1)
+            tok.setdefault("size",        1)
+            tok.setdefault("conditions", [])
+            self.tokens.append(tok)
 
         for n in data.get("notes", []):
             self._notes.append({
@@ -322,14 +373,100 @@ class CombatMapWindow:
                 "canvas_ids": [],
             })
 
+        for obs in data.get("obstacles", []):
+            pts = obs.get("pts", [])
+            if len(pts) >= 2:
+                self._obstacles.append({
+                    "pts":   [tuple(p) for p in pts],
+                    "color": obs.get("color", "#cc4400"),
+                    "label": obs.get("label", ""),
+                    "type":  obs.get("type", "poly"),
+                })
+
     def _save_state(self):
+        """Sauvegarde la carte active dans son fichier JSON + win_state."""
+        self._save_current_map()
+        # win_state garde la carte active et les géométries de fenêtres
+        self.win_state["active_map_name"] = self._active_map_name
+        self.save_fn()
+
+    # ─── Système multi-cartes ─────────────────────────────────────────────────
+
+    def _get_maps_dir(self) -> str:
+        """Retourne (et crée si besoin) le dossier campagne/<nom>/maps/."""
+        try:
+            from app_config import get_campaign_name
+            camp_name = get_campaign_name()
+        except Exception:
+            camp_name = "campagne"
+        camp_name = "".join(
+            c for c in camp_name if c.isalnum() or c in (" ", "-", "_")
+        ).strip() or "campagne"
+        maps_dir = os.path.join("campagne", camp_name, "maps")
+        os.makedirs(maps_dir, exist_ok=True)
+        return maps_dir
+
+    def _map_file(self, name: str) -> str:
+        """Retourne le chemin complet du fichier JSON d'une carte."""
+        safe = "".join(c for c in name if c.isalnum() or c in (" ", "-", "_")).strip()
+        safe = safe or "carte"
+        return os.path.join(self._get_maps_dir(), f"{safe}.json")
+
+    def _list_maps(self) -> list:
+        """Retourne la liste triée des noms de cartes sauvegardées."""
+        try:
+            maps_dir = self._get_maps_dir()
+            names = []
+            for fname in sorted(os.listdir(maps_dir)):
+                if fname.endswith(".json"):
+                    names.append(fname[:-5])
+            return names if names else []
+        except Exception:
+            return []
+
+    def _init_maps_system(self):
+        """
+        Initialise le système multi-cartes au démarrage.
+        Charge la carte active depuis win_state, ou crée 'Carte 1' si aucune.
+        Rétro-compatible : migre l'ancien combat_map_data si présent.
+        """
+        maps_dir = self._get_maps_dir()
+
+        # ── Migration rétro-compat : ancien format → fichier ─────────────────
+        legacy = self.win_state.get("combat_map_data")
+        if legacy and not self._list_maps():
+            # Premier lancement avec le nouveau système : migrer l'existant
+            default_name = "Carte 1"
+            try:
+                import json
+                with open(self._map_file(default_name), "w", encoding="utf-8") as f:
+                    json.dump(legacy, f, indent=2, ensure_ascii=False)
+                print(f"[MapSystem] Migré ancien état → {default_name}")
+            except Exception as e:
+                print(f"[MapSystem] Erreur migration : {e}")
+
+        # ── Sélectionner la carte active ──────────────────────────────────────
+        maps = self._list_maps()
+        saved_name = self.win_state.get("active_map_name", "")
+        if saved_name and saved_name in maps:
+            self._active_map_name = saved_name
+        elif maps:
+            self._active_map_name = maps[0]
+        else:
+            # Aucune carte → en créer une vide
+            self._active_map_name = "Carte 1"
+            self._save_current_map()   # crée le fichier vide
+
+        self._load_map(self._active_map_name)
+
+    def _current_map_data(self) -> dict:
+        """Sérialise l'état courant de la carte en dict sauvegardable."""
         import base64, io as _io
         fog_b64 = ""
         if self._fog_mask is not None:
             buf = _io.BytesIO()
             self._fog_mask.save(buf, "PNG")
             fog_b64 = base64.b64encode(buf.getvalue()).decode()
-        # Fractions de scroll courantes (canvas peut ne pas exister encore)
         try:
             scroll_x = self.canvas.xview()[0]
             scroll_y = self.canvas.yview()[0]
@@ -337,7 +474,7 @@ class CombatMapWindow:
             scroll_x = getattr(self, "_scroll_fx", 0.0)
             scroll_y = getattr(self, "_scroll_fy", 0.0)
 
-        self.win_state["combat_map_data"] = {
+        return {
             "cols":             self.cols,
             "rows":             self.rows,
             "cell_px":          self.cell_px,
@@ -359,14 +496,323 @@ class CombatMapWindow:
             "doors":            [{"col": d["col"], "row": d["row"],
                                   "open": d["open"], "label": d["label"]}
                                  for d in self._doors],
+            "obstacles":        [{"pts": obs["pts"], "color": obs["color"],
+                                  "label": obs["label"], "type": obs["type"]}
+                                 for obs in self._obstacles],
         }
+
+    def _save_current_map(self):
+        """Sauvegarde l'état courant dans le fichier JSON de la carte active."""
+        if not self._active_map_name:
+            return
+        try:
+            import json
+            data = self._current_map_data()
+            path = self._map_file(self._active_map_name)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[MapSystem] Erreur sauvegarde '{self._active_map_name}' : {e}")
+
+    def _load_map(self, name: str):
+        """Charge une carte depuis son fichier JSON dans l'état courant."""
+        try:
+            import json
+            path = self._map_file(name)
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            else:
+                data = {}
+        except Exception as e:
+            print(f"[MapSystem] Erreur chargement '{name}' : {e}")
+            data = {}
+
+        # Reset de l'état courant avant de charger
+        self.zoom    = 1.0
+        self.cols    = 30
+        self.rows    = 20
+        self.tokens  = []
+        self.cell_px = CELL_PX_DEFAULT
+        self.map_layers = []
+        self._active_layer_idx = 0
+        self._ensure_default_layer()
+        self._scroll_fx = 0.0
+        self._scroll_fy = 0.0
+        self._fog_mask  = None
+        self._fog_pil   = None
+        self._bg_pil    = None
+        self._obs_pil   = None
+        self._notes     = []
+        self._doors     = []
+        self._obstacles = []
+        self._map_pil_cache_dict = {}
+        self._fog_undo_stack = []
+        self._selected_tokens.clear()
+        self._drag_token    = None
+        self._drag_origins  = {}
+
+        self._load_from_saved(data)
+
+    def _switch_map(self, name: str):
+        """Sauvegarde la carte courante et charge une autre."""
+        if name == self._active_map_name:
+            return
+        self._save_current_map()
+        self._active_map_name = name
+        self.win_state["active_map_name"] = name
         self.save_fn()
+        self._load_map(name)
+        # Rebuild complet du canvas
+        self._img_id = 0
+        self.canvas.delete("all")
+        self._poly_points.clear()
+        self._poly_ids.clear()
+        self._obs_poly_pts.clear()
+        self._obs_poly_ids.clear()
+        self.canvas.delete("ruler")
+        self._ruler_start_pt = None
+        self._ruler_ids = []
+        self._full_redraw()
+        self.win.after(80, self._restore_view)
+        self._refresh_map_selector()
+        self.win.title(f"Carte de Combat — {name}")
+        if self.msg_queue:
+            self.msg_queue.put({
+                "sender": "🗺️ Carte",
+                "text":   f"Carte chargée : {name}",
+                "color":  "#64b5f6",
+            })
+
+    # ── Actions CRUD cartes ───────────────────────────────────────────────────
+
+    def _add_map(self):
+        """Dialogue + création d'une nouvelle carte vide."""
+        maps = self._list_maps()
+        n = len(maps) + 1
+        default = f"Carte {n}"
+        while default in maps:
+            n += 1
+            default = f"Carte {n}"
+
+        name = simpledialog.askstring(
+            "Nouvelle carte", "Nom de la nouvelle carte :",
+            initialvalue=default, parent=self.win)
+        if not name or not name.strip():
+            return
+        name = name.strip()
+        maps = self._list_maps()
+        if name in maps:
+            messagebox.showinfo("Carte existante",
+                                f"Une carte '{name}' existe déjà.", parent=self.win)
+            return
+        # Créer fichier vide puis basculer dessus
+        self._save_current_map()
+        self._active_map_name = name
+        # Réinitialiser l'état pour une carte vierge
+        self.cols, self.rows, self.zoom = 30, 20, 1.0
+        self.cell_px = CELL_PX_DEFAULT
+        self.tokens, self._notes, self._doors, self._obstacles = [], [], [], []
+        self.map_layers = []
+        self._ensure_default_layer()
+        self._fog_mask = Image.new("L", (self.cols * self.cell_px,
+                                        self.rows * self.cell_px), 255)
+        self._fog_undo_stack = []
+        self._save_current_map()
+        self.win_state["active_map_name"] = name
+        self.save_fn()
+        # Rebuild UI
+        self._img_id = 0
+        self.canvas.delete("all")
+        self._full_redraw()
+        self._refresh_map_selector()
+        self.win.title(f"Carte de Combat — {name}")
+
+    def _delete_map(self):
+        """Supprime la carte active (avec confirmation). Bascule sur une autre."""
+        maps = self._list_maps()
+        if len(maps) <= 1:
+            messagebox.showinfo("Suppression impossible",
+                                "Il faut au moins une carte.", parent=self.win)
+            return
+        name = self._active_map_name
+        if not messagebox.askyesno("Supprimer carte",
+                                   f"Supprimer définitivement « {name} » ?",
+                                   parent=self.win):
+            return
+        try:
+            os.remove(self._map_file(name))
+        except Exception as e:
+            print(f"[MapSystem] Erreur suppression '{name}' : {e}")
+        maps = self._list_maps()
+        new_name = maps[0] if maps else "Carte 1"
+        if not maps:
+            self._active_map_name = new_name
+            self._save_current_map()
+        self._active_map_name = ""   # force le switch
+        self._switch_map(new_name)
+
+    def _rename_map(self):
+        """Renomme la carte active (renomme le fichier JSON)."""
+        old_name = self._active_map_name
+        new_name = simpledialog.askstring(
+            "Renommer la carte", "Nouveau nom :",
+            initialvalue=old_name, parent=self.win)
+        if not new_name or not new_name.strip():
+            return
+        new_name = new_name.strip()
+        if new_name == old_name:
+            return
+        maps = self._list_maps()
+        if new_name in maps:
+            messagebox.showinfo("Nom déjà pris",
+                                f"Une carte '{new_name}' existe déjà.", parent=self.win)
+            return
+        # Sauvegarder sous le nouveau nom puis supprimer l'ancien
+        self._save_current_map()
+        old_path = self._map_file(old_name)
+        new_path = self._map_file(new_name)
+        try:
+            os.rename(old_path, new_path)
+        except Exception as e:
+            print(f"[MapSystem] Erreur renommage : {e}")
+            return
+        self._active_map_name = new_name
+        self.win_state["active_map_name"] = new_name
+        self.save_fn()
+        self._refresh_map_selector()
+        self.win.title(f"Carte de Combat — {new_name}")
+
+    def _duplicate_map(self):
+        """Duplique la carte active sous un nouveau nom."""
+        import json
+        old_name = self._active_map_name
+        self._save_current_map()
+        maps = self._list_maps()
+        default = f"{old_name} (copie)"
+        n = 2
+        while default in maps:
+            default = f"{old_name} (copie {n})"
+            n += 1
+        new_name = simpledialog.askstring(
+            "Dupliquer la carte", "Nom de la copie :",
+            initialvalue=default, parent=self.win)
+        if not new_name or not new_name.strip():
+            return
+        new_name = new_name.strip()
+        maps = self._list_maps()
+        if new_name in maps:
+            messagebox.showinfo("Nom déjà pris",
+                                f"Une carte '{new_name}' existe déjà.", parent=self.win)
+            return
+        try:
+            with open(self._map_file(old_name), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            with open(self._map_file(new_name), "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[MapSystem] Erreur duplication : {e}")
+            return
+        self._switch_map(new_name)
+
+    # ── Barre de sélection de cartes ─────────────────────────────────────────
+
+    def _build_map_selector_bar(self):
+        """Construit la barre de sélection de cartes entre toolbar et canvas."""
+        bar = tk.Frame(self.win, bg="#0e0e1c", pady=3)
+        bar.pack(fill=tk.X, side=tk.TOP)
+        self._map_bar = bar
+
+        tk.Label(bar, text="CARTE :", bg="#0e0e1c", fg="#5555aa",
+                 font=("Consolas", 8, "bold")).pack(side=tk.LEFT, padx=(8, 4))
+
+        # ── Bouton + (ajouter) ────────────────────────────────────────────────
+        tk.Button(bar, text="+ Carte", bg="#0e1e2c", fg="#64b5f6",
+                  font=("Consolas", 8, "bold"), relief="flat", padx=7, pady=2,
+                  activebackground="#1a2a3a", activeforeground="#90caf9",
+                  cursor="hand2", command=self._add_map
+                  ).pack(side=tk.LEFT, padx=2)
+
+        # ── Bouton ✕ (supprimer) ──────────────────────────────────────────────
+        tk.Button(bar, text="✕ Suppr.", bg="#200a0a", fg="#e57373",
+                  font=("Consolas", 8), relief="flat", padx=7, pady=2,
+                  activebackground="#3a1010", activeforeground="#ef9a9a",
+                  cursor="hand2", command=self._delete_map
+                  ).pack(side=tk.LEFT, padx=2)
+
+        # ── Séparateur ────────────────────────────────────────────────────────
+        tk.Frame(bar, bg="#252545", width=1, height=20).pack(side=tk.LEFT, padx=6)
+
+        # ── Dropdown sélecteur ────────────────────────────────────────────────
+        tk.Label(bar, text="Active :", bg="#0e0e1c", fg="#9999bb",
+                 font=("Consolas", 8)).pack(side=tk.LEFT, padx=(0, 3))
+
+        self._map_selector_var = tk.StringVar(value=self._active_map_name)
+        maps = self._list_maps() or [self._active_map_name]
+        self._map_dropdown = tk.OptionMenu(
+            bar, self._map_selector_var, *maps,
+            command=self._on_map_selected)
+        self._map_dropdown.config(
+            bg="#1a1a2e", fg="#e0e0ff", font=("Consolas", 9, "bold"),
+            relief="flat", padx=8, pady=2,
+            highlightthickness=0, activebackground="#2a2a4e",
+            indicatoron=True, width=18)
+        self._map_dropdown["menu"].config(
+            bg="#1a1a2e", fg="#e0e0ff", font=("Consolas", 9),
+            activebackground="#2a2a4e", activeforeground="#ffffff")
+        self._map_dropdown.pack(side=tk.LEFT, padx=2)
+
+        # ── Bouton ✏ renommer ─────────────────────────────────────────────────
+        tk.Button(bar, text="✏ Renommer", bg="#1e1e2e", fg="#ffb74d",
+                  font=("Consolas", 8), relief="flat", padx=7, pady=2,
+                  activebackground="#2c1a00", activeforeground="#ffe082",
+                  cursor="hand2", command=self._rename_map
+                  ).pack(side=tk.LEFT, padx=2)
+
+        # ── Bouton ⧉ dupliquer ────────────────────────────────────────────────
+        tk.Button(bar, text="⧉ Dupliquer", bg="#1a1a2e", fg="#ce93d8",
+                  font=("Consolas", 8), relief="flat", padx=7, pady=2,
+                  activebackground="#1a0a2a", activeforeground="#e1bee7",
+                  cursor="hand2", command=self._duplicate_map
+                  ).pack(side=tk.LEFT, padx=2)
+
+        # ── Nom courant affiché à droite ──────────────────────────────────────
+        self._map_name_lbl = tk.Label(
+            bar, text=f"📍 {self._active_map_name}",
+            bg="#0e0e1c", fg="#6666cc",
+            font=("Consolas", 8, "italic"))
+        self._map_name_lbl.pack(side=tk.RIGHT, padx=10)
+
+    def _on_map_selected(self, name: str):
+        """Callback du OptionMenu — bascule sur la carte sélectionnée."""
+        self._switch_map(name)
+
+    def _refresh_map_selector(self):
+        """Met à jour le dropdown et le label avec la liste courante des cartes."""
+        if self._map_selector_var is None:
+            return
+        maps = self._list_maps()
+        if not maps:
+            maps = [self._active_map_name]
+        # Rebuild du menu
+        menu = self._map_dropdown["menu"]
+        menu.delete(0, "end")
+        for name in maps:
+            menu.add_command(
+                label=name,
+                command=lambda n=name: (
+                    self._map_selector_var.set(n),
+                    self._on_map_selected(n)
+                ))
+        self._map_selector_var.set(self._active_map_name)
+        if hasattr(self, "_map_name_lbl"):
+            self._map_name_lbl.config(text=f"📍 {self._active_map_name}")
 
     # ─── Fenêtre ──────────────────────────────────────────────────────────────
 
     def _build_window(self):
         self.win = tk.Toplevel(self.parent)
-        self.win.title("Carte de Combat")
+        self.win.title(f"Carte de Combat — {self._active_map_name}")
         self.win.configure(bg=BG_WIN)
         self.win.minsize(600, 450)
         self.track_fn("combat_map", self.win)
@@ -374,6 +820,7 @@ class CombatMapWindow:
             self.win.geometry("1020x720")
         self.win.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build_toolbar()
+        self._build_map_selector_bar()
         self._build_layer_panel()
         self._build_canvas_area()
         self._build_statusbar()
@@ -385,128 +832,162 @@ class CombatMapWindow:
     # ─── Toolbar ──────────────────────────────────────────────────────────────
 
     def _build_toolbar(self):
-        tb = tk.Frame(self.win, bg=BG_TOOL, pady=5, padx=6)
-        tb.pack(fill=tk.X, side=tk.TOP)
+        # Conteneur global 2 lignes
+        tb_outer = tk.Frame(self.win, bg=BG_TOOL)
+        tb_outer.pack(fill=tk.X, side=tk.TOP)
 
-        tk.Label(tb, text="CARTE DE COMBAT", bg=BG_TOOL, fg="#6666aa",
-                 font=("Consolas", 8, "bold")).pack(side=tk.LEFT, padx=(4, 12))
+        # ── Ligne 1 : Outils de peinture ─────────────────────────────────────
+        row1 = tk.Frame(tb_outer, bg=BG_TOOL, pady=4, padx=6)
+        row1.pack(fill=tk.X)
 
-        # ── Outils fog ───────────────────────────────────────────────────────
+        tk.Label(row1, text="CARTE", bg=BG_TOOL, fg="#6666aa",
+                 font=("Consolas", 8, "bold")).pack(side=tk.LEFT, padx=(4, 10))
+
         self._tool_btns = {}
         for key, label, fg_on, bg_on in [
-            ("select",     "↖  Sélect.",    "#aaaaff", "#1e1e44"),
-            ("reveal",     "◎  Révéler",    "#81c784", "#0e2c1a"),
-            ("hide",       "●  Cacher",     "#e57373", "#2c0e0e"),
-            ("add",        "+  Token",      "#64b5f6", "#0e1e2c"),
-            ("note",       "📌 Note",       "#ffe082", "#2a2500"),
-            ("door",       "[P] Porte",    "#ff9966", "#2c1200"),
-            ("resize_map", "⤢  Carte",      "#ffb74d", "#2c1a00"),
+            ("select",        "↖ Sélect.",     "#aaaaff", "#1e1e44"),
+            ("pointer",       "📍 Pointer",     "#ff8a80", "#2c0808"),
+            ("reveal",        "⬡ Révéler",     "#81c784", "#0e2c1a"),
+            ("hide",          "⬡ Cacher",      "#e57373", "#2c0e0e"),
+            ("brush_reveal",  "◉ Pinceau+",    "#b2dfdb", "#0a2020"),
+            ("brush_hide",    "◉ Pinceau-",    "#ffcdd2", "#2c1010"),
+            ("ruler",         "📐 Règle",       "#fff176", "#2a2600"),
+            ("add",           "+ Token",       "#64b5f6", "#0e1e2c"),
+            ("note",          "Note",          "#ffe082", "#2a2500"),
+            ("door",          "Porte",         "#ff9966", "#2c1200"),
+            ("obstacle_poly", "⬡ Obstacle",    "#ff6633", "#2c1000"),
+            ("obstacle_free", "✏ Main levée",  "#ff9955", "#2c1800"),
+            ("erase_obs",     "⌫ Efface",       "#ff6b6b", "#2c0808"),
+            ("resize_map",    "⤢ Carte",       "#ffb74d", "#2c1a00"),
         ]:
             btn = tk.Button(
-                tb, text=label, bg="#252538", fg="#aaaacc",
+                row1, text=label, bg="#252538", fg="#aaaacc",
                 font=("Consolas", 9, "bold"), relief="flat",
-                padx=10, pady=5, cursor="hand2",
+                padx=9, pady=4, cursor="hand2",
                 activebackground=bg_on, activeforeground=fg_on,
                 command=lambda k=key: self._set_tool(k))
             btn.pack(side=tk.LEFT, padx=2)
             self._tool_btns[key] = (btn, fg_on, bg_on)
 
-        _sep(tb)
+        _sep(row1)
 
-        # ── Pinceau ───────────────────────────────────────────────────────────
-        tk.Label(tb, text="Rayon :", bg=BG_TOOL, fg="#9999bb",
-                 font=("Consolas", 9)).pack(side=tk.LEFT, padx=(4, 2))
+        self._obs_color_btn = tk.Button(
+            row1, text="Couleur", bg=self._obs_color, fg="white",
+            font=("Consolas", 8, "bold"), relief="flat", padx=7, pady=3,
+            cursor="hand2", command=self._pick_obstacle_color)
+        self._obs_color_btn.pack(side=tk.LEFT, padx=2)
+
+        _sep(row1)
+        tk.Label(row1, text="Rayon :", bg=BG_TOOL, fg="#9999bb",
+                 font=("Consolas", 8)).pack(side=tk.LEFT, padx=(4, 2))
         self._brush_var = tk.IntVar(value=self.brush_size)
         tk.Spinbox(
-            tb, from_=1, to=10, textvariable=self._brush_var, width=3,
-            bg="#252538", fg="#ccccee", font=("Consolas", 10),
+            row1, from_=1, to=10, textvariable=self._brush_var, width=3,
+            bg="#252538", fg="#ccccee", font=("Consolas", 9),
             buttonbackground="#2e2e4a", relief="flat",
             command=lambda: setattr(self, "brush_size", self._brush_var.get()),
         ).pack(side=tk.LEFT, padx=2)
 
-        _sep(tb)
+        # Ratio — affiché dynamiquement en ligne 1 (mode resize_map)
+        self._ratio_var = tk.BooleanVar(value=False)
+        self._ratio_chk = tk.Checkbutton(
+            row1, text="⇔ Ratio", variable=self._ratio_var,
+            bg=BG_TOOL, fg="#ffb74d", selectcolor="#2c1a00",
+            activebackground=BG_TOOL, font=("Consolas", 8),
+            command=lambda: setattr(self, "_lock_ratio", self._ratio_var.get()))
+        self._ratio_chk_visible = False
 
-        # ── Type token ────────────────────────────────────────────────────────
-        tk.Label(tb, text="Token :", bg=BG_TOOL, fg="#9999bb",
-                 font=("Consolas", 9)).pack(side=tk.LEFT, padx=(4, 2))
+        # Zoom (droite ligne 1)
+        self._zoom_lbl = tk.Label(row1, text="100%", bg=BG_TOOL, fg="#8888bb",
+                                  font=("Consolas", 9), width=6)
+        self._zoom_lbl.pack(side=tk.RIGHT, padx=(0, 10))
+        tk.Label(row1, text="Zoom :", bg=BG_TOOL, fg="#7777aa",
+                 font=("Consolas", 8)).pack(side=tk.RIGHT)
+
+        # Séparateur visuel entre les deux lignes
+        tk.Frame(tb_outer, bg="#252545", height=1).pack(fill=tk.X)
+
+        # ── Ligne 2 : Type token + actions + vue ─────────────────────────────
+        row2 = tk.Frame(tb_outer, bg="#13131f", pady=4, padx=6)
+        row2.pack(fill=tk.X)
+
+        tk.Label(row2, text="Token :", bg="#13131f", fg="#9999bb",
+                 font=("Consolas", 8)).pack(side=tk.LEFT, padx=(4, 2))
         self._tok_var = tk.StringVar(value="hero")
         for ttype, col in [("hero", "#5ba4f5"), ("monster", "#e04040"), ("trap", "#f0b030")]:
             tk.Radiobutton(
-                tb, text=ttype.capitalize(), variable=self._tok_var, value=ttype,
-                bg=BG_TOOL, fg=col, selectcolor="#1a1a2e",
-                activebackground=BG_TOOL, font=("Consolas", 9),
+                row2, text=ttype.capitalize(), variable=self._tok_var, value=ttype,
+                bg="#13131f", fg=col, selectcolor="#1a1a2e",
+                activebackground="#13131f", font=("Consolas", 8),
                 command=lambda t=ttype: setattr(self, "token_type", t),
             ).pack(side=tk.LEFT, padx=2)
 
-        _sep(tb)
+        _sep(row2)
+        tk.Label(row2, text="Taille :", bg="#13131f", fg="#9999bb",
+                 font=("Consolas", 8)).pack(side=tk.LEFT, padx=(2, 1))
+        self._tok_size_var = tk.StringVar(value="Medium")
+        size_names = list(TOKEN_SIZES.keys())
+        size_menu = tk.OptionMenu(row2, self._tok_size_var, *size_names)
+        size_menu.config(bg="#1e1e30", fg="#ccccee", font=("Consolas", 8),
+                         relief="flat", padx=4, pady=2,
+                         highlightthickness=0, activebackground="#2a2a44")
+        size_menu["menu"].config(bg="#1a1a2e", fg="#dde0e8", font=("Consolas", 8))
+        size_menu.pack(side=tk.LEFT, padx=2)
 
-        # ── Ratio carte (visible uniquement en mode resize_map) ───────────────
-        self._ratio_var = tk.BooleanVar(value=False)
-        self._ratio_chk = tk.Checkbutton(
-            tb, text="⇔ Ratio", variable=self._ratio_var, bg=BG_TOOL, fg="#ffb74d",
-            selectcolor="#2c1a00", activebackground=BG_TOOL, font=("Consolas", 9),
-            command=lambda: setattr(self, "_lock_ratio", self._ratio_var.get()))
-        # Affiché seulement en mode resize_map (pack/forget dynamique)
-        self._ratio_chk_visible = False
+        _sep(row2)
 
-        # ── Actions carte ─────────────────────────────────────────────────────
-        for text, fg, bg, cmd in [
-            ("+ Calque",       "#64b5f6", "#0e1e30", self._add_map_layer),
-            ("Tout révéler",   "#81c784", "#0e2010", self._reveal_all),
-            ("Tout cacher",    "#e57373", "#20100e", self._cover_all),
-            ("Redimensionner", "#9b8fc7", "#1a1020", self._resize_grid),
+        for text, fg, bg_act, cmd in [
+            ("+ Calque",         "#64b5f6", "#0e1e30", self._add_map_layer),
+            ("Tout révéler",     "#81c784", "#0e2010", self._reveal_all),
+            ("Tout cacher",      "#e57373", "#20100e", self._cover_all),
+            ("Redimensionner",   "#9b8fc7", "#1a1020", self._resize_grid),
+            ("Eff. Tokens",      "#ff8a65", "#2c1500", self._clear_all_tokens),
+            ("Eff. Obstacles",   "#ff8a65", "#2c1500", self._clear_all_obstacles),
         ]:
             tk.Button(
-                tb, text=text, bg="#252538", fg=fg,
-                font=("Consolas", 8), relief="flat", padx=7, pady=4,
-                activebackground=bg, activeforeground=fg,
+                row2, text=text, bg="#1e1e30", fg=fg,
+                font=("Consolas", 8), relief="flat", padx=7, pady=3,
+                activebackground=bg_act, activeforeground=fg,
                 command=cmd,
             ).pack(side=tk.LEFT, padx=2)
 
-        # ── Vue MJ / Joueur ───────────────────────────────────────────────────
+        _sep(row2)
+
         self._view_btn = tk.Button(
-            tb, text="Vue MJ", bg="#2a1a3a", fg="#c77dff",
-            font=("Consolas", 8, "bold"), relief="sunken", padx=8, pady=4,
+            row2, text="Vue MJ", bg="#2a1a3a", fg="#c77dff",
+            font=("Consolas", 8, "bold"), relief="sunken", padx=8, pady=3,
             command=self._toggle_dm_view)
         self._view_btn.pack(side=tk.LEFT, padx=2)
 
-        # ── Fenêtre joueurs ────────────────────────────────────────────────────
         tk.Button(
-            tb, text="Ecran Joueurs", bg="#1a2a3a", fg="#64b5f6",
-            font=("Consolas", 8, "bold"), relief="flat", padx=8, pady=4,
+            row2, text="Écran Joueurs", bg="#1a2a3a", fg="#64b5f6",
+            font=("Consolas", 8, "bold"), relief="flat", padx=8, pady=3,
             activebackground="#0e1e2c", activeforeground="#90caf9",
             command=self._open_player_view,
         ).pack(side=tk.LEFT, padx=2)
 
-        # ── Injection agents ──────────────────────────────────────────────────
         tk.Button(
-            tb, text="→ Agents", bg="#1a2a1a", fg="#81c784",
-            font=("Consolas", 8, "bold"), relief="flat", padx=8, pady=4,
+            row2, text="→ Agents", bg="#1a2a1a", fg="#81c784",
+            font=("Consolas", 8, "bold"), relief="flat", padx=8, pady=3,
             activebackground="#0e2010", activeforeground="#a5d6a7",
             command=self._send_to_agents,
         ).pack(side=tk.LEFT, padx=2)
 
-        # ── Grille ────────────────────────────────────────────────────────────
+        _sep(row2)
+
         self._grid_btn = tk.Button(
-            tb, text="Grille ON", bg="#252538", fg="#9999bb",
-            font=("Consolas", 8), relief="flat", padx=7, pady=4,
+            row2, text="Grille ON", bg="#1e1e30", fg="#9999bb",
+            font=("Consolas", 8), relief="flat", padx=7, pady=3,
             command=self._toggle_grid)
         self._grid_btn.pack(side=tk.LEFT, padx=2)
 
-        # ── Taille case ───────────────────────────────────────────────────────
-        _sep(tb)
-        tk.Label(tb, text="Case :", bg=BG_TOOL, fg="#9999bb",
-                 font=("Consolas", 8)).pack(side=tk.LEFT, padx=(4, 2))
-        self._cellpx_lbl = tk.Label(tb, text=f"{self.cell_px}px", bg=BG_TOOL,
-                                    fg="#ccccee", font=("Consolas", 8, "bold"), width=5)
-        self._cellpx_lbl.pack(side=tk.LEFT)
-
-        # ── Zoom ─────────────────────────────────────────────────────────────
-        self._zoom_lbl = tk.Label(tb, text="100%", bg=BG_TOOL, fg="#8888bb",
-                                  font=("Consolas", 9), width=6)
-        self._zoom_lbl.pack(side=tk.RIGHT, padx=(0, 10))
-        tk.Label(tb, text="Zoom:", bg=BG_TOOL, fg="#7777aa",
-                 font=("Consolas", 8)).pack(side=tk.RIGHT)
+        # Taille case + zoom (droite ligne 2)
+        self._cellpx_lbl = tk.Label(row2, text=f"{self.cell_px}px",
+                                    bg="#13131f", fg="#ccccee",
+                                    font=("Consolas", 8, "bold"), width=5)
+        self._cellpx_lbl.pack(side=tk.RIGHT, padx=(0, 8))
+        tk.Label(row2, text="Case :", bg="#13131f", fg="#9999bb",
+                 font=("Consolas", 8)).pack(side=tk.RIGHT, padx=(8, 2))
 
     # ─── Panneau calques (barre latérale gauche) ──────────────────────────────
 
@@ -701,7 +1182,9 @@ class CombatMapWindow:
         self.win.bind("<Down>",        lambda e: self._map_nudge( 0,  1))
         self.win.bind("<Shift-Up>",    lambda e: self._change_cell_size( 1))
         self.win.bind("<Shift-Down>",  lambda e: self._change_cell_size(-1))
-        self.win.bind("<Escape>",      lambda e: self._poly_cancel())
+        self.win.bind("<Escape>",      lambda e: self._escape_to_select())
+        self.win.bind("<Control-z>",   lambda e: self._undo_fog())
+        self.win.bind("<Control-Z>",   lambda e: self._undo_fog())
 
     def _build_statusbar(self):
         sb = tk.Frame(self.win, bg="#070710", pady=3)
@@ -879,13 +1362,21 @@ class CombatMapWindow:
         self._rebuild_fog()
 
     def _composite(self):
-        """alpha_composite(tuile_bg, tuile_fog) → PhotoImage placé aux coords canvas."""
+        """alpha_composite(bg, obstacles, fog) → PhotoImage placé aux coords canvas."""
         if self._bg_pil is None:
             self._rebuild_bg()
         if self._fog_pil is None:
             self._rebuild_fog()
 
-        scene = Image.alpha_composite(self._bg_pil, self._fog_pil)
+        W, H = self._bg_pil.size
+
+        # Calque obstacles (invalide si _obs_pil est None)
+        if self._obs_pil is None or self._obs_pil.size != (W, H):
+            self._obs_pil = self._build_obstacle_pil(W, H)
+
+        # Composition : bg → obstacles → fog
+        scene = Image.alpha_composite(self._bg_pil, self._obs_pil)
+        scene = Image.alpha_composite(scene, self._fog_pil)
         self._scene_photo = ImageTk.PhotoImage(scene)
 
         W_full, H_full = self._wh
@@ -901,10 +1392,12 @@ class CombatMapWindow:
         self.canvas.tag_raise("token")
         self.canvas.tag_raise("note")
         self.canvas.tag_raise("door")
-        # Vue joueurs
+        # Vue joueurs — on passe aussi le calque obstacles composité
         if self._player_win is not None:
             try:
-                self._player_win.refresh(self._bg_pil, self._fog_mask, self._cp,
+                # Composite bg+obstacles pour la vue joueurs
+                bg_with_obs = Image.alpha_composite(self._bg_pil, self._obs_pil)
+                self._player_win.refresh(bg_with_obs, self._fog_mask, self._cp,
                                          self.cols, self.rows, self.tokens)
             except Exception:
                 self._player_win = None
@@ -915,6 +1408,7 @@ class CombatMapWindow:
         """Reconstruction complète (zoom, grille, taille case)."""
         self._bg_pil  = None
         self._fog_pil = None
+        self._obs_pil = None   # invalide le cache obstacles (zoom changé)
         self._img_id  = 0
         self.canvas.delete("scene")
         self._rebuild_bg()
@@ -937,8 +1431,9 @@ class CombatMapWindow:
 
     def _flush_render(self):
         self._pending_render = None
-        self._bg_pil  = None   # force re-crop de la tuile visible
+        self._bg_pil  = None
         self._fog_pil = None
+        self._obs_pil = None
         self._composite()
 
     def _schedule_tile_refresh(self, delay: int = 16):
@@ -958,9 +1453,11 @@ class CombatMapWindow:
     def _draw_one_token(self, tok: dict):
         style = TOKEN_STYLES.get(tok["type"], TOKEN_STYLES["hero"])
         cp    = self._cp
-        cx    = (tok["col"] + 0.5) * cp
-        cy    = (tok["row"] + 0.5) * cp
-        rad   = cp * 0.40
+        size  = float(tok.get("size", 1))
+        # Centre du token (milieu de la zone size×size)
+        cx    = (tok["col"] + size / 2) * cp
+        cy    = (tok["row"] + size / 2) * cp
+        rad   = cp * size * 0.40
         name  = tok.get("name", "")
 
         fill_rgb = (HERO_COLORS.get(name, style["fill"])
@@ -995,16 +1492,75 @@ class CombatMapWindow:
             ids.append(self.canvas.create_polygon(
                 pts, fill=fill, outline=outline, width=2, tags=("token", tag)))
 
-        fs = max(7, int(10 * self.zoom))
+        fs = max(7, int(10 * self.zoom * size))
         ids.append(self.canvas.create_text(
             cx, cy, text=(name[:3] if name else tok["type"][:1].upper()),
             fill="white", font=("Consolas", fs, "bold"), tags=("token", tag)))
 
-        if self.zoom >= 0.65 and name:
+        if self.zoom >= 0.55 and name:
             ids.append(self.canvas.create_text(
                 cx, cy + rad + 2, text=name, fill=outline,
-                font=("Consolas", max(6, int(7 * self.zoom))),
+                font=("Consolas", max(6, int(7 * self.zoom * size))),
                 anchor="n", tags=("token", tag)))
+
+        # ── Barre de PV ───────────────────────────────────────────────────────
+        hp     = tok.get("hp",     -1)
+        max_hp = tok.get("max_hp", -1)
+        if hp >= 0 and max_hp > 0:
+            bar_w = rad * 2
+            bar_h = max(3, int(cp * 0.10))
+            bx0   = cx - rad
+            by0   = cy - rad - bar_h - 2
+            by1   = by0 + bar_h
+            # Fond gris
+            ids.append(self.canvas.create_rectangle(
+                bx0, by0, bx0 + bar_w, by1,
+                fill="#333333", outline="", tags=("token", tag)))
+            # Remplissage coloré selon ratio
+            ratio = max(0.0, min(1.0, hp / max_hp))
+            bar_color = (
+                "#4caf50" if ratio > 0.5 else
+                "#ff9800" if ratio > 0.25 else
+                "#f44336"
+            )
+            if ratio > 0:
+                ids.append(self.canvas.create_rectangle(
+                    bx0, by0, bx0 + bar_w * ratio, by1,
+                    fill=bar_color, outline="", tags=("token", tag)))
+            # Texte PV si assez grand
+            if cp >= 28 and self.zoom >= 0.7:
+                ids.append(self.canvas.create_text(
+                    cx, by0 + bar_h / 2,
+                    text=f"{hp}/{max_hp}", fill="white",
+                    font=("Consolas", max(5, int(6 * self.zoom)), "bold"),
+                    tags=("token", tag)))
+
+        # ── Badges de conditions ───────────────────────────────────────────────
+        conditions = tok.get("conditions", [])
+        if conditions and self.zoom >= 0.4:
+            badge_r = max(4, int(cp * 0.13))
+            # Placer les badges en arc sous le token
+            angles = [270 + i * (180 / max(1, len(conditions) - 1 or 1))
+                      for i in range(len(conditions))]
+            if len(conditions) == 1:
+                angles = [270]
+            import math
+            arc_r = rad + badge_r + 2
+            for i, cond in enumerate(conditions[:8]):  # max 8 badges
+                angle_deg = 270 + i * 360 / len(conditions) if len(conditions) > 1 else 270
+                angle_rad = math.radians(angle_deg)
+                bx = cx + arc_r * math.cos(angle_rad)
+                by = cy + arc_r * math.sin(angle_rad)
+                cond_col = DND_CONDITIONS.get(cond, "#aaaaaa")
+                ids.append(self.canvas.create_oval(
+                    bx - badge_r, by - badge_r, bx + badge_r, by + badge_r,
+                    fill=cond_col, outline="#ffffff", width=1,
+                    tags=("token", tag)))
+                if badge_r >= 7:
+                    ids.append(self.canvas.create_text(
+                        bx, by, text=cond[:1], fill="#000000",
+                        font=("Consolas", max(5, badge_r - 2), "bold"),
+                        tags=("token", tag)))
 
         tok["ids"] = tuple(ids)
         # Motion + release gérés au niveau canvas (_mb1_move/_mb1_up)
@@ -1020,21 +1576,42 @@ class CombatMapWindow:
 
     # ─── Outils ───────────────────────────────────────────────────────────────
 
+    def _escape_to_select(self):
+        """Échappe vers l'outil Sélection.
+        Si un polygone est en cours (reveal/hide/obstacle), l'annule d'abord.
+        Dans tous les cas, active l'outil 'select'.
+        """
+        self._poly_cancel()
+        self._obs_cancel()
+        self._set_tool("select")
+
     def _set_tool(self, tool: str):
         prev_tool = self.tool
         self.tool = tool
         cursors  = {"select": "arrow", "reveal": "dotbox", "hide": "dot",
+                    "pointer": "crosshair",
+                    "brush_reveal": "dotbox", "brush_hide": "dot",
+                    "ruler": "crosshair",
                     "add": "plus", "note": "pencil", "resize_map": "fleur",
-                    "door": "hand2"}
+                    "door": "hand2", "obstacle_poly": "crosshair",
+                    "obstacle_free": "pencil",
+                    "erase_obs": "dotbox"}
         statuses = {
-            "select":     "Sélection — glisser les tokens | clic droit = supprimer",
-            "reveal":     "Révéler — clic gauche : sommet | clic droit : appliquer | Échap : annuler",
-            "hide":       "Cacher   — clic gauche : sommet | clic droit : appliquer | Échap : annuler",
-            "add":        "Token    — cliquer sur une case pour placer un token",
-            "note":       "Note     — clic gauche : placer un post-it | glisser une note : déplacer | double-clic : éditer | clic droit : supprimer",
-            "door":       "Porte    — clic gauche : placer/basculer ouverte|fermée | clic droit : supprimer",
-            "resize_map": "Carte — glisser une poignée pour redimensionner | "
-                          "glisser le centre pour déplacer | Shift = ratio fixe",
+            "select":        "Sélection — glisser tokens | double-clic : éditer | clic droit : menu contextuel",
+            "pointer":       "Pointer — cliquer sur la carte pour ajouter un commentaire MJ + envoyer l'image au chat",
+            "reveal":        "Révéler (polygone) — clic gauche : sommet | clic droit : appliquer | Échap : annuler",
+            "hide":          "Cacher (polygone)  — clic gauche : sommet | clic droit : appliquer | Échap : annuler",
+            "brush_reveal":  "Pinceau révéler — cliquer-glisser pour révéler | Rayon = taille du pinceau | Ctrl+Z : annuler",
+            "brush_hide":    "Pinceau cacher  — cliquer-glisser pour masquer | Rayon = taille du pinceau | Ctrl+Z : annuler",
+            "ruler":         "Règle — cliquer-glisser pour mesurer une distance (1 case = 1,5 m / 5 ft)",
+            "add":           "Token    — cliquer sur une case pour placer un token",
+            "note":          "Note     — clic gauche : placer un post-it | glisser : déplacer | double-clic : éditer | clic droit : supprimer",
+            "door":          "Porte    — clic gauche : placer/basculer | clic droit : menu (éditer label, supprimer)",
+            "obstacle_poly": "Obstacle (polygone) — clic gauche : sommet | clic droit : valider et nommer | Échap : annuler",
+            "obstacle_free": "Obstacle (main levée) — cliquer-glisser pour dessiner | relâcher : valider | Échap : annuler | clic droit (select) : menu obstacle",
+            "erase_obs":     "Efface — cliquer-glisser pour supprimer les obstacles touchés | le rayon contrôle la taille",
+            "resize_map":    "Carte — glisser une poignée pour redimensionner | "
+                             "glisser le centre pour déplacer | Shift = ratio fixe",
         }
         self.canvas.config(cursor=cursors.get(tool, "crosshair"))
         self._status_var.set(statuses.get(tool, ""))
@@ -1048,7 +1625,19 @@ class CombatMapWindow:
         if prev_tool in ("reveal", "hide") and tool not in ("reveal", "hide"):
             self._poly_cancel()
 
-        # Affiche/masque le checkbox ratio et les poignées
+        # Annuler obstacle en cours si on change d'outil
+        if prev_tool in ("obstacle_poly", "obstacle_free") and tool not in ("obstacle_poly", "obstacle_free"):
+            self._obs_cancel()
+
+        # Effacer le curseur d'efface si on quitte l'outil
+        if prev_tool == "erase_obs" and tool != "erase_obs":
+            self.canvas.delete("erase_preview")
+
+        # Effacer la règle si on change d'outil
+        if prev_tool == "ruler" and tool != "ruler":
+            self.canvas.delete("ruler")
+            self._ruler_start_pt = None
+            self._ruler_ids = []
         if tool == "resize_map":
             if not self._ratio_chk_visible:
                 self._ratio_chk.pack(side=tk.LEFT, padx=4)
@@ -1143,17 +1732,296 @@ class CombatMapWindow:
         self._composite()
         self._save_state()
 
+    # ─── Obstacles (polygone + main levée) ───────────────────────────────────
+
+    def _pick_obstacle_color(self):
+        """Ouvre le sélecteur de couleur natif pour choisir la couleur des obstacles."""
+        from tkinter import colorchooser
+        color = colorchooser.askcolor(
+            color=self._obs_color,
+            title="Couleur de l'obstacle",
+            parent=self.win)
+        if color and color[1]:
+            self._obs_color = color[1]
+            self._obs_color_btn.config(bg=self._obs_color)
+
+    # ── Outil polygone ────────────────────────────────────────────────────────
+
+    def _obs_poly_add(self, cx: float, cy: float):
+        """Ajoute un sommet au polygone obstacle en cours."""
+        pts = self._obs_poly_pts
+        col = self._obs_color
+        if pts:
+            x0, y0 = pts[-1]
+            iid = self.canvas.create_line(
+                x0 * self.zoom, y0 * self.zoom,
+                cx, cy,
+                fill=col, width=2, dash=(4, 2), tags="obs_preview")
+            self._obs_poly_ids.append(iid)
+        r = 4
+        iid = self.canvas.create_oval(
+            cx-r, cy-r, cx+r, cy+r,
+            outline=col, fill="#1a1a1a", width=2, tags="obs_preview")
+        self._obs_poly_ids.append(iid)
+        # Stocke en coordonnées monde (indépendant du zoom)
+        pts.append((cx / self.zoom, cy / self.zoom))
+        self._obs_poly_update_preview(cx, cy)
+
+    def _obs_poly_update_preview(self, cx: float, cy: float):
+        self.canvas.delete("obs_preview_cursor")
+        pts = self._obs_poly_pts
+        if not pts:
+            return
+        col = self._obs_color
+        x0, y0 = pts[-1]
+        self.canvas.create_line(
+            x0 * self.zoom, y0 * self.zoom, cx, cy,
+            fill=col, width=2, dash=(4, 3),
+            tags=("obs_preview", "obs_preview_cursor"))
+        if len(pts) >= 2:
+            x1, y1 = pts[0]
+            self.canvas.create_line(
+                cx, cy, x1 * self.zoom, y1 * self.zoom,
+                fill=col, width=1, dash=(2, 6),
+                tags=("obs_preview", "obs_preview_cursor"))
+
+    def _obs_poly_apply(self):
+        """Valide le polygone et ouvre une mini-fenêtre pour le label."""
+        pts = self._obs_poly_pts
+        if len(pts) < 3:
+            self._obs_cancel()
+            return
+        self.canvas.delete("obs_preview")
+        pts_copy = list(pts)
+        color    = self._obs_color
+        self._obs_poly_pts = []
+        self._obs_poly_ids = []
+        self._obs_ask_label(pts_copy, color, "poly")
+
+    # ── Outil main levée ──────────────────────────────────────────────────────
+
+    def _obs_free_start(self, cx: float, cy: float):
+        """Commence un tracé main levée."""
+        self._obs_free_pts = [(cx / self.zoom, cy / self.zoom)]
+        self._obs_free_id  = self.canvas.create_line(
+            cx, cy, cx, cy,
+            fill=self._obs_color, width=3, tags="obs_preview")
+
+    def _obs_free_move(self, cx: float, cy: float):
+        """Ajoute un point au tracé en cours."""
+        if not self._obs_free_pts:
+            return
+        self._obs_free_pts.append((cx / self.zoom, cy / self.zoom))
+        # Met à jour la ligne canvas
+        flat = [c * self.zoom for pt in self._obs_free_pts for c in pt]
+        if len(flat) >= 4:
+            self.canvas.coords(self._obs_free_id, *flat)
+
+    def _obs_free_end(self):
+        """Termine le tracé main levée et ouvre la fenêtre de label."""
+        pts = self._obs_free_pts
+        self.canvas.delete("obs_preview")
+        self._obs_free_id  = 0
+        self._obs_free_pts = []
+        if len(pts) < 2:
+            return
+        # Ferme automatiquement le contour si assez de points
+        if len(pts) >= 3:
+            pts = pts + [pts[0]]
+        self._obs_ask_label(pts, self._obs_color, "free")
+
+    # ── Dialogue label + validation ───────────────────────────────────────────
+
+    def _obs_ask_label(self, pts: list, color: str, obs_type: str):
+        """Mini-fenêtre pour nommer l'obstacle avant de l'enregistrer."""
+        dw = tk.Toplevel(self.win)
+        dw.title("Nouvel obstacle")
+        dw.geometry("300x120")
+        dw.configure(bg="#0d1018")
+        dw.resizable(False, False)
+        dw.wait_visibility()
+        dw.grab_set()
+
+        tk.Label(dw, text="Label de l'obstacle (optionnel) :",
+                 bg="#0d1018", fg="#ff9955",
+                 font=("Consolas", 9, "bold")).pack(pady=(12, 2))
+        entry = tk.Entry(dw, bg="#252538", fg="#eeeeee",
+                         font=("Consolas", 10), insertbackground="#ff9955",
+                         relief="flat", width=28)
+        entry.pack(padx=14, ipady=3)
+        entry.focus_set()
+
+        def _confirm(event=None):
+            label = entry.get().strip()
+            dw.destroy()
+            obs = {"pts": pts, "color": color, "label": label, "type": obs_type}
+            self._obstacles.append(obs)
+            self._obs_pil = None   # invalide le cache
+            self._composite()
+            self._save_state()
+
+        entry.bind("<Return>", _confirm)
+        tk.Button(dw, text="Valider", bg="#2c1000", fg="#ff9955",
+                  font=("Consolas", 9, "bold"), relief="flat",
+                  command=_confirm).pack(pady=8)
+
+    # ── Suppression ───────────────────────────────────────────────────────────
+
+    def _obs_delete_at(self, cx: float, cy: float):
+        """Supprime l'obstacle dont la forme contient le point (cx, cy) canvas.
+        Utilisé par le clic droit en mode obstacle_poly / select."""
+        wx, wy = cx / self.zoom, cy / self.zoom
+        for obs in reversed(self._obstacles):
+            if self._obs_contains(obs["pts"], wx, wy) or \
+               self._obs_near_segments(obs["pts"], wx, wy, tol=12 / self.zoom):
+                self._obstacles.remove(obs)
+                self._obs_pil = None
+                self._composite()
+                self._save_state()
+                return
+
+    def _obs_erase_at(self, cx: float, cy: float):
+        """Outil efface : supprime tout obstacle dont un segment passe dans le
+        rayon du pinceau autour de (cx, cy) en coordonnées canvas.
+        Fonctionne sur les traits fins (type free) ET les polygones remplis."""
+        brush_r = max(self._brush_var.get(), 1) * self._cp * 0.5
+        tol_world = brush_r / self.zoom
+        wx, wy = cx / self.zoom, cy / self.zoom
+        removed = []
+        for obs in self._obstacles:
+            pts = obs["pts"]
+            # Test 1 : proximité sur les segments (traits fins main levée)
+            if self._obs_near_segments(pts, wx, wy, tol=tol_world):
+                removed.append(obs)
+                continue
+            # Test 2 : point dans le polygone rempli (obstacle épais)
+            if len(pts) >= 3 and self._obs_contains(pts, wx, wy):
+                removed.append(obs)
+        if removed:
+            for obs in removed:
+                self._obstacles.remove(obs)
+            self._obs_pil = None
+            self._composite()
+
+    @staticmethod
+    def _obs_near_segments(pts: list, x: float, y: float, tol: float) -> bool:
+        """Retourne True si le point (x,y) est à moins de tol de l'un des
+        segments de la polyligne pts. Idéal pour les traits fins main levée."""
+        n = len(pts)
+        if n < 2:
+            return False
+        for i in range(n - 1):
+            x1, y1 = pts[i]
+            x2, y2 = pts[i + 1]
+            dx, dy = x2 - x1, y2 - y1
+            seg_len_sq = dx * dx + dy * dy
+            if seg_len_sq < 1e-9:
+                dist_sq = (x - x1) ** 2 + (y - y1) ** 2
+            else:
+                t = max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / seg_len_sq))
+                px, py = x1 + t * dx, y1 + t * dy
+                dist_sq = (x - px) ** 2 + (y - py) ** 2
+            if dist_sq <= tol * tol:
+                return True
+        return False
+
+    def _draw_erase_cursor(self, cx: float, cy: float):
+        """Dessine un cercle de prévisualisation du rayon de l'efface."""
+        self.canvas.delete("erase_preview")
+        r = max(self._brush_var.get(), 1) * self._cp * 0.5
+        self.canvas.create_oval(
+            cx - r, cy - r, cx + r, cy + r,
+            outline="#ff6b6b", width=1, dash=(4, 3),
+            tags="erase_preview")
+
+    @staticmethod
+    def _obs_contains(pts: list, x: float, y: float) -> bool:
+        """Ray-casting pour savoir si (x,y) est dans le polygone pts."""
+        n = len(pts)
+        if n < 3:
+            return False
+        inside = False
+        j = n - 1
+        for i in range(n):
+            xi, yi = pts[i]
+            xj, yj = pts[j]
+            if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-9) + xi):
+                inside = not inside
+            j = i
+        return inside
+
+    # ── Annulation ────────────────────────────────────────────────────────────
+
+    def _obs_cancel(self):
+        """Annule le polygone/tracé en cours sans rien enregistrer."""
+        self.canvas.delete("obs_preview")
+        self.canvas.delete("obs_preview_cursor")
+        self._obs_poly_pts = []
+        self._obs_poly_ids = []
+        self._obs_free_pts = []
+        self._obs_free_id  = 0
+
+    # ── Rendu PIL des obstacles ────────────────────────────────────────────────
+
+    def _build_obstacle_pil(self, W: int, H: int) -> "Image.Image":
+        """
+        Construit le calque PIL RGBA des obstacles à la résolution (W, H).
+        Retourne une image transparente si aucun obstacle.
+        Ce calque est composité ENTRE bg et fog → visible par les joueurs.
+        """
+        from PIL import ImageDraw as _ID
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        if not self._obstacles:
+            return img
+        draw = _ID.Draw(img)
+        for obs in self._obstacles:
+            pts = obs["pts"]
+            if len(pts) < 2:
+                continue
+            color_hex = obs.get("color", "#cc4400")
+            # Parse hex → RGBA avec opacité 200/255
+            h = color_hex.lstrip("#")
+            try:
+                r, g, b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+            except Exception:
+                r, g, b = 180, 60, 0
+            fill_rgba    = (r, g, b, 200)
+            outline_rgba = (min(255, r+60), min(255, g+60), min(255, b+60), 255)
+            # Convertit les coords monde → pixels
+            scaled = [(px * self.zoom, py * self.zoom) for px, py in pts]
+            if len(scaled) >= 3:
+                draw.polygon(scaled, fill=fill_rgba, outline=outline_rgba)
+            else:
+                x0, y0 = scaled[0]
+                x1, y1 = scaled[-1]
+                draw.line([x0, y0, x1, y1], fill=outline_rgba, width=3)
+            # Label
+            label = obs.get("label", "")
+            if label:
+                cx = sum(p[0] for p in scaled) / len(scaled)
+                cy = sum(p[1] for p in scaled) / len(scaled)
+                draw.text((cx, cy), label, fill=(255,255,255,230))
+        return img
+
     # ─── Événements souris ────────────────────────────────────────────────────
 
     def _mb1_down(self, event):
         cx, cy = self._canvas_xy(event)
         self._last_fog_cell = None
+        if self.tool == "pointer":
+            self._pointer_click(cx, cy)
+            return
         if self.tool == "resize_map":
             self._map_resize_begin(cx, cy, event)
         elif self.tool == "add":
             self._add_token(cx, cy)
         elif self.tool in ("reveal", "hide"):
             self._poly_add_point(cx, cy)
+        elif self.tool in ("brush_reveal", "brush_hide"):
+            self._fog_push_undo()
+            self._brush_fog(cx, cy)
+        elif self.tool == "ruler":
+            self._ruler_start(cx, cy)
         elif self.tool == "note":
             # Débuter drag si on clique sur une note existante, sinon créer
             hit = self._note_at(cx, cy)
@@ -1165,6 +2033,13 @@ class CombatMapWindow:
         elif self.tool == "door":
             col, row = self._canvas_to_cell(cx, cy)
             self._door_toggle_or_create(col, row)
+        elif self.tool == "obstacle_poly":
+            self._obs_poly_add(cx, cy)
+        elif self.tool == "obstacle_free":
+            self._obs_free_start(cx, cy)
+        elif self.tool == "erase_obs":
+            self._obs_erase_at(cx, cy)
+            self._draw_erase_cursor(cx, cy)
         elif self.tool == "select":
             if self._drag_token is None:
                 self._box_select_begin(cx, cy)
@@ -1172,13 +2047,21 @@ class CombatMapWindow:
     def _mb1_move(self, event):
         cx, cy = self._canvas_xy(event)
         if self._drag_note is not None:
-            # Déplacer la note en temps réel
             n = self._drag_note
             n["px"] = (cx - self._drag_note_off[0]) / self.zoom
             n["py"] = (cy - self._drag_note_off[1]) / self.zoom
             self._redraw_one_note(n)
         elif self._drag_token is not None:
             self._tok_drag(event, self._drag_token)
+        elif self.tool in ("brush_reveal", "brush_hide"):
+            self._brush_fog(cx, cy)
+        elif self.tool == "erase_obs":
+            self._obs_erase_at(cx, cy)
+            self._draw_erase_cursor(cx, cy)
+        elif self.tool == "ruler" and getattr(self, "_ruler_start_pt", None) is not None:
+            self._ruler_update(cx, cy)
+        elif self.tool == "obstacle_free" and self._obs_free_pts:
+            self._obs_free_move(cx, cy)
         elif self._box_select_start is not None:
             self._box_select_update(cx, cy)
         elif self.tool == "resize_map":
@@ -1187,8 +2070,20 @@ class CombatMapWindow:
     def _mb1_up(self, event):
         cx, cy = self._canvas_xy(event)
         self._last_fog_cell = None
+        if self.tool == "obstacle_free" and self._obs_free_pts:
+            self._obs_free_end()
+            return
+        if self.tool in ("brush_reveal", "brush_hide"):
+            self._save_state()
+            return
+        if self.tool == "erase_obs":
+            self.canvas.delete("erase_preview")
+            self._save_state()
+            return
+        if self.tool == "ruler":
+            self._ruler_end()
+            return
         if self._drag_note is not None:
-            # Snap léger vers grille si très proche d'un bord de case
             self._save_state()
             self._drag_note = None
             self._drag_note_off = (0.0, 0.0)
@@ -1209,28 +2104,643 @@ class CombatMapWindow:
         if self.tool in ("reveal", "hide"):
             self._poly_apply()
             return
-        # Clic droit sur une porte → la supprimer
+        # Obstacle poly en cours → valider
+        if self.tool == "obstacle_poly":
+            self._obs_poly_apply()
+            return
+        # Clic droit en mode obstacle_free → supprimer obstacle touché
+        if self.tool == "obstacle_free":
+            self._obs_delete_at(cx, cy)
+            return
+        # Clic droit sur une porte → menu contextuel
         col, row = self._canvas_to_cell(cx, cy)
         door_hit = self._door_at(col, row)
         if door_hit is not None:
-            self._delete_door(door_hit)
+            self._show_door_context_menu(event, door_hit)
             return
-        # Clic droit sur une note → la supprimer
+        # Clic droit sur une note → menu contextuel
         hit = self._note_at(cx, cy)
         if hit is not None:
-            self._delete_note(hit)
+            self._show_note_context_menu(event, hit)
             return
-        # Clic droit sur un token → le supprimer
-        items = self.canvas.find_overlapping(cx-8, cy-8, cx+8, cy+8)
-        for iid in items:
-            if "token" in self.canvas.gettags(iid):
-                for tok in self.tokens:
-                    if iid in tok.get("ids", ()):
-                        for tid in tok["ids"]:
-                            self.canvas.delete(tid)
-                        self.tokens.remove(tok)
-                        self._save_state()
-                        return
+        # Clic droit sur un obstacle (outil select) → menu contextuel
+        if self.tool == "select":
+            wx, wy = cx / self.zoom, cy / self.zoom
+            for obs in reversed(self._obstacles):
+                if self._obs_contains(obs["pts"], wx, wy):
+                    self._show_obstacle_context_menu(event, obs)
+                    return
+
+        # ── Clic droit sur un token ────────────────────────────────────────────
+        # Cherche le token sous le curseur
+        hit_tok = None
+        cp = self._cp
+        for tok in self.tokens:
+            tcx = (tok["col"] + 0.5) * cp
+            tcy = (tok["row"] + 0.5) * cp
+            if abs(tcx - cx) <= cp * 0.55 and abs(tcy - cy) <= cp * 0.55:
+                hit_tok = tok
+                break
+
+        if hit_tok is not None:
+            # Si le token touché fait partie d'une sélection (≥1 token)
+            # → menu contextuel pour toute la sélection
+            if id(hit_tok) in self._selected_tokens and len(self._selected_tokens) >= 1:
+                self._show_selection_context_menu(event, hit_tok)
+                return
+            # Token isolé → menu contextuel (renommer, déplacer, supprimer)
+            self._show_token_context_menu(event, hit_tok)
+
+    # ─── Menus contextuels ────────────────────────────────────────────────────
+
+    def _show_token_context_menu(self, event, tok):
+        """Menu contextuel clic droit sur un token isolé (non sélectionné)."""
+        menu = tk.Menu(self.canvas, tearoff=0,
+                       bg="#1a1a2e", fg="#dde0e8",
+                       activebackground="#2a2a4e", activeforeground="#ffffff",
+                       font=("Consolas", 9))
+        name = tok.get("name", "?")
+        hp, max_hp = tok.get("hp", -1), tok.get("max_hp", -1)
+        hp_txt = f"  PV {hp}/{max_hp}" if hp >= 0 else ""
+        menu.add_command(label=f"── {name} ({tok['type']}){hp_txt} ──", state="disabled")
+        menu.add_separator()
+        menu.add_command(label="✏  Renommer",
+                         command=lambda: self._rename_token(tok))
+        menu.add_command(label="❤  Modifier PV",
+                         command=lambda: self._edit_token_hp(tok))
+        menu.add_command(label="🔀  Changer de case",
+                         command=lambda: self._teleport_token(tok))
+        menu.add_command(label="⚡  Conditions",
+                         command=lambda: self._edit_token_conditions(tok))
+
+        # Sous-menu taille
+        size_menu = tk.Menu(menu, tearoff=0,
+                            bg="#1a1a2e", fg="#dde0e8",
+                            activebackground="#2a2a4e", activeforeground="#ffffff",
+                            font=("Consolas", 9))
+        for size_name, size_val in TOKEN_SIZES.items():
+            size_menu.add_command(
+                label=size_name,
+                command=lambda sv=size_val, sn=size_name: self._set_token_size(tok, sv))
+        menu.add_cascade(label="📐  Taille", menu=size_menu)
+
+        menu.add_separator()
+        menu.add_command(label="✕  Supprimer",
+                         command=lambda: self._delete_single_token(tok))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _show_note_context_menu(self, event, note):
+        """Menu contextuel clic droit sur une note."""
+        menu = tk.Menu(self.canvas, tearoff=0,
+                       bg="#1a1a2e", fg="#dde0e8",
+                       activebackground="#2a2a4e", activeforeground="#ffffff",
+                       font=("Consolas", 9))
+        menu.add_command(label="── Note ──", state="disabled")
+        menu.add_separator()
+        menu.add_command(label="✏  Éditer le texte",
+                         command=lambda: self._edit_note(note))
+        menu.add_command(label="🎨  Changer la couleur",
+                         command=lambda: self._pick_note_color(note))
+        menu.add_separator()
+        menu.add_command(label="✕  Supprimer",
+                         command=lambda: self._delete_note(note))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _show_door_context_menu(self, event, door):
+        """Menu contextuel clic droit sur une porte."""
+        state_txt = "ouverte" if door["open"] else "fermée"
+        menu = tk.Menu(self.canvas, tearoff=0,
+                       bg="#1a1a2e", fg="#dde0e8",
+                       activebackground="#2a2a4e", activeforeground="#ffffff",
+                       font=("Consolas", 9))
+        lbl = door.get("label", "") or "Porte"
+        menu.add_command(label=f"── {lbl} ({state_txt}) ──", state="disabled")
+        menu.add_separator()
+        toggle_lbl = "Fermer" if door["open"] else "Ouvrir"
+        menu.add_command(label=f"🚪  {toggle_lbl}",
+                         command=lambda: self._door_toggle_open(door))
+        menu.add_command(label="✏  Éditer le label",
+                         command=lambda: self._edit_door_label(door))
+        menu.add_separator()
+        menu.add_command(label="✕  Supprimer",
+                         command=lambda: self._delete_door(door))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _show_obstacle_context_menu(self, event, obs):
+        """Menu contextuel clic droit sur un obstacle (outil select)."""
+        menu = tk.Menu(self.canvas, tearoff=0,
+                       bg="#1a1a2e", fg="#dde0e8",
+                       activebackground="#2a2a4e", activeforeground="#ffffff",
+                       font=("Consolas", 9))
+        lbl = obs.get("label", "") or "Obstacle"
+        menu.add_command(label=f"── {lbl} ──", state="disabled")
+        menu.add_separator()
+        menu.add_command(label="✏  Éditer le label",
+                         command=lambda: self._edit_obstacle_label(obs))
+        menu.add_command(label="🎨  Changer la couleur",
+                         command=lambda: self._pick_obstacle_color_for(obs))
+        menu.add_separator()
+        menu.add_command(label="✕  Supprimer",
+                         command=lambda: self._delete_obstacle(obs))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    # ─── Actions sur tokens individuels ──────────────────────────────────────
+
+    def _rename_token(self, tok):
+        new_name = simpledialog.askstring(
+            "Renommer le token", "Nouveau nom :",
+            initialvalue=tok.get("name", ""), parent=self.win)
+        if new_name is not None and new_name.strip():
+            tok["name"] = new_name.strip()
+            self._redraw_one_token(tok)
+            self._save_state()
+
+    def _teleport_token(self, tok):
+        col = simpledialog.askinteger(
+            "Déplacer token", f"Colonne (1–{self.cols}) :",
+            initialvalue=int(tok["col"]) + 1,
+            minvalue=1, maxvalue=self.cols, parent=self.win)
+        if col is None:
+            return
+        row = simpledialog.askinteger(
+            "Déplacer token", f"Ligne (1–{self.rows}) :",
+            initialvalue=int(tok["row"]) + 1,
+            minvalue=1, maxvalue=self.rows, parent=self.win)
+        if row is None:
+            return
+        old_col, old_row = int(tok["col"]), int(tok["row"])
+        tok["col"] = col - 1
+        tok["row"] = row - 1
+        self._redraw_one_token(tok)
+        self._save_state()
+        self._notify_token_moved(tok.get("name", "?"), tok["type"],
+                                 old_col, old_row, col - 1, row - 1)
+
+    def _delete_single_token(self, tok):
+        for iid in tok.get("ids", ()):
+            self.canvas.delete(iid)
+        self._selected_tokens.discard(id(tok))
+        if tok in self.tokens:
+            self.tokens.remove(tok)
+        self._save_state()
+
+    def _edit_token_hp(self, tok):
+        """Dialogue pour modifier les PV actuels et max d'un token."""
+        dw = tk.Toplevel(self.win)
+        dw.title(f"PV — {tok.get('name','?')}")
+        dw.geometry("260x160")
+        dw.configure(bg="#0d1018")
+        dw.resizable(False, False)
+        dw.wait_visibility()
+        dw.grab_set()
+
+        tk.Label(dw, text=f"Points de vie — {tok.get('name','?')}",
+                 bg="#0d1018", fg="#ef9a9a",
+                 font=("Consolas", 9, "bold")).pack(pady=(10, 6))
+
+        frm = tk.Frame(dw, bg="#0d1018")
+        frm.pack(padx=14)
+
+        tk.Label(frm, text="PV actuels :", bg="#0d1018", fg="#aaaacc",
+                 font=("Consolas", 8), width=12, anchor="w").grid(row=0, column=0, pady=3)
+        hp_var = tk.StringVar(value=str(tok.get("hp", "")) if tok.get("hp", -1) >= 0 else "")
+        tk.Entry(frm, textvariable=hp_var, bg="#252538", fg="#ef9a9a",
+                 font=("Consolas", 10), insertbackground="#ef5350",
+                 relief="flat", width=8).grid(row=0, column=1, ipady=3)
+
+        tk.Label(frm, text="PV max :", bg="#0d1018", fg="#aaaacc",
+                 font=("Consolas", 8), width=12, anchor="w").grid(row=1, column=0, pady=3)
+        maxhp_var = tk.StringVar(value=str(tok.get("max_hp", "")) if tok.get("max_hp", -1) >= 0 else "")
+        tk.Entry(frm, textvariable=maxhp_var, bg="#252538", fg="#ef9a9a",
+                 font=("Consolas", 10), insertbackground="#ef5350",
+                 relief="flat", width=8).grid(row=1, column=1, ipady=3)
+
+        def _apply(event=None):
+            try:
+                hp_s  = hp_var.get().strip()
+                mhp_s = maxhp_var.get().strip()
+                tok["hp"]     = int(hp_s)  if hp_s  else -1
+                tok["max_hp"] = int(mhp_s) if mhp_s else tok["hp"]
+            except ValueError:
+                pass
+            dw.destroy()
+            self._redraw_one_token(tok)
+            self._save_state()
+
+        dw.bind("<Return>", _apply)
+        dw.bind("<Escape>", lambda e: dw.destroy())
+        tk.Button(dw, text="Appliquer", bg="#2c1000", fg="#ef9a9a",
+                  font=("Consolas", 9, "bold"), relief="flat", padx=10,
+                  command=_apply).pack(pady=8)
+
+    def _edit_token_conditions(self, tok):
+        """Dialogue checkboxes pour gérer les conditions D&D 5e d'un token."""
+        dw = tk.Toplevel(self.win)
+        dw.title(f"Conditions — {tok.get('name','?')}")
+        dw.geometry("320x400")
+        dw.configure(bg="#0d1018")
+        dw.resizable(False, True)
+        dw.wait_visibility()
+        dw.grab_set()
+
+        tk.Label(dw, text=f"Conditions — {tok.get('name','?')}",
+                 bg="#0d1018", fg="#ce93d8",
+                 font=("Consolas", 10, "bold")).pack(pady=(10, 4))
+
+        current = set(tok.get("conditions", []))
+        vars_map = {}
+
+        canvas_frm = tk.Frame(dw, bg="#0d1018")
+        canvas_frm.pack(fill=tk.BOTH, expand=True, padx=12)
+
+        cols_n = 2
+        for i, (cond_name, cond_color) in enumerate(DND_CONDITIONS.items()):
+            row_f = i // cols_n
+            col_f = i % cols_n
+            var = tk.BooleanVar(value=cond_name in current)
+            vars_map[cond_name] = var
+            frm_c = tk.Frame(canvas_frm, bg="#0d1018")
+            frm_c.grid(row=row_f, column=col_f, sticky="w", padx=6, pady=2)
+            tk.Canvas(frm_c, width=12, height=12, bg="#0d1018",
+                      highlightthickness=0).pack(side=tk.LEFT, padx=(0, 4))
+            dot = frm_c.children[list(frm_c.children)[-1]]
+            dot.create_oval(1, 1, 11, 11, fill=cond_color, outline="")
+            tk.Checkbutton(frm_c, text=cond_name, variable=var,
+                           bg="#0d1018", fg="#ccccee", selectcolor="#1a1a2e",
+                           activebackground="#0d1018",
+                           font=("Consolas", 8)).pack(side=tk.LEFT)
+
+        def _apply():
+            tok["conditions"] = [c for c, v in vars_map.items() if v.get()]
+            dw.destroy()
+            self._redraw_one_token(tok)
+            self._save_state()
+
+        tk.Button(dw, text="Appliquer", bg="#1a0a2a", fg="#ce93d8",
+                  font=("Consolas", 9, "bold"), relief="flat", padx=12, pady=4,
+                  command=_apply).pack(pady=8)
+        dw.bind("<Return>", lambda e: _apply())
+        dw.bind("<Escape>", lambda e: dw.destroy())
+
+    def _set_token_size(self, tok, size_val: float):
+        tok["size"] = size_val
+        self._redraw_one_token(tok)
+        self._save_state()
+
+    # ─── Outil Règle ─────────────────────────────────────────────────────────
+
+    def _ruler_start(self, cx: float, cy: float):
+        self._ruler_start_pt = (cx, cy)
+        self._ruler_ids = []
+
+    def _ruler_update(self, cx: float, cy: float):
+        for iid in getattr(self, "_ruler_ids", []):
+            self.canvas.delete(iid)
+        self._ruler_ids = []
+        sp = getattr(self, "_ruler_start_pt", None)
+        if sp is None:
+            return
+        x0, y0 = sp
+        cp = self._cp
+        # Distance en cases (Chebyshev D&D 5e) et en mètres
+        dcol = abs(cx - x0) / cp
+        drow = abs(cy - y0) / cp
+        dist_cases = max(dcol, drow)
+        dist_m     = dist_cases * 1.5
+        dist_ft    = dist_cases * 5.0
+        label = f"{dist_m:.1f} m  ({dist_ft:.0f} ft  /  {dist_cases:.1f} cases)"
+
+        # Ligne de mesure
+        self._ruler_ids.append(self.canvas.create_line(
+            x0, y0, cx, cy,
+            fill="#fff176", width=2, dash=(6, 3), tags="ruler"))
+        # Points de départ et arrivée
+        for rx, ry in [(x0, y0), (cx, cy)]:
+            self._ruler_ids.append(self.canvas.create_oval(
+                rx - 4, ry - 4, rx + 4, ry + 4,
+                fill="#fff176", outline="", tags="ruler"))
+        # Label de distance (avec halo noir)
+        mx, my = (x0 + cx) / 2, (y0 + cy) / 2
+        for ddx, ddy in [(-1,-1),(1,-1),(-1,1),(1,1)]:
+            self._ruler_ids.append(self.canvas.create_text(
+                mx + ddx, my + ddy, text=label,
+                fill="#000000", font=("Consolas", 9, "bold"),
+                anchor="center", tags="ruler"))
+        self._ruler_ids.append(self.canvas.create_text(
+            mx, my, text=label,
+            fill="#fff176", font=("Consolas", 9, "bold"),
+            anchor="center", tags="ruler"))
+        self._status_var.set(f"Règle : {label}")
+
+    def _ruler_end(self):
+        for iid in getattr(self, "_ruler_ids", []):
+            self.canvas.delete(iid)
+        self._ruler_ids = []
+        self._ruler_start_pt = None
+        self._status_var.set("Règle — cliquer-glisser pour mesurer une distance")
+
+    # ─── Actions sur portes ───────────────────────────────────────────────────
+
+    def _door_toggle_open(self, door):
+        door["open"] = not door["open"]
+        self._redraw_one_door(door)
+        self._save_state()
+
+    def _edit_door_label(self, door):
+        new_label = simpledialog.askstring(
+            "Label de la porte", "Nouveau label (vide = effacer) :",
+            initialvalue=door.get("label", ""), parent=self.win)
+        if new_label is None:
+            return
+        door["label"] = new_label.strip()
+        self._redraw_one_door(door)
+        self._save_state()
+
+    # ─── Actions sur obstacles ────────────────────────────────────────────────
+
+    def _edit_obstacle_label(self, obs):
+        new_label = simpledialog.askstring(
+            "Label de l'obstacle", "Nouveau label (vide = effacer) :",
+            initialvalue=obs.get("label", ""), parent=self.win)
+        if new_label is None:
+            return
+        obs["label"] = new_label.strip()
+        self._obs_pil = None
+        self._composite()
+        self._save_state()
+
+    def _pick_obstacle_color_for(self, obs):
+        from tkinter import colorchooser
+        color = colorchooser.askcolor(
+            color=obs.get("color", "#cc4400"),
+            title="Couleur de l'obstacle", parent=self.win)
+        if color and color[1]:
+            obs["color"] = color[1]
+            self._obs_pil = None
+            self._composite()
+            self._save_state()
+
+    def _delete_obstacle(self, obs):
+        if obs in self._obstacles:
+            self._obstacles.remove(obs)
+        self._obs_pil = None
+        self._composite()
+        self._save_state()
+
+    def _clear_all_obstacles(self):
+        if not self._obstacles:
+            return
+        if messagebox.askyesno("Effacer obstacles",
+                               f"Supprimer les {len(self._obstacles)} obstacle(s) ?",
+                               parent=self.win):
+            self._obstacles.clear()
+            self._obs_pil = None
+            self._composite()
+            self._save_state()
+
+    def _clear_all_tokens(self):
+        if not self.tokens:
+            return
+        if messagebox.askyesno("Effacer tokens",
+                               f"Supprimer les {len(self.tokens)} token(s) ?",
+                               parent=self.win):
+            self.canvas.delete("token")
+            self.tokens.clear()
+            self._selected_tokens.clear()
+            self._save_state()
+
+    # ─── Actions sur notes ────────────────────────────────────────────────────
+
+    def _pick_note_color(self, note):
+        from tkinter import colorchooser
+        color = colorchooser.askcolor(
+            color=note.get("color", "#ffe082"),
+            title="Couleur de la note", parent=self.win)
+        if color and color[1]:
+            note["color"] = color[1]
+            self._redraw_one_note(note)
+            self._save_state()
+
+    # ─── Outil pinceau fog ────────────────────────────────────────────────────
+
+    def _fog_push_undo(self):
+        """Sauvegarde l'état courant du fog mask pour Ctrl+Z."""
+        if self._fog_mask is None:
+            return
+        self._fog_undo_stack.append(self._fog_mask.copy())
+        if len(self._fog_undo_stack) > 15:
+            self._fog_undo_stack.pop(0)
+
+    def _undo_fog(self):
+        """Ctrl+Z — restaure le dernier état du fog mask."""
+        if not self._fog_undo_stack:
+            self._status_var.set("Aucun état à annuler.")
+            return
+        self._fog_mask = self._fog_undo_stack.pop()
+        self._fog_pil = None
+        self._rebuild_fog()
+        self._composite()
+        self._save_state()
+        self._status_var.set(f"Annulé. ({len(self._fog_undo_stack)} état(s) restants)")
+
+    def _brush_fog(self, cx: float, cy: float):
+        """Applique le pinceau de fog (révéler ou cacher) à la position canvas (cx, cy)."""
+        from PIL import ImageDraw as _ID
+        mw = self.cols * self.cell_px
+        mh = self.rows * self.cell_px
+        if self._fog_mask is None:
+            self._fog_mask = Image.new("L", (mw, mh), 255)
+
+        cp  = self._cp
+        inv = self.cell_px / cp   # facteur canvas → fog mask
+        # Centre du pinceau en coordonnées fog mask
+        mx = cx * inv
+        my = cy * inv
+        r  = max(1, self._brush_var.get()) * self.cell_px  # rayon en px fog
+
+        fill = 0 if self.tool == "brush_reveal" else 255
+        draw = _ID.Draw(self._fog_mask)
+        draw.ellipse([mx - r, my - r, mx + r, my + r], fill=fill)
+
+        self._fog_pil = None
+        self._schedule_tile_refresh(delay=16)
+
+    def _show_selection_context_menu(self, event, hit_tok):
+        """Menu contextuel sur right-click d'un token faisant partie de la sélection."""
+        sel_toks = [t for t in self.tokens if id(t) in self._selected_tokens]
+        n = len(sel_toks)
+        label = f"{n} token{'s' if n > 1 else ''} sélectionné{'s' if n > 1 else ''}"
+
+        menu = tk.Menu(self.canvas, tearoff=0,
+                       bg="#1a1a2e", fg="#dde0e8",
+                       activebackground="#2a2a4e", activeforeground="#ffffff",
+                       font=("Consolas", 9))
+        menu.add_command(label=f"── {label} ──", state="disabled")
+        menu.add_separator()
+        menu.add_command(
+            label="⚔  Ajouter à l'initiative",
+            command=lambda: self._add_selection_to_initiative(sel_toks))
+        menu.add_command(
+            label="▦  Regrouper (grille 2 de large)",
+            command=lambda: self._group_selection(sel_toks))
+        menu.add_separator()
+        menu.add_command(
+            label="✕  Supprimer la sélection",
+            command=lambda: self._delete_selection(sel_toks))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _add_selection_to_initiative(self, sel_toks):
+        """
+        Ajoute les tokens sélectionnés au CombatTracker ouvert.
+        - Héros déjà présents → ignorés (pas de doublon).
+        - Monstres → ajoutés comme PNJ avec init aléatoire.
+        - Héros absents → ajoutés comme PJ.
+        """
+        # Récupérer le tracker depuis l'app parente si possible
+        tracker = None
+        try:
+            import gc
+            from combat_tracker import CombatTracker
+            for obj in gc.get_objects():
+                if isinstance(obj, CombatTracker):
+                    try:
+                        if obj.win.winfo_exists():
+                            tracker = obj
+                            break
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        if tracker is None:
+            if self.msg_queue:
+                self.msg_queue.put({
+                    "sender": "⚔️ Carte",
+                    "text": "Ouvrez d'abord le Combat Tracker (bouton ⚔️ Combat).",
+                    "color": "#e67e22",
+                })
+            return
+
+        from combat_tracker import Combatant, PC_COLORS, PC_DEX_BONUS, HERO_NAMES
+        import random
+
+        already_in = {c.name for c in tracker.combatants}
+        added = []
+        skipped = []
+
+        for tok in sel_toks:
+            name = tok.get("name", "")
+            tok_type = tok.get("type", "monster")
+
+            if tok_type == "hero":
+                # Héros déjà présent → ignorer
+                if name in already_in:
+                    skipped.append(name)
+                    continue
+                # Charger les stats depuis state_manager si possible
+                hp, max_hp = 30, 30
+                try:
+                    from state_manager import load_state as _ls
+                    st = _ls()
+                    cdata = st.get("characters", {}).get(name, {})
+                    hp     = cdata.get("hp",     hp)
+                    max_hp = cdata.get("max_hp", max_hp)
+                except Exception:
+                    pass
+                dex = PC_DEX_BONUS.get(name, 2)
+                init_val = random.randint(1, 20) + dex
+                c = Combatant(
+                    name=name, is_pc=True,
+                    max_hp=max_hp, current_hp=hp,
+                    ac=16, initiative=init_val,
+                    dex_bonus=dex,
+                    color=PC_COLORS.get(name, "#a0c0ff"),
+                )
+            else:
+                # PNJ/monstre — toujours ajouter (peut y avoir plusieurs copies)
+                display_name = name or tok_type.capitalize()
+                init_val = random.randint(1, 20) + random.randint(-1, 3)
+                c = Combatant(
+                    name=display_name, is_pc=False,
+                    max_hp=20, current_hp=20,
+                    ac=13, initiative=init_val,
+                    dex_bonus=1,
+                    color="#e04040",
+                )
+
+            tracker.combatants.append(c)
+            already_in.add(c.name)
+            added.append(f"{c.name} (init {init_val})")
+
+        tracker._sort_and_refresh()
+        tracker._save_combat_state()
+
+        parts = []
+        if added:
+            parts.append(f"Ajoutés : {', '.join(added)}")
+        if skipped:
+            parts.append(f"Déjà présents (ignorés) : {', '.join(skipped)}")
+        if self.msg_queue and parts:
+            self.msg_queue.put({
+                "sender": "⚔️ Combat",
+                "text": " | ".join(parts),
+                "color": "#c8a820",
+            })
+
+    def _group_selection(self, sel_toks):
+        """
+        Dispose les tokens sélectionnés en grille de 2 cases de large,
+        à partir de la position du token le plus en haut-gauche.
+        Les tokens restent sélectionnés après le regroupement.
+        """
+        if not sel_toks:
+            return
+
+        # Origine = case la plus en haut-gauche de la sélection
+        origin_col = min(int(round(t["col"])) for t in sel_toks)
+        origin_row = min(int(round(t["row"])) for t in sel_toks)
+
+        for i, tok in enumerate(sel_toks):
+            col_offset = i % 2          # 0 ou 1
+            row_offset = i // 2         # 0, 1, 2…
+            tok["col"] = float(max(0, min(self.cols - 1,
+                                          origin_col + col_offset)))
+            tok["row"] = float(max(0, min(self.rows - 1,
+                                          origin_row + row_offset)))
+            self._redraw_one_token(tok)
+
+        self._save_state()
+        if self.msg_queue:
+            self.msg_queue.put({
+                "sender": "🗺️ Carte",
+                "text": f"{len(sel_toks)} token(s) regroupés en grille 2×N à partir de Col {origin_col+1}, Lig {origin_row+1}.",
+                "color": "#64b5f6",
+            })
+
+    def _delete_selection(self, sel_toks):
+        """Supprime tous les tokens de la sélection."""
+        for tok in sel_toks:
+            for iid in tok.get("ids", ()):
+                self.canvas.delete(iid)
+            self._selected_tokens.discard(id(tok))
+            if tok in self.tokens:
+                self.tokens.remove(tok)
+        self._save_state()
 
     def _mouse_move(self, event):
         cx, cy = self._canvas_xy(event)
@@ -1239,9 +2749,15 @@ class CombatMapWindow:
             self._pos_var.set(f"Col {col+1} / Lig {row+1}")
         else:
             self._pos_var.set("")
-        # Prévisualisation polygone
+        # Prévisualisation polygone fog
         if self.tool in ("reveal", "hide") and self._poly_points:
             self._poly_update_preview(cx, cy)
+        # Prévisualisation polygone obstacle
+        if self.tool == "obstacle_poly" and self._obs_poly_pts:
+            self._obs_poly_update_preview(cx, cy)
+        # Prévisualisation curseur efface
+        if self.tool == "erase_obs":
+            self._draw_erase_cursor(cx, cy)
         if self.tool == "resize_map" and self._map_resize_handle is None:
             handle = self._hit_test_handle(cx, cy)
             cursor_map = {
@@ -1575,15 +3091,22 @@ class CombatMapWindow:
     def _tok_release(self, event, tok):
         if self._drag_token is None:
             return
+        moved = []
         for t in self.tokens:
             if id(t) not in self._selected_tokens:
                 continue
+            old_col, old_row = self._drag_origins.get(id(t), (t["col"], t["row"]))
             t["col"] = round(max(0, min(self.cols - 1, t["col"])))
             t["row"] = round(max(0, min(self.rows - 1, t["row"])))
             self._redraw_one_token(t)
+            new_col, new_row = int(t["col"]), int(t["row"])
+            if (int(round(old_col)), int(round(old_row))) != (new_col, new_row):
+                moved.append((t, int(round(old_col)), int(round(old_row)), new_col, new_row))
         self._drag_token   = None
         self._drag_origins = {}
         self._save_state()
+        for t, oc, or_, nc, nr in moved:
+            self._notify_token_moved(t.get("name", "?"), t["type"], oc, or_, nc, nr)
 
     # ─── Sélection rectangulaire ──────────────────────────────────────────────
 
@@ -1671,14 +3194,103 @@ class CombatMapWindow:
             default = f"Monstre {len(existing)+1}"
         else:
             default = f"Piège {len(existing)+1}"
-        name = simpledialog.askstring(
-            "Nom du token", f"Nom du {ttype} :", initialvalue=default, parent=self.win)
-        if name is None:
+
+        # ── Boîte de dialogue étendue ─────────────────────────────────────────
+        tok_data = self._show_add_token_dialog(ttype, default)
+        if tok_data is None:
             return
-        tok = {"type": ttype, "name": name, "col": col, "row": row}
+
+        size_key = self._tok_size_var.get()
+        size     = TOKEN_SIZES.get(size_key, 1)
+        tok = {
+            "type":       ttype,
+            "name":       tok_data["name"],
+            "col":        col,
+            "row":        row,
+            "hp":         tok_data.get("hp", -1),
+            "max_hp":     tok_data.get("max_hp", -1),
+            "size":       size,
+            "conditions": [],
+        }
         self.tokens.append(tok)
         self._draw_one_token(tok)
         self._save_state()
+
+    def _show_add_token_dialog(self, ttype: str, default_name: str) -> "dict | None":
+        """Fenêtre modale pour créer un token : nom + HP (monstre/héros)."""
+        result = {}
+        dw = tk.Toplevel(self.win)
+        dw.title("Nouveau token")
+        dw.geometry("300x200")
+        dw.configure(bg="#0d1018")
+        dw.resizable(False, False)
+        dw.wait_visibility()
+        dw.grab_set()
+
+        fg_accent = {"hero": "#64b5f6", "monster": "#ef5350", "trap": "#ffd54f"}.get(ttype, "#aaaacc")
+
+        tk.Label(dw, text=f"Nouveau {ttype}", bg="#0d1018", fg=fg_accent,
+                 font=("Consolas", 10, "bold")).pack(pady=(10, 4))
+
+        # Nom
+        frm_name = tk.Frame(dw, bg="#0d1018")
+        frm_name.pack(fill=tk.X, padx=14, pady=2)
+        tk.Label(frm_name, text="Nom :", bg="#0d1018", fg="#aaaacc",
+                 font=("Consolas", 8), width=8, anchor="w").pack(side=tk.LEFT)
+        name_var = tk.StringVar(value=default_name)
+        tk.Entry(frm_name, textvariable=name_var, bg="#252538", fg="#eeeeee",
+                 font=("Consolas", 9), insertbackground=fg_accent,
+                 relief="flat").pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=3)
+
+        # HP (seulement pour héros et monstres)
+        hp_var    = tk.StringVar(value="")
+        maxhp_var = tk.StringVar(value="")
+        if ttype in ("hero", "monster"):
+            frm_hp = tk.Frame(dw, bg="#0d1018")
+            frm_hp.pack(fill=tk.X, padx=14, pady=2)
+            tk.Label(frm_hp, text="PV :", bg="#0d1018", fg="#aaaacc",
+                     font=("Consolas", 8), width=8, anchor="w").pack(side=tk.LEFT)
+            tk.Entry(frm_hp, textvariable=hp_var, bg="#252538", fg="#ef9a9a",
+                     font=("Consolas", 9), insertbackground="#ef5350",
+                     relief="flat", width=6).pack(side=tk.LEFT, ipady=3, padx=(0,4))
+            tk.Label(frm_hp, text="/", bg="#0d1018", fg="#666688",
+                     font=("Consolas", 9)).pack(side=tk.LEFT)
+            tk.Entry(frm_hp, textvariable=maxhp_var, bg="#252538", fg="#ef9a9a",
+                     font=("Consolas", 9), insertbackground="#ef5350",
+                     relief="flat", width=6).pack(side=tk.LEFT, ipady=3, padx=(4,0))
+            tk.Label(frm_hp, text="(PV actuels / max)", bg="#0d1018", fg="#555577",
+                     font=("Consolas", 7)).pack(side=tk.LEFT, padx=4)
+
+        def _confirm(event=None):
+            name = name_var.get().strip()
+            if not name:
+                return
+            try:
+                hp     = int(hp_var.get())    if hp_var.get().strip()    else -1
+                max_hp = int(maxhp_var.get()) if maxhp_var.get().strip() else hp
+            except ValueError:
+                hp = max_hp = -1
+            result["name"]   = name
+            result["hp"]     = hp
+            result["max_hp"] = max(hp, max_hp) if hp > 0 else -1
+            dw.destroy()
+
+        def _cancel(event=None):
+            dw.destroy()
+
+        dw.bind("<Return>", _confirm)
+        dw.bind("<Escape>", _cancel)
+        btn_row = tk.Frame(dw, bg="#0d1018")
+        btn_row.pack(pady=10)
+        tk.Button(btn_row, text="Créer", bg="#1a2a1a", fg=fg_accent,
+                  font=("Consolas", 9, "bold"), relief="flat", padx=12, pady=4,
+                  command=_confirm).pack(side=tk.LEFT, padx=6)
+        tk.Button(btn_row, text="Annuler", bg="#1a1a2a", fg="#666688",
+                  font=("Consolas", 9), relief="flat", padx=8, pady=4,
+                  command=_cancel).pack(side=tk.LEFT, padx=6)
+
+        dw.wait_window()
+        return result if result else None
 
     def _load_map_image(self):
         """Conservé pour compatibilité — délègue vers le calque actif."""
@@ -2228,9 +3840,25 @@ class CombatMapWindow:
 
     def _mb1_double(self, event):
         cx, cy = self._canvas_xy(event)
+        # Double-clic sur une note → éditer
         hit = self._note_at(cx, cy)
         if hit is not None:
             self._edit_note(hit)
+            return
+        # Double-clic sur un token en mode select → renommer
+        if self.tool == "select":
+            cp = self._cp
+            for tok in self.tokens:
+                tcx = (tok["col"] + 0.5) * cp
+                tcy = (tok["row"] + 0.5) * cp
+                if abs(tcx - cx) <= cp * 0.55 and abs(tcy - cy) <= cp * 0.55:
+                    self._rename_token(tok)
+                    return
+        # Double-clic sur une porte → éditer son label
+        col, row = self._canvas_to_cell(cx, cy)
+        door_hit = self._door_at(col, row)
+        if door_hit is not None:
+            self._edit_door_label(door_hit)
 
     # ── Build map description (inclure les notes) ─────────────────────────────
 
@@ -2437,13 +4065,432 @@ class CombatMapWindow:
                 dcol = actual_col - old_col
                 drow = actual_row - old_row
                 dist_m = max(abs(dcol), abs(drow)) * 1.5
-                return (
+                msg = (
                     f"[Carte] {name} déplacé : "
                     f"Col {old_col+1},Lig {old_row+1} → "
                     f"Col {actual_col+1},Lig {actual_row+1} "
                     f"({dist_m:.1f} m)"
                 )
+                # Notifier les agents du déplacement (validé par autogen_engine)
+                self._notify_token_moved(name, tok["type"],
+                                         old_col, old_row, actual_col, actual_row,
+                                         source="engine")
+                return msg
         return f"[Carte] Token '{name}' introuvable — vérifiez qu'il est placé sur la carte."
+
+    def _notify_token_moved(self, name: str, ttype: str,
+                            old_col: int, old_row: int,
+                            new_col: int, new_row: int,
+                            source: str = "mj"):
+        """
+        Notifie le chat et les agents autogen qu'un token a bougé.
+
+        source = "mj"     → déplacement manuel (drag ou téléportation)
+        source = "engine" → déplacement validé par autogen_engine (action déclarée)
+
+        Le message est injecté dans autogen via inject_fn UNIQUEMENT pour les
+        déplacements MJ (source="mj"), afin que les agents en soient informés
+        avant leur prochaine action. Les déplacements engine sont déjà dans
+        l'historique autogen, pas besoin de les réinjecter.
+        """
+        dcol   = new_col - old_col
+        drow   = new_row - old_row
+        dist_m = max(abs(dcol), abs(drow)) * 1.5
+
+        # ── Label de direction ────────────────────────────────────────────────
+        dirs = []
+        if drow < 0: dirs.append("nord")
+        if drow > 0: dirs.append("sud")
+        if dcol > 0: dirs.append("est")
+        if dcol < 0: dirs.append("ouest")
+        dir_txt = "-".join(dirs) if dirs else "sur place"
+
+        # ── Type de token ─────────────────────────────────────────────────────
+        type_label = {
+            "hero":    "le héros",
+            "monster": "l'ennemi",
+            "trap":    "l'élément",
+        }.get(ttype, "le token")
+
+        # ── Message court pour le chat ────────────────────────────────────────
+        chat_txt = (
+            f"🗺️ [Carte] {type_label.capitalize()} **{name}** "
+            f"déplacé vers Col {new_col+1}, Lig {new_row+1} "
+            f"({dist_m:.1f} m vers le {dir_txt})"
+        )
+        if self.msg_queue is not None:
+            color = {
+                "hero":    "#64b5f6",
+                "monster": "#ef9a9a",
+                "trap":    "#ffe082",
+            }.get(ttype, "#aaaacc")
+            self.msg_queue.put({
+                "sender": "Carte",
+                "text":   chat_txt,
+                "color":  color,
+            })
+
+        # ── Injection autogen (MJ uniquement) ─────────────────────────────────
+        if source == "mj" and self.inject_fn is not None:
+            # Snapshot complet de toutes les positions après le déplacement
+            positions = []
+            for t in self.tokens:
+                tc, tr = int(round(t["col"])), int(round(t["row"]))
+                positions.append(
+                    f"  • {t.get('name','?')} ({t['type']}) → Col {tc+1}, Lig {tr+1}"
+                )
+            positions_txt = "\n".join(positions) if positions else "  (aucun token)"
+
+            inject_txt = (
+                f"[MISE À JOUR CARTE — MJ]\n"
+                f"{type_label.capitalize()} {name} vient d'être déplacé par le MJ :\n"
+                f"  Ancienne position : Col {old_col+1}, Lig {old_row+1}\n"
+                f"  Nouvelle position : Col {new_col+1}, Lig {new_row+1} "
+                f"({dist_m:.1f} m vers le {dir_txt})\n\n"
+                f"Positions actuelles de tous les tokens :\n{positions_txt}\n\n"
+                f"Tenez compte de cette mise à jour pour vos prochaines actions."
+            )
+            self.inject_fn(inject_txt)
+
+    # ─── Outil Pointer MJ ─────────────────────────────────────────────────────
+
+    def _pointer_click(self, cx: float, cy: float):
+        """Clic avec l'outil Pointer : dialogue de commentaire puis envoi au chat."""
+        col, row = self._canvas_to_cell(cx, cy)
+        col_display = col + 1
+        row_display = row + 1
+
+        # ── Dialogue de commentaire ───────────────────────────────────────────
+        dw = tk.Toplevel(self.win)
+        dw.title("Pointer — commentaire MJ")
+        dw.geometry("380x200")
+        dw.configure(bg="#0d1018")
+        dw.resizable(False, False)
+        dw.wait_visibility()
+        dw.grab_set()
+
+        tk.Label(dw,
+                 text=f"📍  Col {col_display}, Lig {row_display}",
+                 bg="#0d1018", fg="#ff8a80",
+                 font=("Consolas", 10, "bold")).pack(pady=(12, 4))
+
+        tk.Label(dw,
+                 text="Commentaire MJ (optionnel) :",
+                 bg="#0d1018", fg="#aaaacc",
+                 font=("Consolas", 8)).pack()
+
+        txt = tk.Text(dw, bg="#1a1a2e", fg="#eeeeee",
+                      font=("Consolas", 9), insertbackground="#ff8a80",
+                      relief="flat", height=4, width=40, wrap=tk.WORD)
+        txt.pack(padx=14, pady=4, fill=tk.X)
+        txt.focus_set()
+
+        result = {}
+
+        def _send(event=None):
+            comment = txt.get("1.0", tk.END).strip()
+            result["comment"] = comment
+            result["go"] = True
+            dw.destroy()
+
+        def _cancel(event=None):
+            dw.destroy()
+
+        dw.bind("<Control-Return>", _send)
+        dw.bind("<Escape>", _cancel)
+
+        btn_row = tk.Frame(dw, bg="#0d1018")
+        btn_row.pack(pady=6)
+        tk.Button(btn_row, text="📤 Envoyer",
+                  bg="#1a1018", fg="#ff8a80",
+                  font=("Consolas", 9, "bold"), relief="flat", padx=12, pady=4,
+                  command=_send).pack(side=tk.LEFT, padx=6)
+        tk.Button(btn_row, text="Annuler",
+                  bg="#1a1a2a", fg="#666688",
+                  font=("Consolas", 9), relief="flat", padx=8, pady=4,
+                  command=_cancel).pack(side=tk.LEFT, padx=6)
+        tk.Label(btn_row, text="Ctrl+Entrée pour envoyer",
+                 bg="#0d1018", fg="#444466",
+                 font=("Consolas", 7)).pack(side=tk.LEFT, padx=6)
+
+        dw.wait_window()
+
+        if not result.get("go"):
+            return
+
+        comment = result.get("comment", "")
+
+        # ── Rendu de l'image avec le pointeur ─────────────────────────────────
+        try:
+            img = self._render_pointer_image(cx, cy)
+        except Exception as e:
+            print(f"[Pointer] Erreur rendu : {e}")
+            img = None
+
+        # ── Sérialiser en PNG bytes ───────────────────────────────────────────
+        img_bytes = None
+        if img is not None:
+            try:
+                import io as _io
+                buf = _io.BytesIO()
+                img.save(buf, "PNG")
+                img_bytes = buf.getvalue()
+            except Exception as e:
+                print(f"[Pointer] Erreur PNG : {e}")
+
+        # ── Envoyer au chat ───────────────────────────────────────────────────
+        if self.msg_queue is not None:
+            map_name = self._active_map_name or "carte"
+            header = f"📍 {map_name}  —  Col {col_display}, Lig {row_display}"
+            if comment:
+                header += f"\n{comment}"
+            self.msg_queue.put({
+                "action":    "map_pointer",
+                "sender":    "🗺️ MJ",
+                "comment":   header,
+                "img_bytes": img_bytes,
+                "col":       col_display,
+                "row":       row_display,
+            })
+            # ── Diffusion aux agents joueurs (image + contexte) ───────────────
+            if img_bytes is not None:
+                self.msg_queue.put({
+                    "action":    "map_pointer_broadcast",
+                    "img_bytes": img_bytes,
+                    "comment":   comment,
+                    "col":       col_display,
+                    "row":       row_display,
+                    "map_name":  self._active_map_name or "",
+                    "notes_txt": self._notes_description(),
+                })
+
+    def _render_pointer_image(self, cx: float, cy: float) -> "Image.Image":
+        """
+        Rend le viewport courant avec un pointeur visible (épingle rouge + halo)
+        centré sur (cx, cy) en coordonnées canvas.
+        """
+        from PIL import ImageDraw as _ID, ImageFont as _IF
+
+        # ── Rendu du viewport (réutilise _render_player_image avec fog MJ) ──
+        cp     = self._cp
+        W_full, H_full = self._wh
+        sr_w   = W_full + 40
+        sr_h   = H_full + 40
+        x0f, x1f = self.canvas.xview()
+        y0f, y1f = self.canvas.yview()
+        vx0 = max(0,      int(x0f * sr_w))
+        vy0 = max(0,      int(y0f * sr_h))
+        vx1 = min(W_full, int(x1f * sr_w))
+        vy1 = min(H_full, int(y1f * sr_h))
+        VW  = max(1, vx1 - vx0)
+        VH  = max(1, vy1 - vy0)
+
+        # Damier
+        ri  = (np.arange(VH) + vy0) // cp
+        ci  = (np.arange(VW) + vx0) // cp
+        chk = (ri[:, None] + ci[None, :]) % 2
+        arr = np.where(chk[:, :, None] == 0,
+                       np.array(_C_BG_A, dtype=np.uint8),
+                       np.array(_C_BG_B, dtype=np.uint8))
+        bg = Image.fromarray(arr.astype(np.uint8), "RGBA")
+
+        # Calques image
+        scale = cp / self.cell_px
+        for layer in self.map_layers:
+            if not layer.get("visible", True):
+                continue
+            lpath = layer.get("path", "")
+            if not lpath or not os.path.exists(lpath):
+                continue
+            try:
+                src = self._map_pil_cache_dict.get(lpath)
+                if src is None:
+                    src = Image.open(lpath).convert("RGBA")
+                    self._map_pil_cache_dict[lpath] = src
+                sw, sh  = src.size
+                lw      = layer.get("w", self.cols * self.cell_px)
+                lh      = layer.get("h", self.rows * self.cell_px)
+                lox     = layer.get("ox", 0)
+                loy     = layer.get("oy", 0)
+                disp_w  = max(1, int(lw * scale))
+                disp_h  = max(1, int(lh * scale))
+                img_cx0 = int(lox * scale)
+                img_cy0 = int(loy * scale)
+                ix0 = max(vx0, img_cx0);  iy0 = max(vy0, img_cy0)
+                ix1 = min(vx1, img_cx0 + disp_w)
+                iy1 = min(vy1, img_cy0 + disp_h)
+                if ix1 <= ix0 or iy1 <= iy0:
+                    continue
+                dest_w = ix1 - ix0;  dest_h = iy1 - iy0
+                frac_x0 = (ix0 - img_cx0) / disp_w
+                frac_y0 = (iy0 - img_cy0) / disp_h
+                frac_x1 = (ix1 - img_cx0) / disp_w
+                frac_y1 = (iy1 - img_cy0) / disp_h
+                src_crop = src.crop((
+                    max(0, int(frac_x0 * sw)), max(0, int(frac_y0 * sh)),
+                    min(sw, max(1, int(frac_x1 * sw))),
+                    min(sh, max(1, int(frac_y1 * sh))),
+                ))
+                src_cw, _ = src_crop.size
+                filt = Image.BILINEAR if dest_w > src_cw else Image.LANCZOS
+                tile_img = src_crop.resize((dest_w, dest_h), filt)
+                ml = Image.new("RGBA", (VW, VH), (0, 0, 0, 0))
+                ml.paste(tile_img, (ix0 - vx0, iy0 - vy0))
+                bg = Image.alpha_composite(bg, ml)
+            except Exception:
+                pass
+
+        # Grille
+        if self._show_grid and cp >= 4:
+            bg_arr = np.array(bg, dtype=np.float32)
+            gc = np.array(_C_GRID[:3], dtype=np.float32)
+            ga = _C_GRID[3] / 255.0
+            for c in range(vx0 // cp, vx1 // cp + 2):
+                x = c * cp - vx0
+                if 0 <= x < VW:
+                    bg_arr[:, x, :3] = ga * gc + (1 - ga) * bg_arr[:, x, :3]
+            for r in range(vy0 // cp, vy1 // cp + 2):
+                y = r * cp - vy0
+                if 0 <= y < VH:
+                    bg_arr[y, :, :3] = ga * gc + (1 - ga) * bg_arr[y, :, :3]
+            bg_arr[:, :, 3] = 255
+            bg = Image.fromarray(bg_arr.astype(np.uint8), "RGBA")
+
+        # Fog (vue MJ semi-transparent)
+        if self._fog_mask is not None:
+            mw_fog = self.cols * self.cell_px
+            mh_fog = self.rows * self.cell_px
+            fx0 = int(vx0 / W_full * mw_fog) if W_full > 0 else 0
+            fy0 = int(vy0 / H_full * mh_fog) if H_full > 0 else 0
+            fx1 = int(vx1 / W_full * mw_fog) if W_full > 0 else mw_fog
+            fy1 = int(vy1 / H_full * mh_fog) if H_full > 0 else mh_fog
+            fog_crop   = self._fog_mask.crop((
+                max(0, fx0), max(0, fy0),
+                min(mw_fog, max(fx0 + 1, fx1)),
+                min(mh_fog, max(fy0 + 1, fy1))))
+            fog_scaled = fog_crop.resize((VW, VH), Image.NEAREST)
+            fog_arr    = np.array(fog_scaled, dtype=np.uint8)
+            fog_rgba   = np.zeros((VH, VW, 4), dtype=np.uint8)
+            covered    = fog_arr > 0
+            fog_rgba[covered] = _C_FOG_DM   # vue MJ semi-transparent
+            fog_layer  = Image.fromarray(fog_rgba, "RGBA")
+            bg = Image.alpha_composite(bg, fog_layer)
+
+        # Tokens
+        for tok in self.tokens:
+            tc, tr = int(round(tok["col"])), int(round(tok["row"]))
+            tcx = (tc + 0.5) * cp - vx0
+            tcy = (tr + 0.5) * cp - vy0
+            if -cp < tcx < VW + cp and -cp < tcy < VH + cp:
+                style = TOKEN_STYLES.get(tok["type"], TOKEN_STYLES["hero"])
+                name  = tok.get("name", "")
+                fill_rgb = (HERO_COLORS.get(name, style["fill"])
+                            if tok["type"] == "hero" else style["fill"])
+                self._draw_token_pil(bg, tcx, tcy, cp * 0.40,
+                                     fill_rgb, style["outline"],
+                                     style.get("shape", "circle"), name[:3] or "?")
+
+        # Notes flottantes (post-its) — même rendu que _render_player_image
+        if self._notes:
+            bg = self._composite_notes_pil_viewport(bg, VW, VH, vx0, vy0)
+
+        # ── Pointeur ──────────────────────────────────────────────────────────
+        px = int(cx) - vx0
+        py = int(cy) - vy0
+        overlay = Image.new("RGBA", (VW, VH), (0, 0, 0, 0))
+        draw    = _ID.Draw(overlay)
+
+        # Halo de pulsation (cercles concentriques semi-transparents)
+        for radius, alpha in [(48, 40), (36, 70), (24, 110)]:
+            draw.ellipse([px - radius, py - radius,
+                          px + radius, py + radius],
+                         fill=(255, 80, 80, alpha), outline=None)
+
+        # Épingle : cercle blanc + rouge avec outline noir
+        pin_r = 14
+        for ddx, ddy in [(-1,-1),(1,-1),(-1,1),(1,1)]:
+            draw.ellipse([px - pin_r + ddx, py - pin_r + ddy,
+                          px + pin_r + ddx, py + pin_r + ddy],
+                         fill=(0, 0, 0, 200))
+        draw.ellipse([px - pin_r, py - pin_r,
+                      px + pin_r, py + pin_r],
+                     fill=(255, 60, 60, 255), outline=(255, 255, 255, 255))
+        draw.ellipse([px - 5, py - 5, px + 5, py + 5],
+                     fill=(255, 255, 255, 220))
+
+        # Tige de l'épingle
+        stem_len = 28
+        for ddx in [-1, 0, 1]:
+            draw.line([(px + ddx, py + pin_r - 2),
+                       (px + ddx, py + pin_r + stem_len)],
+                      fill=(0, 0, 0, 180), width=1)
+        draw.line([(px, py + pin_r - 2),
+                   (px, py + pin_r + stem_len)],
+                  fill=(255, 60, 60, 255), width=2)
+
+        # Lignes de visée (crosshair léger)
+        line_len = 22
+        line_alpha = 160
+        for dx, dy in [(-line_len, 0), (line_len, 0), (0, -line_len), (0, line_len)]:
+            draw.line([(px, py), (px + dx, py + dy)],
+                      fill=(255, 200, 200, line_alpha), width=1)
+
+        # Coordonnées de la case
+        col_lbl = int(cx // cp) + 1
+        row_lbl = int(cy // cp) + 1
+        coord_txt = f"Col {col_lbl}, Lig {row_lbl}"
+        try:
+            font = _IF.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 13)
+        except Exception:
+            font = _IF.load_default()
+        label_x = px + pin_r + 4
+        label_y = py - pin_r
+        for ddx2, ddy2 in [(-1,-1),(1,-1),(-1,1),(1,1)]:
+            draw.text((label_x + ddx2, label_y + ddy2), coord_txt,
+                      fill=(0, 0, 0, 200), font=font)
+        draw.text((label_x, label_y), coord_txt,
+                  fill=(255, 230, 230, 255), font=font)
+
+        bg = Image.alpha_composite(bg, overlay)
+
+        # ── Bande de titre en bas de l'image ──────────────────────────────────
+        BAR_H = 28
+        final = Image.new("RGBA", (VW, VH + BAR_H), (0, 0, 0, 255))
+        final.paste(bg, (0, 0))
+        bar_draw = _ID.Draw(final)
+        bar_draw.rectangle([0, VH, VW, VH + BAR_H], fill=(12, 12, 30, 255))
+        map_name = self._active_map_name or "carte"
+        bar_txt  = f"📍 {map_name}  —  Col {col_lbl}, Lig {row_lbl}"
+        try:
+            bar_font = _IF.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 11)
+        except Exception:
+            bar_font = _IF.load_default()
+        bar_draw.text((8, VH + 7), bar_txt,
+                      fill=(180, 140, 255, 255), font=bar_font)
+
+        return final.convert("RGBA")
+
+    @staticmethod
+    def _draw_token_pil(img, cx, cy, rad, fill_rgb, outline_rgb, shape, label):
+        """Dessine un token sur une image PIL (pour l'export pointeur)."""
+        from PIL import ImageDraw as _ID2
+        draw = _ID2.Draw(img)
+        fill    = tuple(fill_rgb) + (220,)
+        outline = tuple(outline_rgb) + (255,)
+        if shape == "circle":
+            draw.ellipse([cx - rad, cy - rad, cx + rad, cy + rad],
+                         fill=fill, outline=outline)
+        elif shape == "diamond":
+            pts = [(cx, cy - rad), (cx + rad, cy),
+                   (cx, cy + rad), (cx - rad, cy)]
+            draw.polygon(pts, fill=fill, outline=outline)
+        else:
+            pts = [(cx, cy - rad),
+                   (cx + rad * 0.88, cy + rad * 0.75),
+                   (cx - rad * 0.88, cy + rad * 0.75)]
+            draw.polygon(pts, fill=fill, outline=outline)
 
     def _restore_view(self):
         """Restaure le zoom et la position de scroll sauvegardés (appelé après le premier rendu)."""
@@ -2589,7 +4636,7 @@ class PlayerMapView:
         self._tok_drawn.clear()
 
         # Pré-calculer le fog array une seule fois pour la visibilité des tokens
-        fog_arr = np.array(fog.resize((W, H), Image.NEAREST)) if fog is not None else None
+        fog_arr = np.array(fog_mask.resize((W, H), Image.NEAREST)) if fog_mask is not None else None
 
         for tok in tokens:
             c, r = int(tok["col"]), int(tok["row"])
@@ -2660,14 +4707,42 @@ def open_combat_map(parent, win_state: dict, save_fn, track_fn,
 
 def get_map_prompt(win_state: dict) -> str:
     """
-    Génère une description textuelle de la carte de combat (positions des tokens,
-    distances clés) à partir de win_state["combat_map_data"].
+    Génère une description textuelle de la carte de combat active.
+    Lit depuis le fichier JSON de la carte active (nouveau système multi-cartes).
+    Rétro-compatible avec l'ancien win_state["combat_map_data"].
 
     Retourne "" si aucune carte n'est chargée ou si elle est vide de tokens.
     1 case = 1,5 m (équivalent D&D 5ft square).
     Les distances sont calculées en distance de Chebyshev (mouvement diagonale libre 5e).
     """
-    data = win_state.get("combat_map_data", {})
+    # ── Nouveau système : lire depuis le fichier de la carte active ───────────
+    data = {}
+    try:
+        active_name = win_state.get("active_map_name", "")
+        if active_name:
+            import json
+            try:
+                from app_config import get_campaign_name
+                camp_name = get_campaign_name()
+            except Exception:
+                camp_name = "campagne"
+            camp_name = "".join(
+                c for c in camp_name if c.isalnum() or c in (" ", "-", "_")
+            ).strip() or "campagne"
+            safe_name = "".join(
+                c for c in active_name if c.isalnum() or c in (" ", "-", "_")
+            ).strip() or "carte"
+            map_path = os.path.join("campagne", camp_name, "maps", f"{safe_name}.json")
+            if os.path.exists(map_path):
+                with open(map_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+    except Exception as e:
+        print(f"[get_map_prompt] Erreur lecture carte : {e}")
+
+    # ── Fallback rétro-compat ─────────────────────────────────────────────────
+    if not data:
+        data = win_state.get("combat_map_data", {})
+
     tokens = data.get("tokens", [])
     if not tokens:
         return ""
@@ -2758,6 +4833,28 @@ def get_map_prompt(win_state: dict) -> str:
                         else "l'image montre une porte ouverte — elle est en réalité FERMÉE")
             lines.append(
                 f"  • Col {d['col']+1}, Lig {d['row']+1}{label} : {state} — {override}")
+
+    # ── Obstacles / zones bloquées ────────────────────────────────────────────
+    obstacles = data.get("obstacles", [])
+    if obstacles:
+        lines.append("\n🧱 OBSTACLES / ZONES BLOQUÉES :")
+        lines.append("  ⚠ Ces zones sont physiquement bloquées — mouvement et ligne de vue impossibles.")
+        for obs in obstacles:
+            pts   = obs.get("pts", [])
+            label = obs.get("label", "")
+            label_txt = f" « {label} »" if label else ""
+            if pts:
+                # Calcule la case centrale approximative
+                avg_x = sum(p[0] for p in pts) / len(pts)
+                avg_y = sum(p[1] for p in pts) / len(pts)
+                # Bounding box en cases
+                min_c = int(min(p[0] for p in pts) / 44)
+                max_c = int(max(p[0] for p in pts) / 44)
+                min_r = int(min(p[1] for p in pts) / 44)
+                max_r = int(max(p[1] for p in pts) / 44)
+                lines.append(
+                    f"  • Obstacle{label_txt} — cases Col {min_c+1}–{max_c+1}, "
+                    f"Lig {min_r+1}–{max_r+1} : PASSAGE BLOQUÉ")
 
     lines.append(
         "\nUtilise ces positions pour décider de ton mouvement et de ta portée d'attaque."

@@ -165,32 +165,84 @@ class SessionMixin:
         """Réinitialise le chat et l'état de session pour repartir à zéro
         sans fermer l'application. Appelé depuis le thread Tk (root.after)."""
 
-        # ── Vider le chat ──────────────────────────────────────────────────
+        # ── 0. Terminer proprement l'ANCIEN thread autogen ─────────────────
+        # CRITIQUE : sans cette étape l'ancien thread reste bloqué dans
+        # input_event.wait() (character_mixin.py:993). Démarrer un nouveau
+        # thread autogen en parallèle crée une race condition sur les objets
+        # Tk/PIL partagés → segfault immédiat.
+        import ctypes
+        from llm_config import StopLLMRequested
+
+        old_thread = getattr(self, "_autogen_thread", None)
+        tid        = getattr(self, "_autogen_thread_id", None)
+
+        # a) Injecter StopLLMRequested dans le thread (même technique que
+        #    LLMControlMixin._inject_stop). Cela interrompt les appels LLM
+        #    ET la boucle while True de run_autogen.
+        if tid is not None:
+            try:
+                res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                    ctypes.c_ulong(tid),
+                    ctypes.py_object(StopLLMRequested),
+                )
+                if res == 0:
+                    print("[Reset] Thread autogen déjà terminé.")
+                elif res > 1:
+                    ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                        ctypes.c_ulong(tid), None
+                    )
+                    print("[Reset] ⚠ Injection annulée — trop de threads touchés.")
+            except Exception as e:
+                print(f"[Reset] Injection StopLLMRequested échouée : {e}")
+
+        # b) Débloquer input_event.wait() au cas où le thread est suspendu là.
+        #    IMPORTANT : il faut .set() et non .clear() pour réveiller un
+        #    thread bloqué dans Event.wait().
+        try:
+            self.input_event.set()
+        except Exception:
+            pass
+
+        # c) Attendre la mort effective du thread (max 4 s).
+        if old_thread is not None and old_thread.is_alive():
+            old_thread.join(timeout=4.0)
+            if old_thread.is_alive():
+                print("[Reset] ⚠ L'ancien thread autogen est encore vivant après 4 s "
+                      "— on continue quand même (il est daemon, il mourra avec l'app).")
+
+        # ── 1. Vider le chat ───────────────────────────────────────────────
         self.chat_display.config(state="normal")
         self.chat_display.delete("1.0", "end")
         self.chat_display.config(state="disabled")
         self.messages_index.clear()
         self.msg_counter = 0
 
-        # ── Réinitialiser l'état de session ───────────────────────────────
-        self.groupchat             = None
-        self._agents               = {}
-        self._base_system_msgs     = {}
-        self._active_memory_ids    = set()
-        self._contextual_mem_block = ""
-        self._autogen_thread_id    = None
-        self._llm_running          = False
-        self._waiting_for_mj       = False
+        # ── 2. Réinitialiser l'état de session ────────────────────────────
+        self.groupchat              = None
+        self._agents                = {}
+        self._base_system_msgs      = {}
+        self._active_memory_ids     = set()
+        self._contextual_mem_block  = ""
+        self._autogen_thread_id     = None
+        self._autogen_thread        = None
+        self._llm_running           = False
+        self._waiting_for_mj        = False
         self._pending_interrupt_input   = None
         self._pending_interrupt_display = None
-        self.input_event.clear()
+        self.input_event.clear()   # propre car plus personne n'attend dessus
 
-        # ── Relancer autogen dans un nouveau thread ────────────────────────
+        # ── 3. Relancer autogen dans un NOUVEAU thread ────────────────────
         self.msg_queue.put({
             "sender": "Système",
             "text":   "🌅 Nouvelle session prête. À vous de lancer la partie !",
             "color":  "#4CAF50",
         })
-        self.root.after(500, lambda: threading.Thread(
-            target=self.run_autogen, daemon=True, name="autogen-worker"
-        ).start())
+
+        def _start_new():
+            t = threading.Thread(
+                target=self.run_autogen, daemon=True, name="autogen-worker"
+            )
+            self._autogen_thread = t
+            t.start()
+
+        self.root.after(500, _start_new)

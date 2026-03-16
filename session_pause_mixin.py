@@ -146,6 +146,18 @@ class SessionPauseMixin:
         _pending_interrupt_input — le thread retombera dans wait_for_input()
         et attendra un nouveau message à la reprise.
         """
+        # Annuler les confirmations MJ en attente (autoriser/refuser action)
+        try:
+            self._cancel_pending_approvals()
+        except Exception:
+            pass
+
+        # _stop_event : arrêt immédiat via le sondage dans _make_thinking_wrapper
+        try:
+            self._stop_event.set()
+        except Exception:
+            pass
+
         tid = getattr(self, "_autogen_thread_id", None)
         if tid is None:
             return

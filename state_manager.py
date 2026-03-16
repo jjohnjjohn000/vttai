@@ -1038,3 +1038,95 @@ def get_session_logs_prompt(max_sessions: int = 3) -> str:
         lines.append(f"\n📖 Session {log['session']}  ({log['date']})")
         lines.append(f"  {log['resume']}")
     return "\n".join(lines)
+
+# ============================================================
+# --- LISTE DE SORTS PAR PERSONNAGE ---
+# ============================================================
+
+def get_spells_prompt(char_name: str) -> str:
+    """Génère le bloc FICHE DE SORTS à injecter dans le system_message de l'agent.
+
+    Architecture :
+      - campaign_state.json contient UNIQUEMENT la liste de noms (spells_prepared).
+      - Les données complètes (niveau, école, description) viennent des fichiers
+        spells-*.json chargés dynamiquement par spell_data.py.
+      - Sources découvertes via sources.json — rien n'est hardcodé.
+
+    Si un sort n'est pas trouvé dans le cache spell_data (sort homebrew ou
+    nom non-standard), il est affiché avec une description vide.
+    """
+    # ── Imports locaux (évite les imports circulaires) ────────────────────────
+    try:
+        from spell_data import load_spells, get_spell
+        load_spells()   # no-op si déjà chargé
+    except Exception:
+        get_spell = lambda n: None   # fallback silencieux
+
+    state = load_state()
+    char  = state.get("characters", {}).get(char_name, {})
+
+    # ── Nouvelle structure : liste de noms seulement ─────────────────────────
+    spell_names = char.get("spells_prepared", [])
+    slots       = char.get("spell_slots", {})
+
+    if not spell_names:
+        return ""
+
+    # ── Construire la fiche par niveau ────────────────────────────────────────
+    by_level: dict[int, list[tuple[str, str]]] = {}  # level → [(name, desc)]
+    for name in spell_names:
+        sp_data = get_spell(name)
+        if sp_data:
+            lvl  = int(sp_data.get("level", 0))
+            desc = sp_data.get("description", "")
+            # Tronquer la description à 90 chars
+            if len(desc) > 90:
+                desc = desc[:87] + "…"
+            conc = " ◉" if sp_data.get("concentration") else ""
+            rit  = " ®" if sp_data.get("ritual") else ""
+            entry = (name, f"{desc}{conc}{rit}")
+        else:
+            lvl   = 0   # inconnu → traité comme cantrip (disponible à volonté)
+            entry = (name, "")
+        by_level.setdefault(lvl, []).append(entry)
+
+    if not by_level:
+        return ""
+
+    lines = [
+        f"\n\n╔══════════════════════════════════════════════════════",
+        f"║  FICHE DE SORTS — {char_name.upper()} — SORTS DISPONIBLES AUJOURD'HUI",
+        f"╠══════════════════════════════════════════════════════",
+        f"║  RÈGLE ABSOLUE : Tu ne peux lancer QUE les sorts listés ici.",
+        f"║  Tout sort absent de cette liste N'EXISTE PAS dans ton grimoire.",
+        f"║  N'invente JAMAIS un sort. Sources : PHB, XGE, TCE et extensions.",
+        f"╠══════════════════════════════════════════════════════",
+    ]
+
+    # Emplacements disponibles
+    if slots:
+        parts = []
+        for k in sorted(slots.keys(), key=lambda x: int(x)):
+            v = slots[k]
+            parts.append(f"Niv.{k}×{v}" if v > 0 else f"~~Niv.{k}(0)~~")
+        lines.append(f"║  EMPLACEMENTS : {' | '.join(parts)}")
+        lines.append(f"╠══════════════════════════════════════════════════════")
+
+    for lvl in sorted(by_level.keys()):
+        entries = by_level[lvl]
+        nb_slots = slots.get(str(lvl), "∞") if lvl > 0 else "∞"
+        if lvl == 0:
+            header = "║  TOURS DE MAGIE (à volonté, pas d'emplacement)"
+        else:
+            header = f"║  NIVEAU {lvl}  [{nb_slots} emplacement(s) disponible(s)]"
+        lines.append(header)
+        for spell_name, desc in entries:
+            lines.append(f"║    • {spell_name}" + (f" — {desc}" if desc else ""))
+        lines.append("║")
+
+    lines.append("╠══════════════════════════════════════════════════════")
+    lines.append("║  RAPPEL : Cantrips (niv.0) = toujours disponibles.")
+    lines.append("║  Long Rest restaure TOUS les emplacements.")
+    lines.append("║  Tout sort absent de cette liste est INTERDIT.")
+    lines.append("╚══════════════════════════════════════════════════════")
+    return "\n".join(lines)

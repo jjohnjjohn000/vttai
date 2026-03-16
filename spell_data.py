@@ -47,6 +47,64 @@ if not os.path.isdir(_SPELLS_DIR):
 _SPELL_DATA:  dict[str, dict] = {}   # name.lower() → dict normalisé
 _SPELL_NAMES: list[str]       = []   # liste triée des noms (pour l'autocomplete)
 
+# ─── Index des sources ────────────────────────────────────────────────────────
+# sources.json : {SOURCE_CODE: {spell_name: {class:[...], classVariant:[...]}}}
+# Chargé lazily par load_sources_index().
+_SOURCES_INDEX: dict = {}      # source_code → {spell_name → {...}}
+_SOURCES_FLAT:  dict = {}      # spell_name.lower() → source_code
+_SOURCES_FILE   = os.path.join(_BASE_DIR, "sources.json")
+_SOURCES_LOCK   = __import__("threading").Lock()
+
+def load_sources_index() -> dict:
+    """Charge sources.json une seule fois (thread-safe).
+    Retourne {source_code: {spell_name: {class: [...]}}}."""
+    global _SOURCES_INDEX, _SOURCES_FLAT
+    if _SOURCES_INDEX:
+        return _SOURCES_INDEX
+    with _SOURCES_LOCK:
+        if _SOURCES_INDEX:
+            return _SOURCES_INDEX
+        try:
+            path = _SOURCES_FILE
+            if not os.path.exists(path):
+                path = os.path.join(_SPELLS_DIR, "sources.json")
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    _SOURCES_INDEX = json.load(f)
+                # Build flat reverse-index: spell_name.lower() → source_code
+                for src_code, spells in _SOURCES_INDEX.items():
+                    for spell_name in spells:
+                        _SOURCES_FLAT[spell_name.lower()] = src_code
+                print(f"[SpellData] sources.json chargé — {len(_SOURCES_INDEX)} sources, "
+                      f"{len(_SOURCES_FLAT)} sorts indexés")
+            else:
+                print("[SpellData] sources.json introuvable")
+        except Exception as e:
+            print(f"[SpellData] Erreur chargement sources.json : {e}")
+    return _SOURCES_INDEX
+
+
+def get_source_for_spell(spell_name: str) -> str | None:
+    """Retourne le code source (ex: 'PHB', 'XGE') d'un sort, ou None."""
+    load_sources_index()
+    return _SOURCES_FLAT.get(spell_name.strip().lower())
+
+
+def get_class_spell_names(class_name: str) -> list[str]:
+    """Retourne tous les noms de sorts disponibles pour une classe D&D,
+    toutes sources confondues (PHB, XGE, TCE…).
+    Lit sources.json dynamiquement — aucun sort hardcodé.
+    """
+    load_sources_index()
+    result = []
+    for src_code, spells in _SOURCES_INDEX.items():
+        for spell_name, spell_data in spells.items():
+            classes = spell_data.get("class", []) + spell_data.get("classVariant", [])
+            if any(c.get("name", "").lower() == class_name.lower() for c in classes):
+                if spell_name not in result:
+                    result.append(spell_name)
+    return sorted(result)
+
 # ─── Correspondances école ────────────────────────────────────────────────────
 _SCHOOL_FR = {
     "A": "Abjuration",
@@ -268,21 +326,36 @@ def _normalize_spell(raw: dict) -> dict:
 # ─── Chargement ──────────────────────────────────────────────────────────────
 
 def load_spells():
-    """Charge tous les fichiers spells-*.json.  Thread-safe (double-check locking)."""
+    """Charge tous les fichiers spells-*.json détectés dans le dossier spells/.
+    La liste des sources est pilotée par sources.json (aucun nom hardcodé).
+    Thread-safe (double-check locking).
+    """
     global _SPELL_DATA, _SPELL_NAMES
     if _SPELL_DATA:
         return
 
-    # Chercher dans _SPELLS_DIR d'abord, puis le répertoire de base
-    patterns = [
-        os.path.join(_SPELLS_DIR, "spells-*.json"),
-        os.path.join(_BASE_DIR,   "spells-*.json"),
-    ]
+    # ── 1. Charger sources.json pour connaître les codes sources attendus ─────
+    load_sources_index()
+    source_codes = list(_SOURCES_INDEX.keys()) if _SOURCES_INDEX else []
+
+    # ── 2. Construire la liste des fichiers à charger ─────────────────────────
+    # Priorité : fichiers nommés d'après les codes sources connus,
+    # puis glob fallback pour attraper les fichiers inconnus de sources.json.
+    seen = set()
     files = []
-    for pat in patterns:
-        files = sorted(glob.glob(pat))
-        if files:
-            break
+    for code in source_codes:
+        for d in (_SPELLS_DIR, _BASE_DIR):
+            candidate = os.path.join(d, f"spells-{code.lower()}.json")
+            if os.path.exists(candidate) and candidate not in seen:
+                files.append(candidate)
+                seen.add(candidate)
+    # Glob fallback — attrape tout fichier spells-*.json non encore chargé
+    for pat in (os.path.join(_SPELLS_DIR, "spells-*.json"),
+                os.path.join(_BASE_DIR,   "spells-*.json")):
+        for p in sorted(glob.glob(pat)):
+            if p not in seen:
+                files.append(p)
+                seen.add(p)
 
     if not files:
         print(f"[SpellData] Aucun fichier spells-*.json trouvé dans {_SPELLS_DIR}")

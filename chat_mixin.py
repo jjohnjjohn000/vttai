@@ -123,6 +123,27 @@ class ChatMixin:
                 action = msg.get("action")
                 if action == "relay_button":
                     self._append_relay_button(msg["char_name"], msg["reply_text"])
+                elif action == "map_pointer":
+                    self._append_map_pointer(
+                        msg.get("img_bytes"),
+                        msg.get("comment", ""),
+                        msg.get("sender", "🗺️ MJ"),
+                    )
+                elif action == "map_pointer_broadcast":
+                    # Diffusion image + commentaire aux agents joueurs (hors thread Tk)
+                    import threading as _th_ptr
+                    _th_ptr.Thread(
+                        target=self._broadcast_pointer_image,
+                        args=(
+                            msg.get("img_bytes"),
+                            msg.get("comment", ""),
+                            msg.get("col", 0),
+                            msg.get("row", 0),
+                            msg.get("map_name", ""),
+                            msg.get("notes_txt", ""),
+                        ),
+                        daemon=True,
+                    ).start()
                 elif action == "spell_confirm":
                     self._append_spell_confirm(
                         msg["char_name"], msg["spell_name"],
@@ -333,6 +354,144 @@ class ChatMixin:
             pass   # widget détruit ou état invalide — on abandonne silencieusement
         finally:
             self.chat_display.config(state=tk.DISABLED)
+
+    # ─── Image pointeur MJ ───────────────────────────────────────────────────
+
+    def _append_map_pointer(self, img_bytes: "bytes | None",
+                            comment: str, sender: str):
+        """
+        Insère une image de carte (avec pointeur) directement dans le chat,
+        suivie du commentaire MJ. L'image est cliquable pour l'agrandir.
+        La référence PhotoImage est conservée dans self._map_pointer_photos
+        pour éviter le garbage collect.
+        """
+        import io as _io
+        try:
+            from PIL import Image as _PilImage, ImageTk as _ImageTk
+        except ImportError:
+            # Fallback sans image : afficher seulement le commentaire
+            self.append_message(sender, comment or "📍 Point sur la carte", "#ff8a80")
+            return
+
+        # Conserver les PhotoImages pour éviter le GC (Tk perd l'image sinon)
+        if not hasattr(self, "_map_pointer_photos"):
+            self._map_pointer_photos = []
+
+        self.chat_display.config(state=tk.NORMAL)
+        self.msg_counter += 1
+        tag_name = f"msg_{self.msg_counter}"
+
+        # ── Commentaire header ────────────────────────────────────────────────
+        self.chat_display.insert(tk.END, "\n", tag_name)
+        self.chat_display.insert(
+            tk.END,
+            f"[{sender}]",
+            (tag_name, f"sender_{self.msg_counter}"))
+        self.chat_display.tag_config(
+            f"sender_{self.msg_counter}",
+            foreground="#ff8a80",
+            font=("Consolas", 11, "bold"))
+
+        if comment:
+            self.chat_display.insert(tk.END, f"\n{comment}\n", tag_name)
+        else:
+            self.chat_display.insert(tk.END, "\n", tag_name)
+
+        self.chat_display.tag_config(tag_name, foreground="#ff8a80")
+
+        # ── Image inline ──────────────────────────────────────────────────────
+        if img_bytes:
+            try:
+                pil_img = _PilImage.open(_io.BytesIO(img_bytes)).convert("RGBA")
+
+                # Redimensionner pour le chat (max 480px de large)
+                MAX_W = 480
+                iw, ih = pil_img.size
+                if iw > MAX_W:
+                    ratio   = MAX_W / iw
+                    pil_img = pil_img.resize(
+                        (MAX_W, int(ih * ratio)), _PilImage.LANCZOS)
+
+                photo = _ImageTk.PhotoImage(pil_img)
+                self._map_pointer_photos.append(photo)   # anti-GC
+
+                # Frame conteneur cliquable
+                img_tag = f"map_img_{self.msg_counter}"
+                frame = tk.Frame(self.chat_display, bg="#0d0d1a",
+                                 cursor="hand2", relief="flat", bd=1,
+                                 highlightthickness=1,
+                                 highlightbackground="#3a2a4a")
+                lbl = tk.Label(frame, image=photo, bg="#0d0d1a",
+                               cursor="hand2")
+                lbl.pack()
+
+                # Clic → popup agrandi
+                def _show_full(event, _bytes=img_bytes, _name=comment):
+                    self._popup_map_image(_bytes, _name)
+
+                lbl.bind("<Button-1>", _show_full)
+                frame.bind("<Button-1>", _show_full)
+
+                self.chat_display.window_create(tk.END, window=frame)
+                self.chat_display.insert(tk.END, "\n", tag_name)
+
+            except Exception as e:
+                print(f"[MapPointer] Erreur affichage image : {e}")
+                self.chat_display.insert(
+                    tk.END, "[image non disponible]\n", tag_name)
+
+        self.chat_display.insert(tk.END, "\n", tag_name)
+        self.chat_display.config(state=tk.DISABLED)
+        self.chat_display.see(tk.END)
+
+        self.messages_index.append({
+            "id":     self.msg_counter,
+            "sender": sender,
+            "text":   comment,
+            "color":  "#ff8a80",
+            "tag":    tag_name,
+        })
+
+    def _popup_map_image(self, img_bytes: bytes, title: str = ""):
+        """Affiche l'image de carte en plein écran dans une fenêtre popup."""
+        import io as _io
+        try:
+            from PIL import Image as _PI, ImageTk as _IT
+        except ImportError:
+            return
+
+        popup = tk.Toplevel(self.root)
+        popup.title(title[:60] if title else "Carte — Pointeur MJ")
+        popup.configure(bg="#0a0a14")
+        popup.bind("<Escape>", lambda e: popup.destroy())
+        popup.bind("<Button-1>", lambda e: popup.destroy())
+
+        try:
+            pil_img = _PI.open(_io.BytesIO(img_bytes)).convert("RGBA")
+            # Adapter à l'écran (max 90% de la résolution)
+            screen_w = popup.winfo_screenwidth()
+            screen_h = popup.winfo_screenheight()
+            max_w, max_h = int(screen_w * 0.9), int(screen_h * 0.85)
+            iw, ih = pil_img.size
+            ratio  = min(max_w / iw, max_h / ih, 1.0)
+            if ratio < 1.0:
+                pil_img = pil_img.resize(
+                    (int(iw * ratio), int(ih * ratio)), _PI.LANCZOS)
+            photo = _IT.PhotoImage(pil_img)
+            # Anti-GC sur la popup
+            if not hasattr(self, "_map_pointer_photos"):
+                self._map_pointer_photos = []
+            self._map_pointer_photos.append(photo)
+
+            iw2, ih2 = pil_img.size
+            popup.geometry(f"{iw2}x{ih2 + 28}")
+            tk.Label(popup, image=photo, bg="#0a0a14").pack()
+            tk.Label(popup, text="Clic ou Échap pour fermer",
+                     bg="#0a0a14", fg="#444466",
+                     font=("Consolas", 8)).pack()
+        except Exception as e:
+            tk.Label(popup, text=f"Erreur : {e}", bg="#0a0a14",
+                     fg="#e57373").pack(padx=20, pady=20)
 
     # ─── Bouton relay (message privé partageable au groupe) ───────────────────
 

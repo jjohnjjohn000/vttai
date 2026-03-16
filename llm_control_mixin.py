@@ -25,10 +25,15 @@ import concurrent.futures as _cf
 
 import tkinter as tk
 
-from llm_config   import StopLLMRequested, build_llm_config
+from llm_config   import StopLLMRequested, build_llm_config, _SSL_LOCK
 from state_manager import roll_dice, load_state
 from agent_logger  import log_llm_start, log_llm_end, log_tts_start
 from state_manager import get_active_characters
+
+# ─── Verrou global SSL/httpx ──────────────────────────────────────────────────
+# _SSL_LOCK est importé depuis llm_config.py — objet UNIQUE partagé avec
+# autogen_engine.py pour sérialiser tous les appels httpx/OpenSSL.
+_DIRECT_LLM_LOCK = _SSL_LOCK   # alias pour compatibilité avec le code existant
 
 
 class LLMControlMixin:
@@ -38,25 +43,70 @@ class LLMControlMixin:
 
     def _inject_stop(self):
         import time as _time
+
+        # ── 0. Annuler toutes les confirmations MJ en attente ─────────────────
+        # Les threading.Event de autoriser/refuser sont bloqués dans .wait(600).
+        # On les débloque avant l'injection ctypes pour que le thread autogen
+        # sorte immédiatement du .wait() et reçoive l'exception async.
+        self._cancel_pending_approvals()
+
+        # ── Mécanisme principal : _stop_event sondé dans _make_thinking_wrapper ──
+        try:
+            self._stop_event.set()
+        except Exception:
+            pass
+
+        # ── Fallback : ctypes async exception ─────────────────────────────────
         tid = self._autogen_thread_id
         if tid:
             res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
                 ctypes.c_ulong(tid), ctypes.py_object(StopLLMRequested))
             if res > 1:
                 ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), None)
-        # Timeout de sécurité : si le thread ne répond pas dans 3 s,
-        # forcer _llm_running=False pour débloquer l'UI
+
+        # ── Filet de sécurité : débloque l'UI si le thread ne répond pas ──────
         def _force_unblock():
-            _time.sleep(3.0)
+            _time.sleep(5.0)
             if self._llm_running and not self._waiting_for_mj:
                 self._set_llm_running(False)
                 self.msg_queue.put({
                     "sender": "⚠️ Système",
-                    "text": "Thread LLM non réactif — débloqué de force. Tapez un message pour reprendre.",
+                    "text": "Thread LLM non réactif après 5 s — débloqué de force. Tapez un message pour reprendre.",
                     "color": "#FF9800",
                 })
                 self._set_waiting_for_mj(True)
         threading.Thread(target=_force_unblock, daemon=True).start()
+
+    # ─── Gestion des events d'approbation MJ ─────────────────────────────────
+
+    def _register_approval_event(self, ev):
+        """Enregistre un threading.Event de confirmation MJ (autoriser/refuser)."""
+        with self._approval_events_lock:
+            self._pending_approval_events.append(ev)
+
+    def _unregister_approval_event(self, ev):
+        """Retire un event de la liste après résolution (callback appelé)."""
+        with self._approval_events_lock:
+            try:
+                self._pending_approval_events.remove(ev)
+            except ValueError:
+                pass
+
+    def _cancel_pending_approvals(self):
+        """Débloque tous les .wait() de confirmation MJ en cours.
+        Appelé par _inject_stop et _inject_stop_for_pause."""
+        with self._approval_events_lock:
+            if self._pending_approval_events:
+                count = len(self._pending_approval_events)
+                print(f"[Stop] Annulation de {count} confirmation(s) MJ en attente.")
+                for ev in self._pending_approval_events:
+                    ev.set()
+                self._pending_approval_events.clear()
+                self.msg_queue.put({
+                    "sender": "⏹ Système",
+                    "text": f"{count} action(s) en attente d'approbation annulée(s) — interruption reçue.",
+                    "color": "#FF9800",
+                })
 
     def _set_llm_running(self, running: bool):
         self._llm_running = running
@@ -190,18 +240,34 @@ class LLMControlMixin:
             f"Ne mentionne jamais les balises [GROUPE] ou [SECRET] dans le corps de ta réponse."
         )
 
-        # FIX SEGFAULT : agent.generate_reply() appelle gRPC depuis un thread
-        # daemon séparé → crash natif. On utilise OpenAIWrapper directement.
+        # FIX SEGFAULT SSL : on sérialise tous les appels directs via _DIRECT_LLM_LOCK
+        # ET on force la création d'un client httpx isolé (pas de pool partagé)
+        # pour éviter la collision OpenSSL entre threads sur Linux/Python 3.10.
         try:
-            client = autogen.OpenAIWrapper(config_list=agent.llm_config["config_list"])
+            import httpx as _httpx
+            import openai as _openai
+            cfg0 = agent.llm_config["config_list"][0]
+            # Client httpx neuf à chaque appel → pas de pool SSL partagé
+            http_client = _httpx.Client()
+            oa_client = _openai.OpenAI(
+                api_key     = cfg0["api_key"],
+                base_url    = str(cfg0.get("base_url", "https://api.openai.com/v1")),
+                http_client = http_client,
+            )
             log_llm_start(char_name, prompt, context="msg_privé")
-            response = client.create(messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user",   "content": prompt},
-            ])
-            text_content = response.choices[0].message.content or ""
-            text_content = text_content.strip()
+            with _DIRECT_LLM_LOCK:
+                resp = oa_client.chat.completions.create(
+                    model    = cfg0["model"],
+                    messages = [
+                        {"role": "system", "content": system_msg},
+                        {"role": "user",   "content": prompt},
+                    ],
+                    max_tokens  = 300,
+                    temperature = agent.llm_config.get("temperature", 0.7),
+                )
+            text_content = (resp.choices[0].message.content or "").strip()
             log_llm_end(char_name, response_preview=text_content)
+            http_client.close()
         except Exception as e:
             log_llm_end(char_name, error=str(e))
             self.msg_queue.put({"sender": "❌ Erreur", "text": f"Échec msg privé pour {char_name} : {e}", "color": "#F44336"})
@@ -278,14 +344,29 @@ class LLMControlMixin:
                 f"Ne dévie pas du format. Choisis selon la personnalité de {name}."
             )
             try:
-                client = autogen.OpenAIWrapper(config_list=agent.llm_config["config_list"])
+                import httpx as _httpx
+                import openai as _openai
+                cfg0 = agent.llm_config["config_list"][0]
+                http_client = _httpx.Client()
+                oa_client = _openai.OpenAI(
+                    api_key     = cfg0["api_key"],
+                    base_url    = str(cfg0.get("base_url", "https://api.openai.com/v1")),
+                    http_client = http_client,
+                )
                 log_llm_start(name, prompt, context="vote")
-                response = client.create(messages=[
-                    {"role": "system", "content": system_msg},
-                    {"role": "user",   "content": prompt},
-                ])
-                raw = (response.choices[0].message.content or "").strip()
+                with _DIRECT_LLM_LOCK:
+                    resp = oa_client.chat.completions.create(
+                        model    = cfg0["model"],
+                        messages = [
+                            {"role": "system", "content": system_msg},
+                            {"role": "user",   "content": prompt},
+                        ],
+                        max_tokens  = 150,
+                        temperature = agent.llm_config.get("temperature", 0.7),
+                    )
+                raw = (resp.choices[0].message.content or "").strip()
                 log_llm_end(name, response_preview=raw)
+                http_client.close()
                 # Parse VOTE: et RAISON:
                 vote_m   = _re_v.search(r'VOTE\s*:\s*(.+)', raw, _re_v.IGNORECASE)
                 raison_m = _re_v.search(r'RAISON\s*:\s*(.+)', raw, _re_v.IGNORECASE)

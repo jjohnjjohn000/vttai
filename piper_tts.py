@@ -31,11 +31,41 @@ import os
 import re
 import threading
 import tempfile
+import time
 import wave
 import shutil
 import queue as _queue
 import urllib.request
 from pathlib import Path
+
+# ─── Logger TTS avec timestamps ──────────────────────────────────────────────
+
+_LOG_LOCK = threading.Lock()
+
+def _ts() -> str:
+    """Retourne HH:MM:SS.mmm"""
+    t  = time.time()
+    ms = int((t % 1) * 1000)
+    return time.strftime("%H:%M:%S", time.localtime(t)) + f".{ms:03d}"
+
+_C = {
+    "cyan":    "\033[96m",  "yellow":  "\033[93m",
+    "green":   "\033[92m",  "red":     "\033[91m",
+    "magenta": "\033[95m",  "grey":    "\033[90m",
+    "reset":   "\033[0m",   "bold":    "\033[1m",
+}
+
+def _log(tag: str, msg: str, color: str = ""):
+    """Ligne de log horodatée thread-safe."""
+    col   = _C.get(color, "")
+    reset = _C["reset"] if col else ""
+    tid   = threading.current_thread().name
+    with _LOG_LOCK:
+        print(f"{_C['grey']}{_ts()}{_C['reset']}  {col}[Piper/{tag}]{reset}  {msg}"
+              f"  {_C['grey']}({tid}){_C['reset']}", flush=True)
+
+def _ms(t0: float) -> str:
+    return f"{(time.perf_counter() - t0)*1000:.0f}ms"
 
 # ─── Catalogue des voix françaises ───────────────────────────────────────────
 
@@ -49,6 +79,14 @@ KNOWN_PIPER_VOICES: list[str] = [
 
 _HF_BASE     = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
 _DEFAULT_DIR = "piper_models"
+
+# ─── Mode debug ──────────────────────────────────────────────────────────────
+# Mettre PIPER_DEBUG=1 dans l'environnement (ou dans .env) pour :
+#   - Conserver les fichiers WAV après lecture (dans /tmp/, préfixe piper_DEBUG_)
+#   - Afficher la sortie complète de ffplay (sans -loglevel quiet)
+#   - Logger le chemin complet de chaque fichier généré
+import os as _os
+PIPER_DEBUG = _os.environ.get("PIPER_DEBUG", "0").strip() == "1"
 
 # ─── Nettoyage texte ─────────────────────────────────────────────────────────
 
@@ -230,6 +268,8 @@ def _pitch_shift(src: str, semitones: float) -> str:
         pass
     ratio = 2 ** (semitones / 12.0)
     dst = None
+    t0  = time.perf_counter()
+    _log("pitch", f"ffmpeg rubberband  {semitones:+.1f} demi-tons  ratio={ratio:.4f}", "magenta")
     try:
         fd, dst = tempfile.mkstemp(suffix=".wav", prefix="piper_pitched_")
         os.close(fd)
@@ -240,15 +280,17 @@ def _pitch_shift(src: str, semitones: float) -> str:
             capture_output=True, timeout=15,
         )
         if r.returncode == 0 and os.path.getsize(dst) > 44:
+            _log("pitch", f"✓ terminé  {_ms(t0)}", "green")
             try: os.remove(src)
             except OSError: pass
             return dst
         # Échec → garder l'original, nettoyer dst
+        _log("pitch", f"✗ ffmpeg returncode={r.returncode}  {_ms(t0)}  stderr={r.stderr[:120]}", "red")
         try: os.remove(dst)
         except OSError: pass
         return src
     except Exception as e:
-        print(f"[Piper] ✗ Pitch shift : {e}")
+        _log("pitch", f"✗ exception : {e}  {_ms(t0)}", "red")
         if dst:
             try: os.remove(dst)
             except OSError: pass
@@ -263,13 +305,23 @@ def _synthesize_chunk(voice_obj, text: str, pitch_semitones: float = 0.0) -> str
     On concatène tous les chunks dans un seul fichier WAV.
     Si pitch_semitones != 0, applique un pitch shift via ffmpeg rubberband.
     """
+    prefix = "piper_DEBUG_" if PIPER_DEBUG else "piper_"
+    preview = text[:60].replace("\n", " ")
+    t0 = time.perf_counter()
+    _log("synth", f"▶ « {preview}… »  ({len(text)} car)", "cyan")
     try:
-        fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="piper_")
+        fd, tmp = tempfile.mkstemp(suffix=".wav", prefix=prefix)
         os.close(fd)
+        if PIPER_DEBUG:
+            _log("synth", f"  fichier : {tmp}", "grey")
 
+        t_infer = time.perf_counter()
         chunks = list(voice_obj.synthesize(text))
+        _log("synth", f"  inférence ONNX  {_ms(t_infer)}", "yellow")
+
         if not chunks:
             os.remove(tmp)
+            _log("synth", "  ✗ synthesize() a retourné 0 chunks", "red")
             return None
 
         # Paramètres audio lus depuis le premier chunk (identiques pour tous)
@@ -278,58 +330,74 @@ def _synthesize_chunk(voice_obj, text: str, pitch_semitones: float = 0.0) -> str
         sample_width    = first.sample_width     # 2 = PCM 16-bit
         sample_channels = first.sample_channels  # 1 = mono
 
+        t_wav = time.perf_counter()
         with wave.open(tmp, "wb") as wf:
             wf.setnchannels(sample_channels)
             wf.setsampwidth(sample_width)
             wf.setframerate(sample_rate)
             for chunk in chunks:
                 wf.writeframes(chunk.audio_int16_bytes)
+        _log("synth", f"  écriture WAV  {_ms(t_wav)}", "grey")
 
         if not (os.path.exists(tmp) and os.path.getsize(tmp) > 44):
             os.remove(tmp)
+            _log("synth", "  ✗ fichier WAV vide après écriture", "red")
             return None
 
         # Pitch shift post-synthèse si demandé
-        return _pitch_shift(tmp, pitch_semitones)
+        result = _pitch_shift(tmp, pitch_semitones)
+        sz = os.path.getsize(result) if result and os.path.exists(result) else 0
+        _log("synth", f"✓ total  {_ms(t0)}  ({sz//1024} KB)", "green")
+        return result
 
     except Exception as e:
-        print(f"[Piper] ✗ Synthèse chunk : {e}")
+        _log("synth", f"✗ exception : {e}  {_ms(t0)}", "red")
         return None
 
 # ─── Lecture ────────────────────────────────────────────────────────────────
 
 # ─── Lecture ────────────────────────────────────────────────────────────────
 
-def _play_file(path: str) -> bool:
-    """Joue un fichier audio (WAV ou MP3) via ffplay. Supprime après lecture.
+def _wav_duration_s(path: str) -> float:
+    """Retourne la durée en secondes d'un fichier WAV, ou 0 si illisible."""
+    try:
+        with wave.open(path, "rb") as wf:
+            return wf.getnframes() / wf.getframerate()
+    except Exception:
+        return 0.0
 
-    Utilise le registre de process et le pause event de voice_interface pour :
-      - être tué proprement par stop_audio() / pause_audio()
-      - ne pas lancer de nouvelle lecture si la session est en pause
-    Import lazy de voice_interface pour éviter les imports circulaires.
+
+def _play_wav_aplay(path: str) -> bool:
+    """
+    Joue un WAV via aplay (ALSA userspace — respecte PulseAudio/PipeWire).
+    aplay utilise le mixing logiciel → jamais de lock device exclusif.
+    Enregistre le process dans le registre partagé voice_interface pour
+    que pause_audio() / stop_audio() puissent le tuer proprement.
+    Retourne None si aplay est absent (signal au caller de fallback sur ffplay).
     """
     import subprocess
+    if not shutil.which("aplay"):
+        return None
     try:
-        # ── Vérifier le pause event AVANT de lancer ffplay ────────────────
+        use_registry = False
         try:
-            from voice_interface import _AUDIO_PAUSE_EVENT, _active_processes, _proc_lock
-            if not _AUDIO_PAUSE_EVENT.is_set():
-                return False   # session en pause — ignorer silencieusement
+            from voice_interface import _active_processes, _proc_lock
             use_registry = True
         except ImportError:
-            use_registry = False
+            pass
 
         proc = subprocess.Popen(
-            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+            ["aplay", "-q", path],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-
-        # ── Enregistrer dans le registre partagé pour stop/pause ──────────
         if use_registry:
             with _proc_lock:
                 _active_processes.append(proc)
+
+        dur     = _wav_duration_s(path)
+        timeout = max(dur * 1.5 + 3.0, 8.0)
         try:
-            proc.wait(timeout=60)
+            proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             proc.kill(); proc.wait()
             return False
@@ -341,13 +409,107 @@ def _play_file(path: str) -> bool:
 
         return proc.returncode in (0, -15)
     except Exception as e:
-        print(f"[Piper] ✗ Lecture audio : {e}")
+        _log("play", f"✗ aplay exception : {e}", "red")
+        return False
+
+
+def _play_file(path: str) -> bool:
+    """
+    Joue un fichier audio WAV via aplay (preferred) puis ffplay (fallback).
+
+    Stratégie anti-hang :
+      - aplay pour les WAV : utilise le mixing PulseAudio natif, pas de lock exclusif.
+      - ffplay en fallback (MP3, ou si aplay absent) avec timeout calculé sur la durée
+        réelle du fichier (taille / bitrate estimé) + 5s de marge.
+      - Jamais de timeout fixe à 60s pour un clip de 3s.
+
+    En mode PIPER_DEBUG=1 :
+      - ffplay tourne sans -loglevel quiet (stderr visible en console)
+      - le fichier WAV est conservé après lecture pour inspection
+    """
+    import subprocess
+
+    sz = os.path.getsize(path) if os.path.exists(path) else 0
+    t0 = time.perf_counter()
+    is_wav = path.lower().endswith(".wav")
+    _log("play", f"▶ {'aplay' if is_wav else 'ffplay'}  {os.path.basename(path)}  "
+                 f"{sz//1024} KB  {sz} B", "cyan")
+    if PIPER_DEBUG:
+        _log("play", f"  chemin complet : {path}", "grey")
+
+    try:
+        # ── Vérifier le pause event AVANT de lancer quoi que ce soit ─────
+        try:
+            from voice_interface import _AUDIO_PAUSE_EVENT, _active_processes, _proc_lock
+            if not _AUDIO_PAUSE_EVENT.is_set():
+                _log("play", "  session en pause — ignoré", "grey")
+                return False
+            use_registry = True
+        except ImportError:
+            use_registry = False
+
+        # ── Calcul du timeout réel ────────────────────────────────────────
+        # WAV : durée exacte depuis l'en-tête.
+        # MP3 : estimation grossière depuis la taille (128 kbps ≈ 16 KB/s).
+        if is_wav:
+            dur_s = _wav_duration_s(path)
+        else:
+            dur_s = sz / 16_000  # estimation MP3 128kbps
+        play_timeout = max(dur_s * 1.5 + 5.0, 8.0)
+        _log("play", f"  durée estimée {dur_s:.1f}s  timeout {play_timeout:.0f}s", "grey")
+
+        # ── Essai aplay pour les WAV (pas de lock device exclusif) ────────
+        if is_wav and shutil.which("aplay"):
+            _log("play", "  tentative aplay", "grey")
+            result = _play_wav_aplay(path)
+            if result is not None:   # None = aplay absent
+                elapsed = time.perf_counter() - t0
+                _log("play", f"{'✓' if result else '✗'} aplay terminé  {_ms(t0)}  "
+                             f"durée_réelle={elapsed:.2f}s", "green" if result else "red")
+                return result
+            _log("play", "  aplay absent — fallback ffplay", "yellow")
+
+        # ── ffplay (fallback ou MP3) ───────────────────────────────────────
+        ffplay_cmd = ["ffplay", "-nodisp", "-autoexit", path]
+        if not PIPER_DEBUG:
+            ffplay_cmd += ["-loglevel", "quiet"]
+        _log("play", f"  cmd : {' '.join(ffplay_cmd)}", "grey")
+
+        proc = subprocess.Popen(
+            ffplay_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=None if PIPER_DEBUG else subprocess.DEVNULL,
+        )
+        if use_registry:
+            with _proc_lock:
+                _active_processes.append(proc)
+        try:
+            proc.wait(timeout=play_timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill(); proc.wait()
+            _log("play", f"  ✗ timeout {play_timeout:.0f}s  (durée estimée {dur_s:.1f}s)  {_ms(t0)}", "red")
+            return False
+        finally:
+            if use_registry:
+                with _proc_lock:
+                    if proc in _active_processes:
+                        _active_processes.remove(proc)
+
+        ok = proc.returncode in (0, -15)
+        _log("play", f"{'✓' if ok else '✗'} ffplay terminé  {_ms(t0)}  rc={proc.returncode}", "green" if ok else "red")
+        return ok
+
+    except Exception as e:
+        _log("play", f"✗ exception : {e}  {_ms(t0)}", "red")
         return False
     finally:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+        if PIPER_DEBUG:
+            _log("play", f"  [DEBUG] fichier conservé → {path}", "magenta")
+        else:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 # ─── API publique ─────────────────────────────────────────────────────────────
 
@@ -356,19 +518,63 @@ def prefetch_piper_voice(text: str, character_name: str,
                           pitch_semitones: float = 0.0) -> list[str]:
     """
     Génère tous les chunks audio en avance (sans les jouer).
-    Retourne une liste ordonnée de chemins de fichiers WAV prêts à lire.
+    Retourne une liste ORDONNÉE de chemins de fichiers WAV prêts à lire.
     Compatible avec voice_interface.play_prefetched().
+
+    Les chunks sont synthétisés EN PARALLÈLE (ThreadPoolExecutor) :
+    ONNX Runtime est thread-safe pour les appels concurrents sur la même
+    session → gain ≈ N_chunks × temps_unitaire → temps_max_chunk.
+    L'ordre des fichiers est garanti par indexation, pas par as_completed.
     """
+    from concurrent.futures import ThreadPoolExecutor, wait as _fw, ALL_COMPLETED
+
+    t0 = time.perf_counter()
+    _log("prefetch", f"▶ {character_name}  voice={Path(voice_id).stem}  pitch={pitch_semitones:+.1f}st", "cyan")
+
     if not shutil.which("ffplay"):
+        _log("prefetch", "✗ ffplay introuvable", "red")
         return []
     clean = _clean(text)
     if not clean:
+        _log("prefetch", "✗ texte vide après nettoyage", "grey")
         return []
     voice_obj = _load_voice(voice_id, models_dir)
     if voice_obj is None:
+        _log("prefetch", "✗ modèle non chargé", "red")
         return []
-    return [f for chunk in _split_chunks(clean)
-            if (f := _synthesize_chunk(voice_obj, chunk, pitch_semitones)) is not None]
+
+    chunks    = _split_chunks(clean)
+    n_workers = min(len(chunks), os.cpu_count() or 2, 4)
+    _log("prefetch", f"  {len(chunks)} chunk(s)  {n_workers} worker(s)  texte={len(clean)} car", "yellow")
+
+    if n_workers <= 1 or len(chunks) == 1:
+        results = []
+        for i, chunk in enumerate(chunks):
+            tc = time.perf_counter()
+            f = _synthesize_chunk(voice_obj, chunk, pitch_semitones)
+            if f:
+                results.append(f)
+            _log("prefetch", f"  chunk {i+1}/{len(chunks)}  {_ms(tc)}", "grey")
+        _log("prefetch", f"✓ {len(results)}/{len(chunks)} fichiers  total {_ms(t0)}", "green")
+        return results
+
+    results: list[str | None] = [None] * len(chunks)
+
+    def _synth(idx: int, chunk: str):
+        tc = time.perf_counter()
+        results[idx] = _synthesize_chunk(voice_obj, chunk, pitch_semitones)
+        _log("prefetch", f"  chunk {idx+1}/{len(chunks)} terminé  {_ms(tc)}", "grey")
+
+    t_pool = time.perf_counter()
+    _log("prefetch", f"  lancement ThreadPoolExecutor({n_workers})", "yellow")
+    with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="piper-pre") as ex:
+        futures = [ex.submit(_synth, i, ch) for i, ch in enumerate(chunks)]
+        _fw(futures, return_when=ALL_COMPLETED)
+    _log("prefetch", f"  pool terminé  {_ms(t_pool)}", "yellow")
+
+    files = [f for f in results if f is not None]
+    _log("prefetch", f"✓ {len(files)}/{len(chunks)} fichiers  total {_ms(t0)}", "green")
+    return files
 
 
 def play_piper_voice(text: str, character_name: str,
@@ -380,40 +586,77 @@ def play_piper_voice(text: str, character_name: str,
     Même signature que voice_interface.play_voice().
     S'arrête proprement si pause_audio() est appelé en cours de lecture.
     """
+    t0 = time.perf_counter()
+    _log("play_voice", f"▶ {character_name}  voice={Path(voice_id).stem}", "cyan")
+
     if not shutil.which("ffplay"):
-        print("[Piper] ffplay manquant — sudo apt install ffmpeg")
+        _log("play_voice", "✗ ffplay introuvable — sudo apt install ffmpeg", "red")
         return False
     # Vérifier le pause event avant même de commencer
     try:
         from voice_interface import _AUDIO_PAUSE_EVENT
         if not _AUDIO_PAUSE_EVENT.is_set():
+            _log("play_voice", "  session en pause — ignoré", "grey")
             return False
     except ImportError:
         pass
 
     clean = _clean(text)
     if not clean:
+        _log("play_voice", "  ✗ texte vide après nettoyage", "grey")
         return False
     voice_obj = _load_voice(voice_id, models_dir)
     if voice_obj is None:
+        _log("play_voice", "  ✗ modèle non chargé", "red")
         return False
 
-    chunks = _split_chunks(clean)
-    file_q  = _queue.Queue(maxsize=3)
-    _stop   = threading.Event()   # signale l'arrêt au générateur
+    chunks    = _split_chunks(clean)
+    n_workers = min(len(chunks), os.cpu_count() or 2, 4)
+    _log("play_voice", f"  {len(chunks)} chunk(s)  {n_workers} worker(s)  texte={len(clean)} car", "yellow")
+
+    file_q    = _queue.Queue(maxsize=3)
+    _stop     = threading.Event()   # signale l'arrêt au générateur
 
     def _gen_all():
-        for chunk in chunks:
+        """
+        Synthétise tous les chunks EN PARALLÈLE, puis les place dans file_q
+        DANS L'ORDRE pour garantir la cohérence de la lecture.
+
+        ThreadPoolExecutor → N inférences ONNX simultanées sur N cœurs.
+        On itère les futures dans l'ordre d'envoi (pas as_completed) pour
+        préserver la séquence narrative.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        tg = time.perf_counter()
+        _log("gen", f"  pool({n_workers}) démarré pour {len(chunks)} chunks", "yellow")
+
+        def _synth_safe(idx: int, chunk: str) -> tuple[int, str | None]:
             if _stop.is_set():
-                break
-            try:
-                # put() avec timeout : évite un blocage permanent si le
-                # thread principal a déjà abandonné et ne consomme plus.
-                file_q.put(_synthesize_chunk(voice_obj, chunk, pitch_semitones),
-                           timeout=90)
-            except _queue.Full:
-                print("[Piper] ✗ Queue pleine — générateur abandonné")
-                break
+                return idx, None
+            tc = time.perf_counter()
+            result = _synthesize_chunk(voice_obj, chunk, pitch_semitones)
+            _log("gen", f"  chunk {idx+1}/{len(chunks)} prêt  {_ms(tc)}", "grey")
+            return idx, result
+
+        with ThreadPoolExecutor(max_workers=n_workers,
+                                thread_name_prefix="piper-gen") as ex:
+            # Soumettre TOUS les chunks simultanément
+            futures = [ex.submit(_synth_safe, i, ch) for i, ch in enumerate(chunks)]
+
+            # Récupérer les résultats dans l'ordre pour la queue de lecture
+            for fut in futures:
+                if _stop.is_set():
+                    fut.cancel()
+                    continue
+                try:
+                    idx, result = fut.result(timeout=90)
+                    file_q.put(result, timeout=90)
+                except Exception as _e:
+                    _log("gen", f"  ✗ chunk : {_e}", "red")
+                    file_q.put(None, timeout=5)
+
+        _log("gen", f"  pool terminé  {_ms(tg)}", "yellow")
         try:
             file_q.put("__DONE__", timeout=5)
         except _queue.Full:
@@ -423,28 +666,32 @@ def play_piper_voice(text: str, character_name: str,
     gen_t.start()
 
     any_played = False
+    chunk_idx  = 0
     while True:
         try:
             # Timeout global par chunk : protège contre un synthesize() bloqué
             # (inférence Piper sans timeout interne) → échec propre après 90 s.
             item = file_q.get(timeout=90)
         except _queue.Empty:
-            print("[Piper] ✗ Timeout attente chunk — abandon pipeline TTS")
+            _log("play_voice", f"  ✗ timeout attente chunk {chunk_idx+1} — abandon pipeline TTS", "red")
             _stop.set()
             break
 
         if item == "__DONE__":
             break
 
+        chunk_idx += 1
+        tp = time.perf_counter()
+        _log("play_voice", f"  ▶ lecture chunk {chunk_idx}/{len(chunks)}", "cyan")
+
         # _play_file retourne False si pause → on arrête le pipeline
         if item:
             ok = _play_file(item)
+            _log("play_voice", f"  {'✓' if ok else '✗'} lecture terminée  {_ms(tp)}", "green" if ok else "yellow")
             if ok:
                 any_played = True
             else:
                 # Pause ou erreur : signaler au générateur et drainer la queue.
-                # On continue de lire jusqu'à __DONE__ pour débloquer _gen_all
-                # (sinon file_q.put() dans le générateur bloque à jamais).
                 _stop.set()
                 while True:
                     try:
@@ -455,11 +702,12 @@ def play_piper_voice(text: str, character_name: str,
                             try: os.remove(leftover)
                             except OSError: pass
                     except _queue.Empty:
-                        break  # générateur bloqué en synthèse — on abandonne
+                        break
                 break
 
     _stop.set()
     gen_t.join(timeout=10)
+    _log("play_voice", f"✓ terminé  total {_ms(t0)}", "green" if any_played else "yellow")
     return any_played
 
 

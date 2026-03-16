@@ -76,6 +76,7 @@ from state_manager import (
     get_contextual_memories_prompt,
     save_session_log, get_session_logs_prompt,
     get_active_characters,
+    get_spells_prompt,
 )
 from voice_interface   import record_audio_and_transcribe, play_voice
 from agent_logger      import log_llm_start, log_llm_end, log_tts_start, log_tts_end
@@ -180,6 +181,8 @@ class DnDApp(
 
         # --- STOP LLM ---
         self._autogen_thread_id: int | None = None
+        self._autogen_thread: threading.Thread | None = None   # pour join() au reset
+        self._stop_event = threading.Event()   # mécanisme d'arrêt fiable (sondé dans wrapper)
         self._llm_running = False
         self._waiting_for_mj = False          # True quand c'est au MJ de parler
         self._pending_interrupt_input: str | None = None
@@ -192,6 +195,14 @@ class DnDApp(
         # --- PAUSE SESSION ---
         self._session_paused: bool = False
         self._was_llm_running_at_pause: bool = False
+
+        # --- APPROBATIONS MJ EN ATTENTE ---
+        # Liste des threading.Event créés dans autogen_engine pour les confirmations
+        # MJ (autoriser/refuser action, sort, dégâts…). Quand _inject_stop ou
+        # _inject_stop_for_pause est appelé, ces events sont tous .set() pour
+        # débloquer immédiatement les .wait(timeout=600) dans autogen_engine.
+        self._pending_approval_events: list = []
+        self._approval_events_lock = threading.Lock()
 
         # --- VISAGES & COMBAT ---
         self.face_windows: dict = {}
@@ -219,9 +230,11 @@ class DnDApp(
         # la fin de setup_ui, quand mainloop() a déjà rendu tous les widgets.
         # Démarrer immédiatement créait une race entre les threads C de gRPC
         # et le notifier Tcl/Tk → segfault Xlib.
-        self.root.after(500, lambda: threading.Thread(
-            target=self.run_autogen, daemon=True, name="autogen-worker"
-        ).start())
+        def _start_autogen():
+            t = threading.Thread(target=self.run_autogen, daemon=True, name="autogen-worker")
+            self._autogen_thread = t
+            t.start()
+        self.root.after(500, _start_autogen)
 
     # --- Accès thread-safe à user_input ---
     @property
@@ -346,7 +359,8 @@ class DnDApp(
 
             agent.update_system_message(
                 base + scene_block + quest_block + mem_compact + cal_block
-                + sessions_block + ctx_block + slots_block + combat_block + map_block
+                + sessions_block + get_spells_prompt(name)
+                + ctx_block + slots_block + combat_block + map_block
             )
 
     # Alias conservé pour compatibilité avec les appels existants depuis le combat

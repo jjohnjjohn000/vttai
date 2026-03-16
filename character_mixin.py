@@ -82,14 +82,17 @@ class CharacterMixin:
 
         # ── Données statiques par personnage ──────────────────────────────────
         _CHAR_STATS = {
+            # Emplacements de sort officiels D&D 5e niveau 15
+            # Paladin (demi-lanceur L15)   : 4/3/3/2/1
+            # Clerc / Mage (plein L15)     : 4/3/3/3/2/1/1/1/1  (niv 9 inclus)
             "Kaelen": {"hit_die": 10, "level": 15, "con_mod": 3, "ac": 20,
-                       "max_slots": {"1":4,"2":3,"3":3,"4":1}},
+                       "max_slots": {"1":4,"2":3,"3":3,"4":2,"5":1}},
             "Elara":  {"hit_die": 6,  "level": 15, "con_mod": 1, "ac": 14,
-                       "max_slots": {"1":4,"2":3,"3":3,"4":3,"5":2,"6":1,"7":1,"8":1}},
+                       "max_slots": {"1":4,"2":3,"3":3,"4":3,"5":2,"6":1,"7":1,"8":1,"9":1}},
             "Thorne": {"hit_die": 10, "level": 15, "con_mod": 3, "ac": 18,
                        "max_slots": {}},
             "Lyra":   {"hit_die": 8,  "level": 15, "con_mod": 2, "ac": 17,
-                       "max_slots": {"1":4,"2":3,"3":3,"4":3,"5":2,"6":1,"7":1,"8":1}},
+                       "max_slots": {"1":4,"2":3,"3":3,"4":3,"5":2,"6":1,"7":1,"8":1,"9":1}},
         }
         cstats    = _CHAR_STATS.get(char_name, {"hit_die":8,"level":1,"con_mod":0,"ac":10,"max_slots":{}})
         hit_die   = data.get("hit_die",  cstats["hit_die"])
@@ -105,6 +108,13 @@ class CharacterMixin:
         try:
             face = CharacterFaceWindow(self.root, char_name, parent_frame=face_frame)
             self.face_windows[char_name] = face
+            # Synchronise la référence dans agent_logger pour la bulle de pensée
+            # (couvre log_llm_start/end appelés depuis llm_control_mixin et image_broadcast)
+            try:
+                from agent_logger import set_face_windows_ref
+                set_face_windows_ref(self.face_windows)
+            except Exception:
+                pass
         except Exception as e:
             print(f"[popout] Erreur avatar {char_name}: {e}")
 
@@ -420,549 +430,212 @@ class CharacterMixin:
                   command=_do_long_rest).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(3,0))
 
         # ════════════════════════════════════════════════════════════════════
-        # ── ONGLET SORTS ─────────────────────────────────────────────────
+        # ── ONGLET SORTS  (v3 — basé sur spells_prepared + spell_data) ──
+        # Chaque personnage stocke uniquement une liste de noms anglais dans
+        # campaign_state["characters"][name]["spells_prepared"].
+        # Toutes les métadonnées (niveau, école, description) viennent
+        # dynamiquement de spell_data.py, qui scanne les fichiers spells-*.json
+        # du dossier spells/ en s'appuyant sur sources.json (sans hardcoding).
         # ════════════════════════════════════════════════════════════════════
+
         SCHOOL_COLORS = {
-            "Abjuration": "#64b5f6", "Invocation": "#81c784", "Divination": "#e9c46a",
-            "Enchantement": "#f06292", "Évocation": "#e57373", "Illusion": "#ce93d8",
-            "Nécromancie": "#aaaaaa", "Transmutation": "#ffb74d",
+            "Abjuration": "#64b5f6", "Conjuration": "#81c784", "Divination": "#e9c46a",
+            "Enchantment": "#f06292", "Evocation": "#e57373", "Illusion": "#ce93d8",
+            "Necromancy": "#aaaaaa", "Transmutation": "#ffb74d",
         }
 
-        # Préchargement du cache de sorts (non-bloquant, déjà fait si chat actif)
+        # Préchargement du cache sorts + sources (non-bloquant)
         def _preload_spells():
             try:
-                from spell_data import load_spells
+                from spell_data import load_spells, load_sources_index
                 load_spells()
+                load_sources_index()
             except Exception:
                 pass
         threading.Thread(target=_preload_spells, daemon=True).start()
 
+        # ── Widgets de l'onglet ─────────────────────────────────────────────
         spell_list_outer = tk.Frame(spells_frame, bg="#1e1e2e")
         spell_list_outer.pack(fill=tk.BOTH, expand=True)
 
         sp_canvas = tk.Canvas(spell_list_outer, bg="#1e1e2e", highlightthickness=0)
         sp_scroll = tk.Scrollbar(spell_list_outer, orient="vertical", command=sp_canvas.yview)
-        sp_inner  = tk.Frame(sp_canvas, bg="#1e1e2e")
-        sp_inner.bind("<Configure>",
-                      lambda e: sp_canvas.configure(scrollregion=sp_canvas.bbox("all")))
-        sp_canvas.create_window((0, 0), window=sp_inner, anchor="nw")
         sp_canvas.configure(yscrollcommand=sp_scroll.set)
-        sp_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sp_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        sp_canvas.bind("<MouseWheel>",
-                       lambda e: sp_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-        sp_inner.bind("<MouseWheel>",
-                      lambda e: sp_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        sp_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # ── Barre inférieure : recherche + bouton Ajouter ────────────────
-        spell_bar = tk.Frame(spells_frame, bg="#12121e")
-        spell_bar.pack(fill=tk.X)
+        sp_inner = tk.Frame(sp_canvas, bg="#1e1e2e")
+        sp_window = sp_canvas.create_window((0, 0), window=sp_inner, anchor="nw")
 
+        def _on_sp_configure(e):
+            sp_canvas.configure(scrollregion=sp_canvas.bbox("all"))
+        sp_inner.bind("<Configure>", _on_sp_configure)
+
+        def _on_sp_canvas_configure(e):
+            sp_canvas.itemconfig(sp_window, width=e.width)
+        sp_canvas.bind("<Configure>", _on_sp_canvas_configure)
+
+        # ── Barre de recherche + bouton Ajouter ─────────────────────────────
         search_var = tk.StringVar()
+        spell_bar  = tk.Frame(spells_frame, bg="#12121e")
+        spell_bar.pack(fill=tk.X)
         tk.Entry(spell_bar, textvariable=search_var, bg="#1e1e2e", fg="#aaaaaa",
-                 font=("Consolas", 9), insertbackground="white", relief="flat",
-                 width=14).pack(side=tk.LEFT, padx=(8,4), pady=5, ipady=2)
+                 insertbackground="white", font=("Consolas", 9),
+                 relief="flat").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, pady=4)
         search_var.trace_add("write", lambda *_: _render_spells())
 
-        tk.Button(spell_bar, text="＋ Sort", bg="#1a1a2e", fg=color,
-                  font=("Arial", 9, "bold"), relief="flat", padx=8, pady=3,
-                  command=lambda: _open_spell_editor(None)).pack(side=tk.RIGHT, padx=8, pady=4)
-
-        # ── Compteur de sorts liés / total ───────────────────────────────
         stats_lbl = tk.Label(spell_bar, text="", bg="#12121e", fg="#444466",
                              font=("Consolas", 7))
-        stats_lbl.pack(side=tk.RIGHT, padx=4)
+        stats_lbl.pack(side=tk.LEFT, padx=4)
 
-        # ─────────────────────────────────────────────────────────────────
-        # Rendu de la liste des sorts
-        # ─────────────────────────────────────────────────────────────────
+        tk.Button(spell_bar, text="＋ Sort", bg="#1a1a2e", fg=color,
+                  font=("Arial", 9, "bold"), relief="flat", padx=8,
+                  cursor="hand2",
+                  command=lambda: _open_spell_picker()).pack(side=tk.RIGHT, padx=8, pady=4)
 
+        # ── Helpers accès state ──────────────────────────────────────────────
+        def _get_prepared() -> list:
+            return list(load_state()
+                        .get("characters", {})
+                        .get(char_name, {})
+                        .get("spells_prepared", []))
+
+        def _set_prepared(names: list):
+            s = load_state()
+            s.setdefault("characters", {}).setdefault(char_name, {})["spells_prepared"] = names
+            save_state(s)
+
+        # ── Rendu de la liste ────────────────────────────────────────────────
         def _render_spells():
             for w in sp_inner.winfo_children():
                 w.destroy()
 
-            spells  = load_state().get("characters",{}).get(char_name,{}).get("spells", [])
-            query   = search_var.get().lower().strip()
-            visible = [sp for sp in spells
-                       if not query or query in sp.get("name","").lower()
-                                    or query in sp.get("school","").lower()]
+            try:
+                from spell_data import get_spell, load_spells
+                load_spells()
+            except Exception:
+                get_spell = lambda n: None
 
-            # Mise à jour du compteur source
-            nb_linked = sum(1 for sp in spells if sp.get("source_key"))
-            stats_lbl.config(text=f"{nb_linked}/{len(spells)} liés")
+            names  = _get_prepared()
+            query  = search_var.get().lower().strip()
 
-            if not visible:
-                msg = "Aucun sort correspond." if query else \
-                      "Aucun sort.\nCliquez ＋ pour en ajouter."
-                tk.Label(sp_inner, text=msg, bg="#1e1e2e", fg="#444455",
+            stats_lbl.config(text=f"{len(names)} sorts")
+
+            if not names:
+                tk.Label(sp_inner, text="Aucun sort.\nCliquez ＋ pour en ajouter.",
+                         bg="#1e1e2e", fg="#444455",
                          font=("Consolas", 9, "italic"), justify=tk.CENTER).pack(pady=20)
                 return
 
             from collections import defaultdict
             by_level = defaultdict(list)
-            for sp in visible:
-                by_level[sp.get("level", 0)].append((spells.index(sp), sp))
+            for name in names:
+                sp_data = get_spell(name)
+                lvl = int(sp_data["level"]) if sp_data else 0
+                if query and query not in name.lower() and query not in (
+                        sp_data.get("school", "").lower() if sp_data else ""):
+                    continue
+                by_level[lvl].append((name, sp_data))
+
+            if not by_level:
+                tk.Label(sp_inner, text="Aucun sort correspond.",
+                         bg="#1e1e2e", fg="#444455",
+                         font=("Consolas", 9, "italic")).pack(pady=20)
+                return
 
             for lvl in sorted(by_level.keys()):
-                lvl_txt = "Tours" if lvl == 0 else f"Niveau {lvl}"
+                lvl_txt = "Cantrips" if lvl == 0 else f"Niveau {lvl}"
                 hdr_row = tk.Frame(sp_inner, bg="#161622")
                 hdr_row.pack(fill=tk.X, pady=(6, 1))
                 tk.Label(hdr_row, text=lvl_txt, bg="#161622", fg=color,
                          font=("Arial", 8, "bold")).pack(side=tk.LEFT, padx=8, pady=3)
-                items   = by_level[lvl]
-                nb_prep = sum(1 for _, sp in items if sp.get("prepared", True))
-                # Indicateur sorts liés dans le header de niveau
-                nb_lvl_linked = sum(1 for _, sp in items if sp.get("source_key"))
-                if nb_lvl_linked:
-                    tk.Label(hdr_row, text=f"◈{nb_lvl_linked}", bg="#161622",
-                             fg="#7a6aaa", font=("Consolas", 7)).pack(side=tk.RIGHT, padx=2)
-                tk.Label(hdr_row, text=f"{nb_prep}/{len(items)}",
-                         bg="#161622", fg="#444455",
+                tk.Label(hdr_row, text=str(len(by_level[lvl])), bg="#161622", fg="#444455",
                          font=("Consolas", 8)).pack(side=tk.RIGHT, padx=8)
-                for idx, sp in items:
-                    _render_spell_row(sp, idx)
+                for spell_name, sp_data in by_level[lvl]:
+                    _render_spell_row(spell_name, sp_data)
 
-        def _render_spell_row(sp, idx):
-            school       = sp.get("school", "")
+        def _render_spell_row(spell_name: str, sp_data):
+            school = sp_data.get("school", "") if sp_data else ""
             school_color = SCHOOL_COLORS.get(school, "#888888")
-            prepared     = sp.get("prepared", True)
-            is_linked    = bool(sp.get("source_key"))
-            row_bg       = "#1a1a2a" if prepared else "#131320"
+            source = sp_data.get("source", "") if sp_data else ""
+            conc   = sp_data.get("concentration", False) if sp_data else False
+            rit    = sp_data.get("ritual", False) if sp_data else False
 
-            row = tk.Frame(sp_inner, bg=row_bg)
+            row = tk.Frame(sp_inner, bg="#1a1a2a")
             row.pack(fill=tk.X, padx=4, pady=1)
 
-            # Dot préparé / non-préparé
-            dot = tk.Label(row, text="●" if prepared else "○",
-                           bg=row_bg, fg=color if prepared else "#333344",
-                           font=("Arial", 10), cursor="hand2")
-            dot.pack(side=tk.LEFT, padx=(6, 2), pady=3)
+            # Nom — cliquable pour ouvrir la fiche complète
+            name_lbl = tk.Label(row, text=spell_name,
+                                bg="#1a1a2a", fg="#e0e0e0",
+                                font=("Consolas", 9, "bold"), anchor="w",
+                                cursor="hand2")
+            name_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 2), pady=3)
 
-            def _toggle(e=None, i=idx):
-                s  = load_state()
-                sl = s.get("characters",{}).get(char_name,{}).get("spells", [])
-                if i < len(sl):
-                    sl[i]["prepared"] = not sl[i].get("prepared", True)
-                    save_state(s)
-                    _render_spells()
-            dot.bind("<Button-1>", _toggle)
+            def _open_sheet(e=None, _n=spell_name, _d=sp_data):
+                try:
+                    from spell_data import SpellSheetWindow
+                    if _d:
+                        SpellSheetWindow(win, _d)
+                    else:
+                        import tkinter.messagebox as mb
+                        mb.showinfo("Sort inconnu",
+                                    f"Aucune donnée trouvée pour « {_n} »\n"
+                                    "(vérifiez que le fichier spells-*.json correspondant est présent).",
+                                    parent=win)
+                except Exception as _e:
+                    print(f"[SpellSheet] {_e}")
+            name_lbl.bind("<Button-1>", _open_sheet)
+            name_lbl.bind("<Enter>", lambda e, l=name_lbl: l.config(fg="#e8c84a"))
+            name_lbl.bind("<Leave>", lambda e, l=name_lbl: l.config(fg="#e0e0e0"))
 
-            # Nom — cliquable si lié à une source (ouvre SpellSheetWindow)
-            name_color = "#e0e0e0" if prepared else "#4a4a5a"
-            name_cursor = "hand2" if is_linked else ""
-            name_lbl = tk.Label(row, text=sp.get("name","?"),
-                                 bg=row_bg,
-                                 fg=name_color,
-                                 font=("Consolas", 9, "bold"), anchor="w",
-                                 cursor=name_cursor)
-            name_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=3)
-
-            if is_linked:
-                # Clic → fiche complète SpellSheetWindow
-                def _open_sheet(e=None, _sp=sp):
-                    try:
-                        from spell_data import SpellSheetWindow, get_spell
-                        full = get_spell(_sp["source_key"])
-                        if full:
-                            SpellSheetWindow(win, full)
-                        else:
-                            SpellSheetWindow(win, _sp.get("name",""))
-                    except Exception as _e:
-                        print(f"[SpellSheet] {_e}")
-                name_lbl.bind("<Button-1>", _open_sheet)
-                # Survol : couleur or pour indiquer le lien
-                name_lbl.bind("<Enter>",
-                    lambda e, l=name_lbl: l.config(fg="#e8c84a") if prepared else None)
-                name_lbl.bind("<Leave>",
-                    lambda e, l=name_lbl: l.config(fg=name_color))
-
-                # Badge de source (PHB, XGE, etc.)
-                src = sp.get("source", "")
-                if src and src != "?":
-                    tk.Label(row, text=f"[{src}]", bg=row_bg, fg="#554477",
-                             font=("Consolas", 6)).pack(side=tk.RIGHT, padx=(0, 2))
-            else:
-                # Tooltip description classique pour les sorts manuels
-                desc = sp.get("description","")
-                if desc:
-                    tip_ref = [None]
-                    def _show_tip(e, d=desc):
-                        tip = tk.Toplevel(win)
-                        tip.wm_overrideredirect(True)
-                        tip.wm_geometry(f"+{e.x_root+12}+{e.y_root-10}")
-                        tk.Label(tip, text=d, bg="#252535", fg="#ccccdd",
-                                 font=("Consolas", 8), wraplength=260, justify=tk.LEFT,
-                                 padx=8, pady=5, relief="solid", bd=1).pack()
-                        tip_ref[0] = tip
-                    def _hide_tip(e):
-                        if tip_ref[0]:
-                            try: tip_ref[0].destroy()
-                            except: pass
-                            tip_ref[0] = None
-                    name_lbl.bind("<Enter>", _show_tip)
-                    name_lbl.bind("<Leave>", _hide_tip)
-
-            # Badge "◈" pour sorts liés (avant l'école)
-            if is_linked:
-                tk.Label(row, text="◈", bg=row_bg, fg="#7a6aaa",
-                         font=("Consolas", 8)).pack(side=tk.RIGHT, padx=(0, 1))
-
+            # Badges concentration / rituel
+            if conc:
+                tk.Label(row, text="◉", bg="#1a1a2a", fg="#ce93d8",
+                         font=("Consolas", 7)).pack(side=tk.RIGHT, padx=1)
+            if rit:
+                tk.Label(row, text="®", bg="#1a1a2a", fg="#e9c46a",
+                         font=("Consolas", 7)).pack(side=tk.RIGHT, padx=1)
+            if source and source != "?":
+                tk.Label(row, text=f"[{source}]", bg="#1a1a2a", fg="#554477",
+                         font=("Consolas", 6)).pack(side=tk.RIGHT, padx=(0, 2))
             if school:
-                tk.Label(row, text=school, bg=row_bg, fg=school_color,
+                tk.Label(row, text=school, bg="#1a1a2a", fg=school_color,
                          font=("Arial", 7, "italic")).pack(side=tk.RIGHT, padx=4)
 
-            # Boutons action
-            tk.Button(row, text="✕", bg=row_bg, fg="#553333", font=("Arial", 8),
-                      relief="flat", padx=2, cursor="hand2",
-                      command=lambda i=idx: _delete_spell(i)).pack(side=tk.RIGHT, padx=(0,2))
-            tk.Button(row, text="✏", bg=row_bg, fg="#555577", font=("TkDefaultFont", 8),
-                      relief="flat", padx=2, cursor="hand2",
-                      command=lambda i=idx: _open_spell_editor(i)).pack(side=tk.RIGHT, padx=1)
-
-        # ─────────────────────────────────────────────────────────────────
-        # Suppression d'un sort
-        # ─────────────────────────────────────────────────────────────────
-
-        def _delete_spell(idx):
-            s  = load_state()
-            sl = s.get("characters",{}).get(char_name,{}).get("spells", [])
-            if 0 <= idx < len(sl):
-                sl.pop(idx)
-                save_state(s)
-                _render_spells()
-
-        # ─────────────────────────────────────────────────────────────────
-        # Éditeur de sort — version 2 avec liaison source
-        # ─────────────────────────────────────────────────────────────────
-
-        def _open_spell_editor(idx):
-            spells = load_state().get("characters",{}).get(char_name,{}).get("spells", [])
-            sp     = spells[idx] if idx is not None and idx < len(spells) else {}
-
-            # État de liaison : source_key présent → mode "lié"
-            _linked_data   = [sp.get("source_key", None)]  # list pour mutabilité dans closures
-            _linked_source = [None]  # dict complet spell_data si lié
-
-            if _linked_data[0]:
-                try:
-                    from spell_data import get_spell, load_spells
-                    load_spells()
-                    _linked_source[0] = get_spell(_linked_data[0])
-                except Exception:
-                    _linked_source[0] = None
-
-            is_editing = idx is not None
-            title = "✏️ Modifier le sort" if is_editing else "＋ Nouveau sort"
-
-            ew = tk.Toplevel(win)
-            ew.title(title)
-            ew.configure(bg="#0d1117")
-            ew.resizable(False, False)
-            ew.grab_set()
-
-            # Hauteur variable selon mode lié / non-lié
-            ew.geometry("420x480")
-
-            # ── Helpers UI ────────────────────────────────────────────────
-            def _lbl(txt, parent=ew):
-                tk.Label(parent, text=txt, bg="#0d1117", fg="#666677",
-                         font=("Arial", 8)).pack(anchor="w", padx=14, pady=(8,0))
-
-            def _entry(default="", parent=ew, readonly=False):
-                e = tk.Entry(parent, bg="#161b22" if not readonly else "#0f1319",
-                             fg="white" if not readonly else "#666688",
-                             font=("Consolas", 10),
-                             insertbackground="white", relief="flat",
-                             state="readonly" if readonly else "normal")
-                e.pack(fill=tk.X, padx=14, ipady=3)
-                if not readonly:
-                    e.insert(0, default)
-                else:
-                    e.config(state="normal"); e.insert(0, default); e.config(state="readonly")
-                return e
-
-            # ── Bannière mode lié ─────────────────────────────────────────
-            _linked_banner_frame = [None]
-
-            def _build_linked_banner():
-                if _linked_banner_frame[0]:
-                    try: _linked_banner_frame[0].destroy()
-                    except: pass
-
-                if _linked_data[0] and _linked_source[0]:
-                    src_sp = _linked_source[0]
-                    banner = tk.Frame(ew, bg="#12182a", pady=5)
-                    banner.pack(fill=tk.X, padx=14, pady=(8, 0))
-                    _linked_banner_frame[0] = banner
-
-                    tk.Label(banner, text="◈ Lié à la source :", bg="#12182a",
-                             fg="#7a6aaa", font=("Arial", 8, "bold")).pack(side=tk.LEFT, padx=(6,4))
-                    src_name = f"{src_sp['name']}  [{src_sp.get('source','?')}]"
-                    tk.Label(banner, text=src_name, bg="#12182a",
-                             fg="#c8b8ff", font=("Consolas", 8)).pack(side=tk.LEFT)
-
-                    def _resync():
-                        """Resynchronise les champs depuis la source."""
-                        if not _linked_source[0]:
-                            return
-                        src = _linked_source[0]
-                        # Mettre à jour les variables d'affichage
-                        lvl_var.set(str(src["level"]))
-                        school_var.set(src["school"])
-                        # Reconstruire la desc enrichie
-                        meta = (f"[{src['cast_time']} | {src['range']} | "
-                                f"{src['duration']}] {src['description'][:480]}")
-                        desc_box.config(state="normal")
-                        desc_box.delete("1.0", tk.END)
-                        desc_box.insert("1.0", meta[:600])
-                        # desc_box reste readonly puisqu'on est en mode lié
-
-                    def _unlink():
-                        """Délie le sort de sa source → mode édition libre."""
-                        _linked_data[0]   = None
-                        _linked_source[0] = None
-                        # Reconstruire l'UI complète
-                        _rebuild_editor_ui()
-
-                    tk.Button(banner, text="↺ Resync", bg="#1a1a3a", fg="#7a6aaa",
-                              font=("Arial", 7, "bold"), relief="flat", padx=6,
-                              command=_resync).pack(side=tk.RIGHT, padx=4)
-                    tk.Button(banner, text="✂ Délier", bg="#2a1a1a", fg="#aa6666",
-                              font=("Arial", 7, "bold"), relief="flat", padx=6,
-                              command=_unlink).pack(side=tk.RIGHT, padx=2)
-
-            # ── Conteneur principal (reconstruit selon mode) ──────────────
-            _editor_container = [None]
-
-            lvl_var    = tk.StringVar(value=str(sp.get("level", 1)))
-            school_var = tk.StringVar(value=sp.get("school", "Évocation"))
-            prep_var   = tk.BooleanVar(value=sp.get("prepared", True))
-
-            # Références aux widgets qui dépendent du mode
-            f_name   = [None]
-            desc_box = [None]
-
-            def _rebuild_editor_ui():
-                """Reconstruit la zone d'édition selon le mode lié/libre."""
-                if _editor_container[0]:
-                    try: _editor_container[0].destroy()
-                    except: pass
-
-                container = tk.Frame(ew, bg="#0d1117")
-                container.pack(fill=tk.BOTH, expand=True)
-                _editor_container[0] = container
-
-                is_linked = bool(_linked_data[0] and _linked_source[0])
-                src = _linked_source[0] if is_linked else None
-
-                # ── Barre import depuis les sources ───────────────────────
-                if not is_linked:
-                    phb_bar = tk.Frame(container, bg="#0d1117")
-                    phb_bar.pack(fill=tk.X, padx=14, pady=(10, 0))
-                    tk.Label(phb_bar, text="Importer depuis :", bg="#0d1117", fg="#666677",
-                             font=("Arial", 8)).pack(side=tk.LEFT)
-
-                    def _open_phb_picker():
-                        from spell_data import SpellPickerDialog
-                        def _on_pick(picked):
-                            # Stocker le lien source
-                            _linked_data[0]   = picked["name"].lower()
-                            _linked_source[0] = picked
-                            # Mettre à jour les vars partagées
-                            lvl_var.set(str(picked["level"]))
-                            school_var.set(picked["school"])
-                            # Reconstruire entièrement l'UI avec mode lié
-                            _build_linked_banner()
-                            _rebuild_editor_ui()
-
-                        initial = f_name[0].get().strip() if f_name[0] else ""
-                        SpellPickerDialog(ew, _on_pick,
-                                          title=f"✨ Sorts — {char_name}",
-                                          initial_query=initial)
-
-                    tk.Button(phb_bar, text="🔍 Chercher dans les sources",
-                              bg="#1a1a2e", fg="#9b8fc7",
-                              font=("Arial", 8, "bold"), relief="flat",
-                              padx=8, pady=2,
-                              command=_open_phb_picker).pack(side=tk.LEFT, padx=(8, 0))
-
-                # ── Nom du sort ───────────────────────────────────────────
-                tk.Label(container, text="Nom du sort", bg="#0d1117", fg="#666677",
-                         font=("Arial", 8)).pack(anchor="w", padx=14, pady=(8,0))
-
-                name_default = src["name"] if is_linked else sp.get("name", "")
-                name_ro = is_linked  # en lecture seule si lié
-                e_name = tk.Entry(
-                    container,
-                    bg="#0f1319" if name_ro else "#161b22",
-                    fg="#aaaacc" if name_ro else "white",
-                    font=("Consolas", 10),
-                    insertbackground="white", relief="flat",
-                    state="readonly" if name_ro else "normal"
-                )
-                e_name.pack(fill=tk.X, padx=14, ipady=3)
-                e_name.config(state="normal")
-                e_name.insert(0, name_default)
-                if name_ro:
-                    e_name.config(state="readonly")
-                f_name[0] = e_name
-
-                # ── Niveau + École ────────────────────────────────────────
-                row_meta = tk.Frame(container, bg="#0d1117")
-                row_meta.pack(fill=tk.X, padx=14, pady=(8, 0))
-
-                tk.Label(row_meta, text="Niveau", bg="#0d1117", fg="#666677",
-                         font=("Arial", 8)).pack(side=tk.LEFT)
-
-                if is_linked:
-                    tk.Label(row_meta, text=str(src["level"]), bg="#0d1117", fg="#aaaacc",
-                             font=("Consolas", 10)).pack(side=tk.LEFT, padx=(4,16))
-                else:
-                    tk.Spinbox(row_meta, from_=0, to=9, textvariable=lvl_var, width=3,
-                               bg="#161b22", fg="white", font=("Consolas", 10),
-                               buttonbackground="#161b22", relief="flat",
-                               ).pack(side=tk.LEFT, padx=(4,16), ipady=2)
-
-                tk.Label(row_meta, text="École", bg="#0d1117", fg="#666677",
-                         font=("Arial", 8)).pack(side=tk.LEFT)
-
-                if is_linked:
-                    school_color = SCHOOL_COLORS.get(src["school"], "#aaaaaa")
-                    tk.Label(row_meta, text=src["school"], bg="#0d1117", fg=school_color,
-                             font=("Consolas", 9)).pack(side=tk.LEFT, padx=4)
-                else:
-                    school_om = tk.OptionMenu(row_meta, school_var,
-                        "Abjuration","Invocation","Divination","Enchantement",
-                        "Évocation","Illusion","Nécromancie","Transmutation")
-                    school_om.config(bg="#161b22", fg="white", font=("Consolas", 9),
-                                     relief="flat", highlightthickness=0, width=13)
-                    school_om["menu"].config(bg="#161b22", fg="white")
-                    school_om.pack(side=tk.LEFT, padx=4)
-
-                # ── Si lié : métadonnées riches ───────────────────────────
-                if is_linked:
-                    meta_frame = tk.Frame(container, bg="#0d1117")
-                    meta_frame.pack(fill=tk.X, padx=14, pady=(6, 0))
-                    meta_items = [
-                        ("Incantation", src.get("cast_time", "—")),
-                        ("Portée",      src.get("range", "—")),
-                        ("Composantes", src.get("components", "—")),
-                        ("Durée",       src.get("duration", "—")),
-                    ]
-                    badges = []
-                    if src.get("concentration"): badges.append("Conc.")
-                    if src.get("ritual"):        badges.append("Rituel")
-                    for label, value in meta_items:
-                        mrow = tk.Frame(meta_frame, bg="#0d1117")
-                        mrow.pack(fill=tk.X, pady=1)
-                        tk.Label(mrow, text=f"{label} :", bg="#0d1117", fg="#444466",
-                                 font=("Consolas", 7), width=12, anchor="w").pack(side=tk.LEFT)
-                        tk.Label(mrow, text=value, bg="#0d1117", fg="#8899bb",
-                                 font=("Consolas", 8)).pack(side=tk.LEFT)
-                    if badges:
-                        b_row = tk.Frame(meta_frame, bg="#0d1117")
-                        b_row.pack(fill=tk.X, pady=1)
-                        for b in badges:
-                            tk.Label(b_row, text=f"[{b}]", bg="#1a1030", fg="#c8b8ff",
-                                     font=("Consolas", 7), relief="flat", padx=4).pack(
-                                     side=tk.LEFT, padx=(0,3))
-
-                    # Source officielle
-                    src_txt = f"Source : {src.get('source','?')}"
-                    tk.Label(container, text=src_txt, bg="#0d1117", fg="#443355",
-                             font=("Consolas", 7)).pack(anchor="w", padx=14, pady=(2,0))
-
-                # ── Préparé ───────────────────────────────────────────────
-                tk.Checkbutton(container, text="Préparé", variable=prep_var,
-                               bg="#0d1117", fg="#aaaaaa", font=("Arial", 9),
-                               selectcolor="#1a1a2e",
-                               activebackground="#0d1117").pack(anchor="w", padx=14, pady=(8,0))
-
-                # ── Description ───────────────────────────────────────────
-                if is_linked:
-                    tk.Label(container, text="Description (fiche complète accessible via clic)",
-                             bg="#0d1117", fg="#666677", font=("Arial", 7, "italic")).pack(
-                             anchor="w", padx=14, pady=(6, 0))
-                    # Résumé compact pour tooltip in-game
-                    short_desc = sp.get("description", "")
-                    if not short_desc:
-                        # Génère depuis la source
-                        meta_str = (f"[{src.get('cast_time','?')} | {src.get('range','?')} | "
-                                    f"{src.get('duration','?')}] ")
-                        short_desc = meta_str + src["description"][:380]
-
-                    db = tk.Text(container, height=3, bg="#0f1319", fg="#666688",
-                                 font=("Consolas", 8), insertbackground="white",
-                                 relief="flat", wrap=tk.WORD)
-                    db.pack(fill=tk.X, padx=14)
-                    db.insert("1.0", short_desc[:500])
-                    # Éditable même en mode lié (la description courte est customisable)
-                    desc_box[0] = db
-
-                    tk.Label(container, text="↑ Description courte (tooltip in-game, éditable)",
-                             bg="#0d1117", fg="#443355", font=("Arial", 7, "italic")).pack(
-                             anchor="w", padx=14)
-                else:
-                    tk.Label(container, text="Description courte (survol pour afficher en jeu)",
-                             bg="#0d1117", fg="#666677", font=("Arial", 8)).pack(
-                             anchor="w", padx=14, pady=(8,0))
-                    db = tk.Text(container, height=4, bg="#161b22", fg="#aaaaaa",
-                                 font=("Consolas", 9), insertbackground="white",
-                                 relief="flat", wrap=tk.WORD)
-                    db.pack(fill=tk.X, padx=14)
-                    db.insert("1.0", sp.get("description",""))
-                    desc_box[0] = db
-
-                # ── Bouton Sauvegarder ────────────────────────────────────
-                def _save():
-                    src_sp = _linked_source[0]
-                    is_lnk = bool(_linked_data[0] and src_sp)
-
-                    # Nom : depuis source si lié, depuis champ sinon
-                    name = (src_sp["name"] if is_lnk
-                            else (f_name[0].get().strip() or "Sort sans nom"))
-                    # Niveau et école
-                    lvl    = src_sp["level"]    if is_lnk else int(lvl_var.get() or 1)
-                    school = src_sp["school"]   if is_lnk else school_var.get()
-
-                    new_sp = {
-                        "name":        name,
-                        "level":       lvl,
-                        "school":      school,
-                        "prepared":    prep_var.get(),
-                        "description": desc_box[0].get("1.0", tk.END).strip() if desc_box[0] else "",
-                    }
-
-                    if is_lnk:
-                        # Enrichir avec les données complètes de la source
-                        new_sp["source_key"]  = _linked_data[0]  # nom.lower()
-                        new_sp["source"]      = src_sp.get("source", "?")
-                        new_sp["cast_time"]   = src_sp.get("cast_time", "")
-                        new_sp["range"]       = src_sp.get("range", "")
-                        new_sp["components"]  = src_sp.get("components", "")
-                        new_sp["duration"]    = src_sp.get("duration", "")
-                        new_sp["concentration"] = src_sp.get("concentration", False)
-                        new_sp["ritual"]      = src_sp.get("ritual", False)
-                        new_sp["school_code"] = src_sp.get("school_code", "")
-
-                    s  = load_state()
-                    sl = s.setdefault("characters",{}).setdefault(char_name,{}).setdefault("spells",[])
-                    if idx is not None and idx < len(sl):
-                        # Préserver le champ 'prepared' courant si l'utilisateur ne le touche pas
-                        sl[idx] = new_sp
-                    else:
-                        sl.append(new_sp)
-                    save_state(s)
+            # Bouton supprimer
+            def _remove(n=spell_name):
+                names = _get_prepared()
+                if n in names:
+                    names.remove(n)
+                    _set_prepared(names)
                     _render_spells()
-                    ew.destroy()
+            tk.Button(row, text="✕", bg="#1a1a2a", fg="#553333",
+                      font=("Arial", 8), relief="flat", padx=2, cursor="hand2",
+                      command=_remove).pack(side=tk.RIGHT, padx=(0, 2))
 
-                tk.Button(container, text="✅ Sauvegarder", bg="#1a3a1a", fg="#81c784",
-                          font=("Arial", 10, "bold"), relief="flat",
-                          command=_save).pack(pady=10)
-
-            # ── Assemblage initial de l'éditeur ───────────────────────────
-            _build_linked_banner()
-            _rebuild_editor_ui()
+        # ── Dialogue de sélection de sort (SpellPickerDialog) ───────────────
+        def _open_spell_picker():
+            try:
+                from spell_data import SpellPickerDialog, load_spells
+                load_spells()
+                def _on_select(sp_dict):
+                    if not sp_dict:
+                        return
+                    name  = sp_dict.get("name", "")
+                    if not name:
+                        return
+                    names = _get_prepared()
+                    if name not in names:
+                        names.append(name)
+                        _set_prepared(names)
+                    _render_spells()
+                SpellPickerDialog(win, on_select=_on_select,
+                                  title=f"Ajouter un sort — {char_name}")
+            except Exception as e:
+                print(f"[SpellPicker] {e}")
+                import tkinter.messagebox as mb
+                mb.showerror("Erreur", f"Impossible d'ouvrir le sélecteur de sorts :\n{e}",
+                             parent=win)
 
         _render_spells()
 

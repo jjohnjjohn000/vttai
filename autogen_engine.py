@@ -24,7 +24,7 @@ Prérequis sur l'instance hôte :
 import threading
 import types
 
-from llm_config    import build_llm_config, _default_model, StopLLMRequested
+from llm_config    import build_llm_config, _default_model, StopLLMRequested, _SSL_LOCK
 from app_config    import (get_agent_config, get_chronicler_config,
                            get_groupchat_config, get_memories_config)
 from state_manager import (
@@ -33,6 +33,7 @@ from state_manager import (
     get_scene_prompt, get_active_quests_prompt,
     get_memories_prompt_compact, get_calendar_prompt,
     get_session_logs_prompt, get_active_characters,
+    get_spells_prompt,
 )
 from agent_logger  import log_tts_start
 from combat_tracker import COMBAT_STATE, _is_fully_silenced
@@ -145,8 +146,15 @@ class AutogenEngineMixin:
             "▶ CONTRAT SYSTÈME :"
             "\n  1. Le SYSTÈME exécute les dés — tu ne lances rien toi-même."
             "\n  2. Tu reçois un [RÉSULTAT SYSTÈME] avec les valeurs exactes."
-            "\n  3. Ton rôle : narrer l'effet en 1-2 phrases de roleplay fidèles au résultat."
-            "\n  4. NE JAMAIS appeler roll_dice, use_spell_slot, update_hp toi-même."
+            "\n  3. Après un [RÉSULTAT SYSTÈME], tu narres UNIQUEMENT l'EFFORT physique ou mental"
+            "\n     de ton personnage (la tension de ses muscles, sa concentration, sa sensation)."
+            "\n     TU NE DÉCRIS JAMAIS CE QUE TU TROUVES, DÉCOUVRES OU PERÇOIS DANS L'ENVIRONNEMENT."
+            "\n     C'est le MJ seul qui décrit ce qui existe dans le monde."
+            "\n     Exemple INTERDIT : 'Je trouve une brique sur pivot dissimulée par la suie.'"
+            "\n     Exemple CORRECT  : 'Mes doigts s'arrêtent. Quelque chose cloche ici.'"
+            "\n  4. NE JAMAIS appeler roll_dice, use_spell_slot, update_hp de ta propre initiative."
+            "\n     EXCEPTION : si tu reçois une [DIRECTIVE SYSTÈME — JET] ou [DIRECTIVE SYSTÈME — DÉGÂTS]"
+            "\n     avec ton nom, tu DOIS appeler l'outil indiqué IMMÉDIATEMENT, AVANT tout texte."
             "\n  5. NE JAMAIS inventer un résultat différent de celui donné par le système.\n"
             "\n▶ MOUVEMENT SUR LA CARTE (combat ET exploration)"
             "\nDès que ton personnage se déplace narrativement, utilise un bloc [ACTION] Type: Mouvement."
@@ -165,9 +173,19 @@ class AutogenEngineMixin:
             "\n▶ PNJ"
             "\nTu n'inventes JAMAIS les paroles d'un PNJ. Si tu t'adresses à un PNJ, ARRÊTE "
             "immédiatement après. Le MJ est la seule voix des PNJ."
-            "\n\n▶ MONDE & UNICITÉ"
-            "\nN'invente aucun élément qu'Alexis n'a pas établi. Ne répète jamais une question "
-            "ou idée déjà exprimée — apporte un angle nouveau ou reste silencieux."
+            "\n\n▶ MONDE & UNICITÉ — RÈGLE ABSOLUE"
+            "\nTu n'existes QUE dans ta tête et ton corps. Le monde extérieur appartient au MJ."
+            "\nN'invente JAMAIS : un objet, une texture, une odeur, un mécanisme, un passage,"
+            "\nune inscription, une créature, une réaction de PNJ — rien de ce qui existe hors"
+            "\nde toi. Si ton jet de dés réussit, dis ce que TON CORPS ressent (une anomalie,"
+            "\nun doute, une intuition) — PAS ce que tu trouves. Attends qu'Alexis décrive."
+            "\nNe répète jamais une question ou idée déjà exprimée — apporte un angle nouveau"
+            "\nou reste silencieux."
+            "\n\n▶ INTERDICTION DE COPIE — RÈGLE ABSOLUE"
+            "\nNe reproduis JAMAIS, même partiellement, le contenu du message précédent."
+            "\nSi un autre personnage vient de dire ou faire quelque chose, tu ne le répètes pas,"
+            "\nne le paraphrases pas, ne le reformules pas. Chaque personnage a sa propre voix,"
+            "\nses propres actes. Si tu n'as rien d'original à apporter : dis [SILENCE]."
             "\n\n▶ ÉLOCUTION (SYNTHÈSE VOCALE)"
             "\nRépliques : 1-2 phrases MAX, courtes et percutantes. Ponctuation forte (?, !). "
             "Zéro tirade. Parle comme en pleine action."
@@ -207,6 +225,7 @@ class AutogenEngineMixin:
                 + get_memories_prompt_compact(importance_min=get_memories_config().get("compact_importance_min", 2))
                 + get_calendar_prompt()
                 + get_session_logs_prompt(max_sessions=3)
+                + get_spells_prompt("Kaelen")
                 + _regle_outils
             ),
             llm_config=_cfg("Kaelen"),
@@ -238,6 +257,7 @@ class AutogenEngineMixin:
                 + get_memories_prompt_compact(importance_min=get_memories_config().get("compact_importance_min", 2))
                 + get_calendar_prompt()
                 + get_session_logs_prompt(max_sessions=3)
+                + get_spells_prompt("Elara")
                 + _regle_outils
             ),
             llm_config=_cfg("Elara"),
@@ -304,6 +324,7 @@ class AutogenEngineMixin:
                 + get_memories_prompt_compact(importance_min=get_memories_config().get("compact_importance_min", 2))
                 + get_calendar_prompt()
                 + get_session_logs_prompt(max_sessions=3)
+                + get_spells_prompt("Lyra")
                 + _regle_outils
             ),
             llm_config=_cfg("Lyra"),
@@ -320,6 +341,91 @@ class AutogenEngineMixin:
             name: agent.system_message
             for name, agent in self._agents.items()
         }
+
+        # ── Bulle de pensée : wrapper generate_reply ──────────────────────────
+        # Chaque fois qu'AutoGen demande à un agent joueur de générer une réponse
+        # (= appel LLM en cours), on active l'animation de réflexion sur son avatar.
+        # set_thinking est thread-safe (simple bool lu par la boucle Tk à 30 fps).
+        def _make_thinking_wrapper(agent, name, app_ref):
+            """
+            Deux responsabilités :
+              1. Bulle de pensée : set_thinking(True/False) autour de generate_reply.
+              2. Interruption fiable : l'appel LLM réel tourne dans un sous-thread
+                 daemon. Le thread autogen sonde _stop_event toutes les 50 ms.
+                 Dès que _stop_event est levé, StopLLMRequested est lancé dans le
+                 thread autogen IMMÉDIATEMENT — même si le sous-thread est encore
+                 bloqué dans un appel C (HTTP/gRPC). Ce sous-thread finit sa
+                 requête en tâche de fond (daemon → pas de fuite à l'arrêt de l'app).
+            """
+            import threading as _th_wrap
+            _orig_gr = agent.generate_reply.__func__
+
+            def _wrapped(self_agent, messages=None, sender=None, **kwargs):
+                face = app_ref.face_windows.get(name)
+                if face:
+                    try:
+                        face.set_thinking(True)
+                    except Exception:
+                        pass
+
+                # Nettoyer un stop_event résiduel avant de commencer
+                app_ref._stop_event.clear()
+
+                result    = [None]
+                exc_box   = [None]
+                done_evt  = _th_wrap.Event()
+
+                def _llm_call():
+                    try:
+                        # _SSL_LOCK : sérialise TOUS les appels httpx/OpenSSL pour éviter
+                        # le segfault dans ssl.py quand deux threads partagent le pool SSL.
+                        # Nécessaire car les daemon threads interrompus restent actifs.
+                        with _SSL_LOCK:
+                            result[0] = _orig_gr(
+                                self_agent, messages=messages, sender=sender, **kwargs
+                            )
+                    except StopLLMRequested:
+                        # Thread interrompu via ctypes : on sort proprement
+                        # Le lock with-block est déjà libéré par l'exception
+                        exc_box[0] = StopLLMRequested()
+                    except BaseException as _e:
+                        exc_box[0] = _e
+                    finally:
+                        done_evt.set()
+
+                llm_thread = _th_wrap.Thread(target=_llm_call, daemon=True,
+                                             name=f"llm-call-{name}")
+                llm_thread.start()
+
+                # Sondage : vérifie stop_event toutes les 50 ms
+                while not done_evt.wait(timeout=0.05):
+                    if app_ref._stop_event.is_set():
+                        app_ref._stop_event.clear()
+                        if face:
+                            try:
+                                face.set_thinking(False)
+                            except Exception:
+                                pass
+                        # Le sous-thread LLM continue en daemon — pas de fuite
+                        raise StopLLMRequested()
+
+                if face:
+                    try:
+                        face.set_thinking(False)
+                    except Exception:
+                        pass
+
+                if exc_box[0] is not None:
+                    raise exc_box[0]
+                return result[0]
+
+            import types as _types
+            return _types.MethodType(_wrapped, agent)
+
+        for _think_name, _think_agent in self._agents.items():
+            _think_agent.generate_reply = _make_thinking_wrapper(
+                _think_agent, _think_name, self
+            )
 
         # ── Wrapper tolérant pour roll_dice ──────────────────────────────────
         # Les LLMs envoient parfois dice_notation="5d4+5" au lieu des deux
@@ -356,7 +462,23 @@ class AutogenEngineMixin:
             return _roll_dice_orig(character_name, dice_type, int(bonus))
 
         # --- ENREGISTREMENT DES OUTILS PAR RÔLE ---
-        # Kaelen et Thorne : combat (dés + sorts uniquement, pas de soins)
+        # update_hp : enregistré sur TOUS les agents joueurs.
+        # Chaque PJ doit pouvoir appliquer lui-même les dégâts reçus ou
+        # les soins obtenus quand le MJ le lui indique.
+        _update_hp_desc = (
+            "Mettre à jour les PV d'un personnage. "
+            "Utilise un entier NÉGATIF pour des dégâts (ex: -7), POSITIF pour un soin (ex: +12). "
+            "Paramètres : character_name (str, ex: 'Thorne'), amount (int). "
+            "À appeler dès que le MJ annonce que tu prends des dégâts ou reçois un soin."
+        )
+        for _upd_agent in [kaelen_agent, elara_agent, thorne_agent, lyra_agent]:
+            autogen.agentchat.register_function(
+                update_hp, caller=_upd_agent, executor=mj_agent,
+                name="update_hp",
+                description=_update_hp_desc,
+            )
+
+        # Kaelen et Thorne : combat (dés + sorts)
         for agent in [kaelen_agent, thorne_agent]:
             autogen.agentchat.register_function(
                 roll_dice_safe, caller=agent, executor=mj_agent,
@@ -414,12 +536,6 @@ class AutogenEngineMixin:
             name="use_spell_slot",
             description="Consommer un slot de sort (1-9). Paramètres : character_name (str), level (str, ex: '3')."
         )
-        autogen.agentchat.register_function(
-            update_hp, caller=lyra_agent, executor=mj_agent,
-            name="update_hp",
-            description="Modifier les PV d'un personnage (- pour dégâts, + pour soin). À appeler UNIQUEMENT si le MJ valide le soin."
-        )
-
         # --- SÉLECTEUR DE SPEAKER COMBAT-AWARE ---
         # PLAYER_NAMES est recalculé dynamiquement à chaque appel pour tenir compte
         # des personnages activés/désactivés en cours de session.
@@ -434,25 +550,43 @@ class AutogenEngineMixin:
             appelle _create_internal_agents() → instancie des agents LLM temporaires
             → références circulaires → GC pendant inspect.getfullargspec() → SEGFAULT.
 
-            Stratégie :
-              - Hors combat : rotation MJ → joueur → MJ → joueur suivant…
-              - En combat    : même rotation mais en respectant les silences
-                               (agents hors-tour déjà épuisés exclus).
+            Stratégie basée sur l'intention du MJ (par ordre de priorité) :
+
+              1. Noms explicites : le MJ mentionne un ou plusieurs PJ par nom
+                 ("Elara, qu'en penses-tu ?" / "Kaelen et Thorne, agissez.")
+                 → seuls ces PJ répondent, dans l'ordre d'apparition dans le message.
+
+              2. Question de groupe : pas de nom mentionné mais présence d'un '?'
+                 ou d'un marqueur de groupe ("tout le monde", "vous tous", "le groupe")
+                 → tous les PJ actifs répondent, chacun une seule fois.
+
+              3. Narration / pas de question : pas de nom, pas de '?'
+                 → un seul PJ réagit (rotation simple, comme avant).
+
+              4. Un PJ vient de parler → retour au MJ.
+
+            SOURCE DE VÉRITÉ UNIQUE : groupchat.agents (maintenu par
+            _sync_groupchat_agents). On N'appelle PLUS get_active_characters()
+            ici — cela créait une désynchronisation quand le flag JSON et la liste
+            d'agents divergeaient entre deux toggles.
             """
-            _currently_active = get_active_characters()
             _ALL_PLAYERS = ["Kaelen", "Elara", "Thorne", "Lyra"]
+            _GROUP_MARKERS = ("tout le monde", "vous tous", "le groupe", "chacun",
+                              "l'équipe", "vous avez", "que faites-vous",
+                              "vos réactions", "qu'en pensez-vous")
+
+            # Joueurs actuellement dans le groupchat (= présents dans la scène)
+            _players_in_gc = [a for a in groupchat.agents if a.name in _ALL_PLAYERS]
+            _player_names_in_gc = {a.name for a in _players_in_gc}
 
             def _eligible_agents():
+                """Agents pouvant prendre la parole ce tour."""
                 if not COMBAT_STATE["active"]:
-                    return [
-                        a for a in groupchat.agents
-                        if a.name not in _ALL_PLAYERS or a.name in _currently_active
-                    ]
+                    return list(groupchat.agents)
                 else:
                     candidates = [
                         a for a in groupchat.agents
-                        if (not _is_fully_silenced(a.name) or a.name not in _ALL_PLAYERS)
-                        and (a.name not in _ALL_PLAYERS or a.name in _currently_active)
+                        if not _is_fully_silenced(a.name) or a.name not in _ALL_PLAYERS
                     ]
                     if not candidates:
                         candidates = [a for a in groupchat.agents if a.name == "Alexis_Le_MJ"]
@@ -463,9 +597,74 @@ class AutogenEngineMixin:
                 mj = next((a for a in groupchat.agents if a.name == "Alexis_Le_MJ"), None)
                 return mj or groupchat.agents[0]
 
-            last_name = last_speaker.name if last_speaker else ""
+            eligible_names  = {a.name for a in eligible}
+            last_name       = last_speaker.name if last_speaker else ""
+            mj_agent_ref    = next((a for a in eligible if a.name == "Alexis_Le_MJ"), None)
 
-            # MJ vient de parler → donner la parole au prochain joueur éligible
+            # ─── Helpers ──────────────────────────────────────────────────────
+
+            def _find_last_mj_msg():
+                """Retourne (index, content) du dernier message MJ, ou (None, '')."""
+                for i in range(len(groupchat.messages) - 1, -1, -1):
+                    if groupchat.messages[i].get("name") == "Alexis_Le_MJ":
+                        return i, str(groupchat.messages[i].get("content", ""))
+                return None, ""
+
+            def _responded_since(mj_idx):
+                """Ensemble des PJ ayant répondu après groupchat.messages[mj_idx]."""
+                responded = set()
+                for msg in groupchat.messages[mj_idx + 1:]:
+                    if msg.get("name") in _ALL_PLAYERS:
+                        responded.add(msg.get("name"))
+                return responded
+
+            def _next_pending(target_list, responded):
+                """Premier PJ de target_list non encore répondu et éligible."""
+                for name in target_list:
+                    if name not in responded and name in eligible_names:
+                        return next((a for a in eligible if a.name == name), None)
+                return None
+
+            # ─── Analyse du dernier message MJ ────────────────────────────────
+            # Exécutée que le dernier locuteur soit le MJ OU un PJ (pour enchaîner
+            # les réponses quand plusieurs PJ sont ciblés).
+
+            last_mj_idx, last_mj_content = _find_last_mj_msg()
+
+            if last_mj_idx is not None:
+                content_low = last_mj_content.lower()
+
+                # Cas 1 — noms explicites dans le message du MJ
+                mentioned = [
+                    name for name in _ALL_PLAYERS
+                    if name.lower() in content_low
+                    and name in _player_names_in_gc
+                ]
+
+                # Cas 2 — question de groupe (pas de nom + '?' ou marqueur de groupe)
+                if not mentioned:
+                    is_group_question = (
+                        "?" in last_mj_content
+                        or any(m in content_low for m in _GROUP_MARKERS)
+                    )
+                    if is_group_question:
+                        mentioned = [n for n in _ALL_PLAYERS if n in _player_names_in_gc]
+
+                if mentioned:
+                    responded = _responded_since(last_mj_idx)
+                    pending   = _next_pending(mentioned, responded)
+                    if pending:
+                        return pending
+                    # Tous les PJ ciblés ont répondu → retour au MJ
+                    if mj_agent_ref:
+                        return mj_agent_ref
+
+            # ─── Un PJ vient de parler (hors ciblage multi-joueurs) → MJ ──────
+            if last_name in _ALL_PLAYERS:
+                if mj_agent_ref:
+                    return mj_agent_ref
+
+            # ─── Narration sans '?' : MJ parle → un seul PJ réagit (rotation) ─
             if last_name == "Alexis_Le_MJ":
                 players_eligible = [a for a in eligible if a.name in _ALL_PLAYERS]
                 if players_eligible:
@@ -482,17 +681,10 @@ class AutogenEngineMixin:
                         return players_eligible[(idx + 1) % len(players_eligible)]
                     return players_eligible[0]
 
-            # Un joueur vient de parler → donner la parole au MJ
-            if last_name in _ALL_PLAYERS:
-                mj = next((a for a in eligible if a.name == "Alexis_Le_MJ"), None)
-                if mj:
-                    return mj
-
-            # Fallback : round-robin simple parmi les éligibles
+            # ─── Fallback ultime : rotation parmi les éligibles ───────────────
             if last_name:
                 idx = next(
-                    (i for i, a in enumerate(eligible) if a.name == last_name),
-                    -1
+                    (i for i, a in enumerate(eligible) if a.name == last_name), -1
                 )
                 return eligible[(idx + 1) % len(eligible)]
 
@@ -662,6 +854,8 @@ class AutogenEngineMixin:
         #   "Kaelen prend 14 dégâts"  "Thorne subit 7 points de dégâts"
         #   "inflige 22 dégâts à Elara"  "Lyra reçoit 9 dégâts de feu"
         #   "Kaelen perd 5 PV"  "- 18 PV pour Thorne"
+        #   "lui fait 7 dégâts"  "lui inflige 12 dégâts de force"  (Forme E, cible = contexte)
+        #   "7 dégâts à Thorne"  "9 dégâts pour Elara"             (Forme F)
         _damage_pattern = _re.compile(
             r'(?:'
             # Forme A : "<Nom> prend/subit/reçoit/perd N dégâts/PV"
@@ -673,7 +867,17 @@ class AutogenEngineMixin:
             # Forme C : "- N PV pour/à <Nom>" ou "-N PV Kaelen"
             r'-\s*(?P<dmg_c>\d+)\s*(?:PV|pv|hp|d[eé]g[aâ]ts?)\s*(?:pour|[àa])?\s*(?P<tgt_c>Kaelen|Elara|Thorne|Lyra)'
             r'|'
+            # Forme D : "tu prends/subis/reçois N dégâts" (MJ s'adresse directement, cible = contexte)
             r'tu\s+(?:te\s+)?(?:prend[s]?|subis|re[çc]ois|perds?)\s+(?P<dmg_d>\d+)\s*(?:d[eé]g[aâ]ts?|points?\s*de\s*d[eé]g[aâ]ts?|PV|pv|hp)'
+            r'|'
+            # Forme E : "lui/leur inflige/cause/fait N dégâts" (pronom indirect, cible = contexte)
+            r'(?:lui|leur|vous)\s+(?:inflige|cause|fait|deal)\s+(?P<dmg_e>\d+)\s*(?:d[eé]g[aâ]ts?|points?\s*de\s*d[eé]g[aâ]ts?|PV|pv|hp)'
+            r'|'
+            # Forme F : "N dégâts à/pour <Nom>" (résumé court sans verbe)
+            r'(?P<dmg_f>\d+)\s*(?:d[eé]g[aâ]ts?|points?\s*de\s*d[eé]g[aâ]ts?|PV|pv|hp)\s+[àa]\s+(?P<tgt_f>Kaelen|Elara|Thorne|Lyra)'
+            r'|'
+            # Forme G : "N dégâts pour <Nom>"
+            r'(?P<dmg_g>\d+)\s*(?:d[eé]g[aâ]ts?|points?\s*de\s*d[eé]g[aâ]ts?|PV|pv|hp)\s+pour\s+(?P<tgt_g>Kaelen|Elara|Thorne|Lyra)'
             r')',
             _re.IGNORECASE,
         )
@@ -727,6 +931,197 @@ class AutogenEngineMixin:
         # Dict {char_name: {"dice": "1d6", "type": "psychique", "label": "Wrathful Smite"}}
         # Stocke les smites en attente d'être appliqués sur la prochaine attaque.
         _pending_smite: dict = {}
+
+        # Set des PJ qui doivent narrer des dégâts reçus (annoncés par le MJ).
+        # Leur prochaine réponse est une narration de douleur — elle ne coûte
+        # AUCUNE ressource hors-tour (ni parole, ni réaction).
+        _pending_damage_narrators: set = set()
+
+        # ── Parseur LLM de directives MJ ─────────────────────────────────────
+        # Pré-filtre léger : on n'appelle le LLM que si le message du MJ contient
+        # des indicateurs de directive mécanique (chiffres, mots-clés).
+        _DIRECTIVE_PREFILTER = _re.compile(
+            r'\d'                                          # un chiffre
+            r'|(?:d[eé]g[aâ]t|pv\b|hp\b|soin|jet|roll'
+            r'|sauvegarde|save\b|attaque|touche|rate)',
+            _re.IGNORECASE,
+        )
+
+        _PARSER_SYSTEM = (
+            "Tu es un parseur JSON pour D&D 5e. "
+            "Analyse le message du MJ et extrais UNIQUEMENT les directives mécaniques "
+            "destinées aux personnages joueurs (Kaelen, Elara, Thorne, Lyra).\n"
+            "Réponds UNIQUEMENT avec un tableau JSON valide — rien d'autre, "
+            "aucun texte avant ni après, aucun markdown.\n\n"
+            "Format de chaque directive :\n"
+            '{"action":"degats"|"soin"|"jet_sauvegarde"|"jet_competence"|"jet_attaque","cible":"Kaelen"|"Elara"|"Thorne"|"Lyra"|"tous","montant":<int>,"type_degat":<str>,"de":<str>,"bonus":<int>,"dc":<int>,"caracteristique":<str>}\n\n'
+            "Champs obligatoires selon l'action :\n"
+            "  degats  → cible, montant  (type_degat optionnel)\n"
+            "  soin    → cible, montant\n"
+            "  jet_sauvegarde → cible, caracteristique, dc\n"
+            "  jet_competence → cible, caracteristique  (dc optionnel)\n"
+            "  jet_attaque    → cible, de, bonus\n\n"
+            "Règles d'inférence de la cible :\n"
+            "  - Si un seul PJ est mentionné dans le message (ou via pronom lui/toi), c'est la cible.\n"
+            "  - Si le MJ dit 'vous' / 'tout le monde', cible = 'tous'.\n"
+            "  - Si aucun PJ identifiable, omets la directive.\n\n"
+            "Exemples :\n"
+            '  "Thorne prend 7 dégâts de force." → [{"action":"degats","cible":"Thorne","montant":7,"type_degat":"force"}]\n'
+            '  "Le fantôme attaque Thorne et lui fait 7 dégâts de force." → [{"action":"degats","cible":"Thorne","montant":7,"type_degat":"force"}]\n'
+            '  "Thorne enlève-toi 3 PV." → [{"action":"degats","cible":"Thorne","montant":3}]\n'
+            '  "Lyra soigne Kaelen de 14 PV." → [{"action":"soin","cible":"Kaelen","montant":14}]\n'
+            '  "Tout le monde fait un jet de Sagesse DC 13." → [{"action":"jet_sauvegarde","cible":"tous","caracteristique":"sagesse","dc":13}]\n'
+            '  "Le dragon rugit." → []\n'
+        )
+
+        def _parse_mj_directives(mj_text: str) -> list:
+            """
+            Extrait les directives mécaniques d'un message MJ.
+            Stratégie en deux passes :
+              1. Regex rapide : couvre les cas simples sans appel LLM.
+              2. LLM (OpenAI SDK) pour les cas ambigus/complexes.
+            Retourne une liste de dicts (vide si aucune directive).
+            """
+            import json as _json
+
+            # Pré-filtre : évite tout traitement pour les messages purement narratifs
+            if not _DIRECTIVE_PREFILTER.search(mj_text):
+                return []
+
+            # ── Passe 1 : regex sans LLM ─────────────────────────────────────
+            _PLAYER_SET = {"kaelen", "elara", "thorne", "lyra"}
+            _NAME_CANON = {"kaelen":"Kaelen","elara":"Elara","thorne":"Thorne","lyra":"Lyra"}
+            _CARAC_MAP  = {
+                "force":"force","str":"force",
+                "dextérité":"dextérité","dex":"dextérité",
+                "constitution":"constitution","con":"constitution",
+                "intelligence":"intelligence","int":"intelligence",
+                "sagesse":"sagesse","wis":"sagesse","sag":"sagesse",
+                "charisme":"charisme","cha":"charisme",
+            }
+            _SKILL_MAP = {
+                "athlétisme":"force","acrobaties":"dextérité",
+                "discrétion":"dextérité","escamotage":"dextérité",
+                "arcanes":"intelligence","histoire":"intelligence",
+                "investigation":"intelligence","nature":"intelligence","religion":"intelligence",
+                "dressage":"sagesse","médecine":"sagesse","perception":"sagesse",
+                "perspicacité":"sagesse","survie":"sagesse",
+                "tromperie":"charisme","intimidation":"charisme",
+                "persuasion":"charisme","représentation":"charisme",
+            }
+            _txt_low = mj_text.lower()
+            _results_regex = []
+
+            # Détection de la cible nommée dans le texte
+            def _find_target(text):
+                for pname in _PLAYER_SET:
+                    if pname in text.lower():
+                        return _NAME_CANON[pname]
+                if any(w in text.lower() for w in ("vous","tout le monde","chacun","groupe")):
+                    return "tous"
+                return None
+
+            # Jet de sauvegarde / jet de constitution / etc.
+            _jet_re = _re.search(
+                r'jet\s+(?:de\s+)?(constitution|force|dextérité|sagesse|intelligence|charisme|'
+                r'con\b|str\b|dex\b|wis\b|int\b|cha\b|sag\b)'
+                r'(?:[^D]*(?:DC|cd|dd)\s*(\d+))?',
+                _txt_low, _re.IGNORECASE)
+            if _jet_re:
+                raw_carac = _jet_re.group(1).lower().strip()
+                carac = _CARAC_MAP.get(raw_carac, raw_carac)
+                dc_raw = _jet_re.group(2)
+                dc = int(dc_raw) if dc_raw else None
+                tgt = _find_target(mj_text)
+                if tgt:
+                    d = {"action": "jet_sauvegarde", "cible": tgt,
+                         "caracteristique": carac, "de": "1d20", "bonus": 0}
+                    if dc:
+                        d["dc"] = dc
+                    _results_regex.append(d)
+
+            # Jet de compétence (ex: "jet d'Arcanes", "jet de Perception")
+            if not _results_regex:
+                _skill_pattern = (
+                    r'jet\s+(?:de\s+|d["\'])?('
+                    + '|'.join(_SKILL_MAP.keys()) + r')'
+                    r'(?:[^D]*(?:DC|cd)\s*(\d+))?'
+                )
+                _skill_re = _re.search(_skill_pattern, _txt_low, _re.IGNORECASE)
+                if _skill_re:
+                    skill_name = _skill_re.group(1).lower().strip()
+                    carac = _SKILL_MAP.get(skill_name, skill_name)
+                    dc_raw = _skill_re.group(2)
+                    dc = int(dc_raw) if dc_raw else None
+                    tgt = _find_target(mj_text)
+                    if tgt:
+                        d = {"action": "jet_competence", "cible": tgt,
+                             "caracteristique": carac, "de": "1d20", "bonus": 0}
+                        if dc:
+                            d["dc"] = dc
+                        _results_regex.append(d)
+
+            # Dégâts numériques explicites
+            _dmg_re = _re.search(
+                r'(\d+)\s*(?:d[eé]g[aâ]ts?|pv\b|points?\s*de\s*vie|hp\b)'
+                r'(?:\s+(?:de\s+)?(\w+))?',
+                _txt_low)
+            if _dmg_re and not _results_regex:
+                montant = int(_dmg_re.group(1))
+                type_d  = _dmg_re.group(2) or ""
+                tgt = _find_target(mj_text)
+                if tgt:
+                    _results_regex.append({"action": "degats", "cible": tgt,
+                                           "montant": montant, "type_degat": type_d})
+
+            # Soin explicite
+            _soin_re = _re.search(
+                r'(?:soign|récup[eè]r|regagn|rend)[^\d]*(\d+)\s*(?:pv\b|points?|hp\b)?',
+                _txt_low)
+            if _soin_re and not _results_regex:
+                montant = int(_soin_re.group(1))
+                tgt = _find_target(mj_text)
+                if tgt:
+                    _results_regex.append({"action": "soin", "cible": tgt,
+                                           "montant": montant})
+
+            if _results_regex:
+                return _results_regex
+
+            # ── Passe 2 : LLM (OpenAI SDK — pas de litellm) ──────────────────
+            try:
+                import httpx as _httpx
+                import openai as _openai
+                _ac  = get_agent_config("Thorne")   # modèle le plus léger
+                _cfg0 = build_llm_config(
+                    _ac.get("model") or _default_model, temperature=0
+                )["config_list"][0]
+                _http = _httpx.Client()
+                _oa   = _openai.OpenAI(
+                    api_key    = _cfg0["api_key"],
+                    base_url   = str(_cfg0.get("base_url", "https://api.openai.com/v1")),
+                    http_client= _http,
+                )
+                from llm_config import _SSL_LOCK as _psl
+                with _psl:
+                    _resp = _oa.chat.completions.create(
+                        model    = _cfg0["model"],
+                        messages = [
+                            {"role": "system", "content": _PARSER_SYSTEM},
+                            {"role": "user",   "content": mj_text},
+                        ],
+                        temperature = 0,
+                        max_tokens  = 400,
+                    )
+                _http.close()
+                _raw = _resp.choices[0].message.content.strip()
+                _raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", _raw).strip()
+                _parsed = _json.loads(_raw)
+                if isinstance(_parsed, list):
+                    return _parsed
+            except Exception as _pe:
+                print(f"[MJParser] Erreur LLM : {_pe}")
+            return []
 
         def _roll_attack_only(char_name: str, regle: str, intention: str, cible: str,
                               mj_note: str) -> dict:
@@ -838,6 +1233,204 @@ class AutogenEngineMixin:
                 f"Ne mentionne PAS les chiffres."
             )
             return "\n".join(lines)
+
+        def _get_prepared_spell_names(char_name: str) -> list[str]:
+            """Retourne la liste des noms de sorts préparés pour l'affichage
+            dans les messages d'erreur SORT IMPOSSIBLE.
+            Lit spells_prepared depuis campaign_state — aucun sort hardcodé."""
+            try:
+                state = load_state()
+                return list(state.get("characters", {}).get(char_name, {})
+                            .get("spells_prepared", []))
+            except Exception:
+                return []
+
+        # ── Traduction FR → EN des noms de sorts (pour le matching) ─────────────
+        # Les agents LLM utilisent les noms français ; les sorts sont stockés en anglais.
+        # Cette table couvre tous les sorts susceptibles d'apparaître en campagne FR.
+        # Clés : formes françaises normalisées (sans accents, lowercase) attendues du LLM.
+        _SPELL_FR_EN: dict[str, str] = {
+            # ── Sorts d'Elara ──
+            "desintegration":           "Disintegrate",
+            "desintegrer":              "Disintegrate",
+            "boule de feu":             "Fireball",
+            "projectile magique":       "Magic Missile",
+            "armure du mage":           "Mage Armor",
+            "armure de mage":           "Mage Armor",
+            "detection de la magie":    "Detect Magic",
+            "detecter la magie":        "Detect Magic",
+            "contresort":               "Counterspell",
+            "contre-sort":              "Counterspell",
+            "dissipation de la magie":  "Dispel Magic",
+            "dissiper la magie":        "Dispel Magic",
+            "porte dimensionnelle":     "Dimension Door",
+            "mur de force":             "Wall of Force",
+            "teleportation":            "Teleport",
+            "mot de pouvoir etourdissant": "Power Word Stun",
+            "mot de pouvoir : etourdissement": "Power Word Stun",
+            "trait de feu":             "Fire Bolt",
+            "rayon de feu":             "Fire Bolt",
+            "prestidigitation":         "Prestidigitation",
+            # ── Sorts de Kaelen ──
+            "soins":                    "Cure Wounds",
+            "soin des blessures":       "Cure Wounds",
+            "faveur divine":            "Divine Favor",
+            "bouclier de la foi":       "Shield of Faith",
+            "restauration partielle":   "Lesser Restoration",
+            "petite restauration":      "Lesser Restoration",
+            "pas brumeux":              "Misty Step",
+            "lumiere du jour":          "Daylight",
+            "protection contre l energie": "Protection from Energy",
+            "protection de l energie":  "Protection from Energy",
+            "bannissement":             "Banishment",
+            # ── Sorts de Lyra ──
+            "lumiere":                  "Light",
+            "resistance":               "Resistance",
+            "benediction":              "Bless",
+            "benedir":                  "Bless",
+            "mot de guerison":          "Healing Word",
+            "mot de soin":              "Healing Word",
+            "stabilisation":            "Spare the Dying",
+            "soins de groupe":          "Mass Cure Wounds",
+            "sanctuaire mortel":        "Death Ward",
+            "grande restauration":      "Greater Restoration",
+            "consecration":             "Hallow",
+            "guerison":                 "Heal",
+            "resurrection":             "Resurrection",
+            # ── Génériques courants ──
+            "bouclier":                 "Shield",
+            "saut":                     "Jump",
+            "chute de plume":           "Feather Fall",
+            "image majeure":            "Major Image",
+            "image mineure":            "Minor Image",
+            "invisibilite":             "Invisibility",
+            "grande invisibilite":      "Greater Invisibility",
+            "vol":                      "Fly",
+            "levitation":               "Levitate",
+            "sphere de feu":            "Fireball",
+            "cone de froid":            "Cone of Cold",
+            "eclair":                   "Lightning Bolt",
+            "chaine d eclairs":         "Chain Lightning",
+            "metamorphose":             "Polymorph",
+            "transmutation superieure": "True Polymorph",
+            "nuage mortel":             "Cloudkill",
+            "nuage incendiaire":        "Incendiary Cloud",
+            "tempete de neige":         "Ice Storm",
+            "blizzard":                 "Ice Storm",
+            "marche sur l eau":         "Water Walk",
+            "communication avec les morts": "Speak with Dead",
+            "communication avec les animaux": "Speak with Animals",
+            "communion avec la nature": "Commune with Nature",
+            "clairvoyance":             "Clairvoyance",
+            "scrutation":               "Scrying",
+            "telekinesie":              "Telekinesis",
+            "suggestion":               "Suggestion",
+            "suggestion de groupe":     "Mass Suggestion",
+            "charme-personne":          "Charm Person",
+            "domination de personne":   "Dominate Person",
+            "domination de monstre":    "Dominate Monster",
+            "peur":                     "Fear",
+            "confusion":                "Confusion",
+            "silence":                  "Silence",
+            "obscurcissement":          "Darkness",
+            "lueurs feeriques":         "Faerie Fire",
+            "mains brulantes":          "Burning Hands",
+            "pas dimensionnel":         "Dimension Door",
+            "portail":                  "Gate",
+            "soin de groupe":           "Mass Cure Wounds",
+            "soin massif":              "Mass Cure Wounds",
+            "rappel a la vie":          "Raise Dead",
+            "animation des morts":      "Animate Dead",
+            "squelette":                "Animate Dead",
+            "zombie":                   "Animate Dead",
+            "convocation d elementaire": "Conjure Elemental",
+            "convocation de demons":    "Conjure Fey",
+            "cercle de mort":           "Circle of Death",
+            "souffle de vie":           "Mass Cure Wounds",
+            "sanctuary":                "Sanctuary",
+            "sanctuaire":               "Sanctuary",
+            "gardiens spirituels":      "Spirit Guardians",
+            "lien divin":               "Divine Bond",
+            "frappe lumineuse":         "Guiding Bolt",
+            "trait lumineux":           "Guiding Bolt",
+            "trappe dimensionnelle":    "Dimension Door",
+            "armure":                   "Mage Armor",
+        }
+
+        def _is_spell_prepared(char_name: str, spell_name: str) -> bool:
+            """Retourne True si spell_name correspond à un sort préparé du personnage.
+
+            Stratégie de correspondance (par ordre de priorité) :
+              1. Égalité exacte après normalisation Unicode + lowercase.
+              2. Le nom du JSON est contenu dans la saisie LLM (ex. "gardiens spirituels"
+                 dans "j'invoque des gardiens spirituels autour de moi").
+              3. La saisie LLM est contenue dans le nom du JSON (ex. "boule de feu" dans
+                 un nom de sort étendu).
+              4. Traduction FR→EN : si la forme française normalisée figure dans
+                 _SPELL_FR_EN, on répète les tests 1-3 avec le nom anglais traduit.
+
+            Les cantrips (level=0) sont TOUJOURS autorisés — ils ne consomment pas de slot
+            et le vrai gardien est l'absence d'emplacement disponible, pas cette liste.
+
+            Si le personnage n'a pas de liste de sorts définie → non restrictif (True).
+            """
+            import unicodedata as _ud
+
+            def _norm(s: str) -> str:
+                """Lowercase + supprime les diacritiques + réduit les espaces."""
+                nfkd = _ud.normalize("NFKD", s)
+                ascii_str = "".join(c for c in nfkd if not _ud.combining(c))
+                return " ".join(ascii_str.lower().split())
+
+            try:
+                state = load_state()
+                # ── Nouvelle structure : spells_prepared = liste de noms anglais ──
+                spell_names = (
+                    state.get("characters", {})
+                    .get(char_name, {})
+                    .get("spells_prepared", None)
+                )
+                if spell_names is None:
+                    return True   # champ absent → pas de restriction
+
+                needle = _norm(spell_name.strip())
+                if not needle:
+                    return True
+
+                # ── Ajouter la traduction FR→EN comme needle alternatif ──────────
+                needle_en = _norm(_SPELL_FR_EN.get(needle, spell_name.strip()))
+                needles = {needle, needle_en}  # set pour dédupliquer si pas de trad
+
+                # Essayer de récupérer le niveau via spell_data (cantrips toujours OK)
+                try:
+                    from spell_data import get_spell as _gs, load_spells as _ls
+                    _ls()
+                except Exception:
+                    _gs = lambda n: None
+
+                for name in spell_names:
+                    sp_name_n = _norm(name)
+                    if not sp_name_n:
+                        continue
+                    for ndl in needles:
+                        match = (
+                            sp_name_n == ndl
+                            or (len(sp_name_n) >= 5 and sp_name_n in ndl)
+                            or (len(ndl) >= 5 and ndl in sp_name_n)
+                        )
+                        if match:
+                            break
+                    else:
+                        continue
+                    # Cantrip (niveau 0) → toujours autorisé sans slot
+                    sp_data = _gs(name)
+                    if sp_data and int(sp_data.get("level", 1)) == 0:
+                        return True
+                    return True   # sort préparé → autorisé
+
+                return False
+            except Exception:
+                return True   # en cas d'erreur, ne pas bloquer
 
         def _execute_action_mechanics(char_name, intention, regle, cible, mj_note, single_attack=False, type_label=""):
             """
@@ -1037,6 +1630,50 @@ class AutogenEngineMixin:
                 is_atk_roll = any(k in r_low for k in ("jet d attaque de sort",
                                                          "attaque de sort","rayon"))
                 dc_val    = _extract_dc(regle)
+
+                # ── Vérification liste de sorts préparés ─────────────────────
+                # Extraire le nom du sort depuis intention ou regle.
+                # On cherche le premier mot significatif après les mots-clés de sort.
+                if not is_cantrip:
+                    _SORT_PREFIX_KW = (
+                        # Formules explicites
+                        "sort :", "sort:", "sort de", "magie :",
+                        # Verbes de lancement (ordre du plus spécifique au plus général)
+                        "j'invoque", "j'appelle", "je convoque", "j'incante",
+                        "j'utilise", "j'active", "je déclenche", "je projette",
+                        "je lance", "lance", "incante", "utilise", "cast",
+                    )
+                    _spell_name_candidate = intention.strip()
+                    for _pfx in _SORT_PREFIX_KW:
+                        if _pfx in intention.lower():
+                            _spell_name_candidate = intention.lower().split(_pfx, 1)[-1].strip()
+                            # Retire l'article initial (le/la/les/un/une/des)
+                            import re as _re_sp
+                            _spell_name_candidate = _re_sp.sub(
+                                r'^(le |la |les |l\'|un |une |des )', '',
+                                _spell_name_candidate
+                            )
+                            break
+                    # Tronquer à 50 chars et nettoyer ponctuation
+                    _spell_name_candidate = _spell_name_candidate[:50].split("(")[0].split(",")[0].split(".")[0].strip()
+
+                    if _spell_name_candidate and not _is_spell_prepared(char_name, _spell_name_candidate):
+                        _avail = _get_prepared_spell_names(char_name)
+                        _avail_str = ", ".join(_avail) if _avail else "aucun sort préparé trouvé"
+                        _no_prep_msg = (
+                            f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                            f"« {_spell_name_candidate} » n'est pas dans la liste de sorts "
+                            f"préparés de {char_name}. Ce sort ne peut pas être lancé aujourd'hui.\n\n"
+                            f"[SORTS AUTORISÉS POUR {char_name.upper()}]\n"
+                            f"{_avail_str}\n\n"
+                            f"[INSTRUCTION]\n"
+                            f"Choisis UNIQUEMENT parmi les sorts listés ci-dessus. "
+                            f"Déclare une nouvelle action avec [ACTION]."
+                        )
+                        return (
+                            "[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                            + _no_prep_msg
+                        )
 
                 results.append(f"✨ {char_name} — {regle} → {cible}")
 
@@ -1393,6 +2030,9 @@ class AutogenEngineMixin:
                 + narrative_hint
             )
 
+        # Dict partagé par patched_receive pour la détection de copie inter-agents
+        _last_player_messages: dict[str, str] = {}
+
         def patched_receive(self_mgr, message, sender, request_reply=None, silent=False):
 
             def _strip_stars(text: str) -> str:
@@ -1418,6 +2058,58 @@ class AutogenEngineMixin:
                 text = _re_tts.sub(r',\s*,', ',', text)
                 text = _re_tts.sub(r'\s{2,}', ' ', text)
                 return text.strip()
+
+            def _split_sentences(text: str) -> list:
+                """
+                Découpe un texte en phrases courtes pour le TTS.
+                Chaque phrase est jouée dès qu'elle est synthétisée → latence
+                perçue réduite sur les longues répliques.
+
+                Règles :
+                  - Coupe après . ! ? ; suivi d'une espace + majuscule/guillemet
+                  - Ignore les abréviations courantes (M. Dr. etc.)
+                  - Fusionne les fragments < 18 chars avec le suivant
+                  - Retourne au moins un élément (le texte entier si non découpable)
+                """
+                import re as _re_s
+                if not text or len(text) < 40:
+                    return [text] if text else []
+
+                # Protéger les abréviations connues pour ne pas les couper
+                _ABBREVS = r"(?:M|Mme|Dr|Prof|St|Ste|Mr|Jr|Sr|vol|p|pp|art|no|No|fig|cf|vs|env|hab|av|apr|J\.-C|etc)\."
+                # Marqueur temporaire
+                protected = _re_s.sub(_ABBREVS, lambda m: m.group().replace(".", "\x00"), text)
+
+                # Couper sur . ! ? ; suivi d'espace + majuscule ou guillemet ouvrant
+                parts = _re_s.split(r'(?<=[.!?;])\s+(?=[A-ZÀÂÄÉÈÊËÎÏÔÙÛÜÇ"«\u2019])', protected)
+
+                # Restaurer les points protégés
+                parts = [p.replace("\x00", ".").strip() for p in parts if p.strip()]
+
+                # Fusionner les fragments trop courts avec le suivant
+                merged = []
+                buf = ""
+                for p in parts:
+                    buf = (buf + " " + p).strip() if buf else p
+                    if len(buf) >= 18:
+                        merged.append(buf)
+                        buf = ""
+                if buf:
+                    if merged:
+                        merged[-1] = (merged[-1] + " " + buf).strip()
+                    else:
+                        merged.append(buf)
+
+                return merged if merged else [text]
+
+            def _enqueue_tts(text: str, char_name: str):
+                """Découpe text en phrases et enfile chaque phrase séparément
+                dans audio_queue. Cela permet à Piper/edge-tts de commencer
+                la synthèse de la phrase 1 pendant que la phrase 2 est en attente,
+                réduisant la latence perçue sur les longues répliques."""
+                cleaned = _tts_clean(text)
+                for sentence in _split_sentences(cleaned):
+                    _app.audio_queue.put((sentence, char_name))
             if isinstance(message, dict):
                 content    = message.get("content", "")
                 name       = message.get("name", sender.name)
@@ -1432,6 +2124,49 @@ class AutogenEngineMixin:
                 is_system = True
             if content and str(content).startswith("[RÉSULTAT SYSTÈME]"):
                 is_system = True
+
+            # ── GARDE-FOU ANTI-COPIE : détecte si un agent répète le message précédent ──
+            # Cible principalement les petits modèles (Groq/llama) qui ont tendance à
+            # copier le dernier message du contexte quand ils n'ont rien à ajouter.
+            # Seuil : >60% de mots communs entre le message de l'agent et le dernier
+            # message d'un autre joueur → on rejette et on injecte [SILENCE].
+            if (not is_system
+                    and name in PLAYER_NAMES
+                    and content
+                    and str(content).strip() not in ("[SILENCE]", "")):
+                _prev_msg = _last_player_messages.get("_last_other_" + name, "")
+                if _prev_msg:
+                    import re as _re_copy
+                    def _word_set(t):
+                        return set(_re_copy.findall(r"[a-zA-ZÀ-ÿ]{4,}", t.lower()))
+                    _cur_words  = _word_set(str(content))
+                    _prev_words = _word_set(_prev_msg)
+                    if _cur_words and _prev_words:
+                        _common = len(_cur_words & _prev_words)
+                        _ratio  = _common / max(len(_prev_words), 1)
+                        if _ratio > 0.60:
+                            _app.msg_queue.put({
+                                "sender": "⚠️ Règle",
+                                "text": (
+                                    f"[COPIE DÉTECTÉE] {name} a reproduit ~{int(_ratio*100)}% "
+                                    f"du message précédent. Message ignoré → [SILENCE] injecté."
+                                ),
+                                "color": "#e67e22",
+                            })
+                            # On injecte un SILENCE à la place dans le contexte autogen
+                            _original_receive(
+                                self_mgr,
+                                {"role": "assistant", "content": "[SILENCE]", "name": name},
+                                sender, request_reply=False, silent=True,
+                            )
+                            return
+
+                # Mémorise ce message pour la vérification du prochain agent
+                _last_player_messages["_last_other_" + name] = str(content)
+                # Màj aussi pour tous les autres joueurs (ils voient le msg de `name`)
+                for _pn in PLAYER_NAMES:
+                    if _pn != name:
+                        _last_player_messages["_last_other_" + _pn] = str(content)
 
             # ── FILTRE INACTIF : agent désactivé en cours de session ───────
             # Si le personnage n'est plus dans la scène, on ignore son message
@@ -1459,6 +2194,14 @@ class AutogenEngineMixin:
             # ── FILTRE COMBAT : PJ hors-tour tente une action ──────────────
             # Bloque tout [ACTION] ou tentative d'action physique si ce n'est
             # pas le tour du PJ. Autorise uniquement : réaction D&D, parole brève.
+            # Exception : un [ACTION] Type: Réaction est toujours autorisé hors-tour
+            # (Uncanny Dodge, Bouclier, Attaque d'opportunité, Contresort…).
+            _content_str_offturn = str(content) if content else ""
+            _action_match_offturn = _action_pattern.search(_content_str_offturn)
+            _is_reaction_block = (
+                _action_match_offturn is not None
+                and "réaction" in (_action_match_offturn.group("type") or "").lower()
+            )
             _is_offturn_action = (
                 not is_system
                 and not is_mj_roll_response
@@ -1466,7 +2209,8 @@ class AutogenEngineMixin:
                 and name in PLAYER_NAMES
                 and name != COMBAT_STATE.get("active_combatant")
                 and content
-                and _action_pattern.search(str(content))
+                and _action_match_offturn is not None
+                and not _is_reaction_block   # les réactions hors-tour sont légitimes
             )
             if _is_offturn_action:
                 _block_msg = (
@@ -1555,6 +2299,30 @@ class AutogenEngineMixin:
                 # Retire la balise du contenu affiché — ne montrer que le roleplay
                 clean_content = _sort_pattern.sub("", str(content)).strip()
 
+                # ── Vérification liste de sorts préparés ───────────────────
+                if not _is_spell_prepared(name, spell_name):
+                    _avail3 = _get_prepared_spell_names(name)
+                    _avail3_str = ", ".join(_avail3) if _avail3 else "aucun sort préparé trouvé"
+                    _not_prepared_msg = (
+                        f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                        f"{spell_name} n'est pas dans la liste de sorts préparés de {name}. "
+                        f"Ce sort ne peut pas être lancé aujourd'hui.\n\n"
+                        f"[SORTS AUTORISÉS POUR {name.upper()}]\n"
+                        f"{_avail3_str}\n\n"
+                        f"[INSTRUCTION]\n"
+                        f"Choisis UNIQUEMENT parmi les sorts listés ci-dessus. "
+                        f"Ne tente PAS de lancer {spell_name} — déclare une nouvelle action avec [ACTION]."
+                    )
+                    _app.msg_queue.put({"sender": "⚙️ Système",
+                                        "text": _not_prepared_msg, "color": "#cc4444"})
+                    _original_receive(
+                        self_mgr,
+                        {"role": "user", "content": _not_prepared_msg, "name": "Alexis_Le_MJ"},
+                        sender, request_reply=False, silent=True,
+                    )
+                    _original_receive(self_mgr, message, sender, request_reply, silent)
+                    return
+
                 # ── Vérification slots AVANT widget MJ ─────────────────
                 if spell_level and spell_level > 0:
                     _state_check = load_state()
@@ -1590,10 +2358,12 @@ class AutogenEngineMixin:
 
                 def _resume_cb(confirmed, actual_level,
                                _ev=_spell_confirm_event, _res=_spell_confirm_result):
+                    _app._unregister_approval_event(_ev)
                     _res["confirmed"]    = confirmed
                     _res["actual_level"] = actual_level
                     _ev.set()
 
+                _app._register_approval_event(_spell_confirm_event)
                 _app.msg_queue.put({
                     "action":          "spell_confirm",
                     "char_name":       name,
@@ -1609,10 +2379,11 @@ class AutogenEngineMixin:
                     _app.msg_queue.put({"sender": name, "text": clean_content,
                                         "color": _app.CHAR_COLORS.get(name, "#e0e0e0")})
                     log_tts_start(name, clean_content)
-                    _app.audio_queue.put((_tts_clean(clean_content), name))
+                    _enqueue_tts(clean_content, name)
 
                 # Bloque jusqu'à la décision du MJ (max 5 min)
                 _spell_confirm_event.wait(timeout=300)
+                _app._unregister_approval_event(_spell_confirm_event)  # nettoyage si timeout
 
                 if not _spell_confirm_result.get("confirmed", False):
                     # Sort refusé : on laisse passer le message original mais sans effet
@@ -1645,7 +2416,7 @@ class AutogenEngineMixin:
                         "color":  _app.CHAR_COLORS.get(name, "#e0e0e0"),
                     })
                     log_tts_start(name, clean_content)
-                    _app.audio_queue.put((_tts_clean(clean_content), name))
+                    _enqueue_tts(clean_content, name)
 
                 # Collecte toutes les sous-actions de tous les blocs [ACTION]
                 _all_subactions: list[dict] = []
@@ -1667,16 +2438,28 @@ class AutogenEngineMixin:
 
                     def _sub_cb(confirmed, mj_note="",
                                 _ev=_sub_ev, _res=_sub_res):
+                        _app._unregister_approval_event(_ev)
                         _res["confirmed"] = confirmed
                         _res["mj_note"]   = mj_note
                         _ev.set()
 
                     _pre_is_spell = any(
                         k in _sub["regle"].lower() or k in _sub["intention"].lower()
-                        for k in ("sort","magie","incant","boule","projectile",
-                                  "éclair","feu","soin","soigne","heal","cure",
-                                  "guéri","restaure","parole","dard","rayon",
-                                  "projectile magique","missile")
+                        for k in (
+                            # Termes généraux
+                            "sort", "magie", "incant",
+                            # Verbes d'invocation (manquaient — source du bug Lyra)
+                            "invoque", "appelle", "convoque", "projette", "déclenche",
+                            # Sorts offensifs
+                            "boule", "projectile", "éclair", "feu", "dard", "rayon",
+                            "missile", "flamme", "froid", "nécro", "acide", "tonnerre",
+                            # Sorts de soin / support
+                            "soin", "soigne", "heal", "cure", "guéri", "restaure",
+                            "parole", "bénédic", "sanctif", "gardien", "arme spirit",
+                            # Sorts de contrôle / défense
+                            "bannit", "contresort", "dissip", "mur de", "bouclier",
+                            "protection", "résistance", "balise",
+                        )
                     )
                     _pre_lvl = None
                     if _pre_is_spell:
@@ -1723,6 +2506,52 @@ class AutogenEngineMixin:
                             _sub_ev.set()
                             continue
 
+                    # ── Vérification sorts préparés (pré-check [ACTION]) ─────
+                    # Même logique que dans _execute_action_mechanics mais ici
+                    # on intercepte AVANT d'envoyer la carte de confirmation au MJ.
+                    if _pre_is_spell and _pre_lvl and _pre_lvl > 0:
+                        _SORT_PREFIX_KW = (
+                            "sort :", "sort:", "sort de", "magie :",
+                            "j'invoque", "j'appelle", "je convoque", "j'incante",
+                            "j'utilise", "j'active", "je déclenche", "je projette",
+                            "je lance", "lance", "incante", "utilise", "cast",
+                        )
+                        _pre_spell_candidate = _sub["intention"].strip()
+                        for _pfx in _SORT_PREFIX_KW:
+                            if _pfx in _sub["intention"].lower():
+                                _pre_spell_candidate = _sub["intention"].lower().split(_pfx, 1)[-1].strip()
+                                import re as _re_sp2
+                                _pre_spell_candidate = _re_sp2.sub(
+                                    r'^(le |la |les |l\'|un |une |des )', '',
+                                    _pre_spell_candidate
+                                )
+                                break
+                        _pre_spell_candidate = _pre_spell_candidate[:50].split("(")[0].split(",")[0].split(".")[0].strip()
+
+                        if _pre_spell_candidate and not _is_spell_prepared(name, _pre_spell_candidate):
+                            _avail2 = _get_prepared_spell_names(name)
+                            _avail2_str = ", ".join(_avail2) if _avail2 else "aucun sort préparé trouvé"
+                            _no_prep_fb = (
+                                f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                                f"« {_pre_spell_candidate} » n'est pas dans la liste de sorts "
+                                f"préparés de {name}. Ce sort ne peut pas être lancé aujourd'hui.\n\n"
+                                f"[SORTS AUTORISÉS POUR {name.upper()}]\n"
+                                f"{_avail2_str}\n\n"
+                                f"[INSTRUCTION]\n"
+                                f"Choisis UNIQUEMENT parmi les sorts listés ci-dessus. "
+                                f"Déclare une nouvelle action avec [ACTION]."
+                            )
+                            _app.msg_queue.put({"sender": "⚙️ Système",
+                                                "text": _no_prep_fb, "color": "#cc4444"})
+                            _original_receive(
+                                self_mgr,
+                                {"role": "user", "content": _no_prep_fb, "name": "Alexis_Le_MJ"},
+                                sender, request_reply=False, silent=True,
+                            )
+                            _sub_ev.set()
+                            continue
+
+                    _app._register_approval_event(_sub_ev)
                     _app.msg_queue.put({
                         "action":          "action_confirm",
                         "char_name":       name,
@@ -1737,6 +2566,7 @@ class AutogenEngineMixin:
 
                     # Bloque jusqu'à la décision du MJ (max 10 min par sous-action)
                     _sub_ev.wait(timeout=600)
+                    _app._unregister_approval_event(_sub_ev)  # nettoyage si timeout/annulation
 
                     _confirmed = _sub_res.get("confirmed", False)
                     _mj_note   = _sub_res.get("mj_note", "")
@@ -1784,10 +2614,12 @@ class AutogenEngineMixin:
 
                             def _hit_cb(hit, mj_note_hit="",
                                         _ev=_hit_ev, _res=_hit_res):
+                                _app._unregister_approval_event(_ev)
                                 _res["hit"]  = hit
                                 _res["note"] = mj_note_hit
                                 _ev.set()
 
+                            _app._register_approval_event(_hit_ev)
                             _app.msg_queue.put({
                                 "action":          "result_confirm",
                                 "char_name":       name,
@@ -1797,6 +2629,7 @@ class AutogenEngineMixin:
                                 "resume_callback": _hit_cb,
                             })
                             _hit_ev.wait(timeout=600)
+                            _app._unregister_approval_event(_hit_ev)
 
                             _hit       = _hit_res.get("hit", False)
                             _hit_note  = _hit_res.get("note", "")
@@ -1884,6 +2717,7 @@ class AutogenEngineMixin:
 
                                 def _smite_cb(apply_it, mj_note_sm="",
                                               _ev=_smite_ev, _res=_smite_res):
+                                    _app._unregister_approval_event(_ev)
                                     _res["apply"] = apply_it
                                     _res["note"]  = mj_note_sm
                                     _ev.set()
@@ -1909,6 +2743,7 @@ class AutogenEngineMixin:
                                     f"Slots disponibles : {_slots_avail_str}\n"
                                     f"L'attaque a touché — appliquer le smite ?"
                                 )
+                                _app._register_approval_event(_smite_ev)
                                 _app.msg_queue.put({
                                     "action":          "result_confirm",
                                     "char_name":       name,
@@ -1918,6 +2753,7 @@ class AutogenEngineMixin:
                                     "resume_callback": _smite_cb,
                                 })
                                 _smite_ev.wait(timeout=600)
+                                _app._unregister_approval_event(_smite_ev)
 
                                 if _smite_res.get("apply", False):
                                     _smite_used = _pending_smite.pop(name)
@@ -1980,6 +2816,7 @@ class AutogenEngineMixin:
 
                             def _dmg_cb(mj_note_dmg="",
                                         _ev=_dmg_ev, _res=_dmg_note):
+                                _app._unregister_approval_event(_ev)
                                 _res["note"] = mj_note_dmg
                                 _ev.set()
 
@@ -1989,6 +2826,7 @@ class AutogenEngineMixin:
                                 .replace("[RÉSULTAT SYSTÈME — DÉGÂTS CONFIRMÉS PAR MJ]\n","")
                                 .strip()
                             )
+                            _app._register_approval_event(_dmg_ev)
                             _app.msg_queue.put({
                                 "action":          "result_confirm",
                                 "char_name":       name,
@@ -1998,6 +2836,7 @@ class AutogenEngineMixin:
                                 "resume_callback": _dmg_cb,
                             })
                             _dmg_ev.wait(timeout=600)
+                            _app._unregister_approval_event(_dmg_ev)
 
                             _dmg_mj_note = _dmg_note.get("note", "")
                             if _dmg_mj_note:
@@ -2060,12 +2899,14 @@ class AutogenEngineMixin:
                             if _is_spell_attack:
                                 def _result_cb(hit, mj_note_res="",
                                                _ev=_result_ev, _res=_result_note):
+                                    _app._unregister_approval_event(_ev)
                                     _res["hit"]  = hit
                                     _res["note"] = mj_note_res
                                     _ev.set()
                             else:
                                 def _result_cb(mj_note_res="",
                                                _ev=_result_ev, _res=_result_note):
+                                    _app._unregister_approval_event(_ev)
                                     _res["note"] = mj_note_res
                                     _ev.set()
 
@@ -2073,6 +2914,7 @@ class AutogenEngineMixin:
                             # Autre action → carte Continuer (mode="damage")
                             _result_mode = "attack" if _is_spell_attack else "damage"
 
+                            _app._register_approval_event(_result_ev)
                             _app.msg_queue.put({
                                 "action":          "result_confirm",
                                 "char_name":       name,
@@ -2082,6 +2924,7 @@ class AutogenEngineMixin:
                                 "resume_callback": _result_cb,
                             })
                             _result_ev.wait(timeout=600)
+                            _app._unregister_approval_event(_result_ev)
 
                             _res_mj_note = _result_note.get("note", "")
 
@@ -2198,139 +3041,121 @@ class AutogenEngineMixin:
                     and not _action_pattern.search(str(content))):
                 _app.root.after(0, lambda n=name: _app._on_pc_turn_ended(n))
 
-            # ── DÉGÂTS MJ → héros : mise à jour HP automatique ───────────────
-            # Quand le MJ annonce qu'un héros prend des dégâts, on appelle
-            # update_hp() immédiatement et on injecte un [RÉSULTAT SYSTÈME]
-            # pour que le personnage concerné (et les autres) le voient.
+            # ── DIRECTIVES MJ → héros : parseur LLM ──────────────────────────
+            # Remplace les anciens blocs regex (dégâts + demande de jet).
+            # Un LLM rapide (flash/groq, température 0) parse le message du MJ
+            # et retourne un JSON structuré. On injecte une [DIRECTIVE SYSTÈME]
+            # que l'agent cible exécutera via ses outils (update_hp, roll_dice…).
             if (not is_system
                     and name == "Alexis_Le_MJ"
-                    and content
-                    and _damage_pattern.search(str(content))):
-                from state_manager import update_hp as _update_hp
-                _dmg_hits = []
-                _content_str_dmg = str(content)
-                _ctx_names = list(dict.fromkeys(
-                    m.group(1).capitalize() for m in _PC_NAME_RE.finditer(_content_str_dmg)
-                ))
-                _ctx_target_d = _ctx_names[0] if len(_ctx_names) == 1 else None
-                for _m in _damage_pattern.finditer(_content_str_dmg):
-                    if _m.group("tgt_a") and _m.group("dmg_a"):
-                        _dmg_hits.append((_m.group("tgt_a"), int(_m.group("dmg_a"))))
-                    elif _m.group("tgt_b") and _m.group("dmg_b"):
-                        _dmg_hits.append((_m.group("tgt_b"), int(_m.group("dmg_b"))))
-                    elif _m.group("tgt_c") and _m.group("dmg_c"):
-                        _dmg_hits.append((_m.group("tgt_c"), int(_m.group("dmg_c"))))
-                    elif _m.group("dmg_d") and _ctx_target_d:
-                        _dmg_hits.append((_ctx_target_d, int(_m.group("dmg_d"))))
-                for _tgt, _dmg in _dmg_hits:
-                    _hp_result = _update_hp(_tgt, -_dmg)
-                    _feedback = (
-                        f"[RÉSULTAT SYSTÈME — DÉGÂTS]\n"
-                        f"{_hp_result}\n\n"
-                        f"[INSTRUCTION NARRATIVE]\n"
-                        f"{_tgt}, narre en 1-2 phrases comment tu encaisses ou réagis "
-                        f"à ces {_dmg} dégâts. Pas de chiffres — décris la douleur, "
-                        f"le choc, ta posture de combat."
+                    and content):
+                _directives = _parse_mj_directives(str(content))
+                for _d in _directives:
+                    _d_action = _d.get("action", "")
+                    _d_cible  = _d.get("cible", "")
+                    # Expand "tous" en liste de PJ actifs
+                    _d_targets = (
+                        [n for n in PLAYER_NAMES if n in [a.name for a in groupchat.agents]]
+                        if _d_cible == "tous"
+                        else [_d_cible] if _d_cible in PLAYER_NAMES
+                        else []
                     )
-                    _app.msg_queue.put({
-                        "sender": "⚙️ Système",
-                        "text":   _feedback,
-                        "color":  "#ef9a9a",
-                    })
-                    # Rafraîchit l'UI des stats de personnage si disponible
-                    try:
-                        _app.root.after(0, _app._refresh_char_stats)
-                    except Exception:
-                        pass
-                    # Sync tracker de combat si ouvert
-                    try:
-                        if _app._combat_tracker is not None:
-                            _app.root.after(0, _app._combat_tracker.sync_pc_hp_from_state)
-                    except Exception:
-                        pass
-                    # Injecte dans le contexte autogen pour que les agents voient la MAJ
-                    _original_receive(
-                        self_mgr,
-                        {"role": "user", "content": _feedback, "name": "Alexis_Le_MJ"},
-                        sender,
-                        request_reply=False,
-                        silent=True,
-                    )
-
-            # ── DEMANDE DE JET DU MJ → héros : exécution automatique ────────────
-            # Quand le MJ demande explicitement un jet à un personnage joueur
-            # ("Kaelen, lance tes dés de dégâts", "Thorne, attaque !", etc.),
-            # on l'exécute immédiatement en Python et on injecte le résultat.
-            # Patterns : "Lance X", "Roule X", "Jet de X", "Roll X", nom + verbe de jet
-            _MJ_DICE_REQUEST = _re.compile(
-                r"(?P<char>Kaelen|Elara|Thorne|Lyra)"
-                r"[^.!?\n]{0,40}"
-                r"(?:lance|lancer|roule|rouler|fais?|effectue?|tire|roll|jet\s+de?|dégâts?|damage|attaque\s+(?:de\s+)?(?:dégâts?)?)"
-                r"[^.!?\n]{0,60}"
-                r"(?P<dice>\d+d\d+(?:\s*[+\-]\s*\d+)?)"
-                r"|"
-                r"(?P<char2>Kaelen|Elara|Thorne|Lyra)"
-                r"[^.!?\n]{0,40}"
-                r"(?:lance|roule|fais?|effectue?|tire|roll)\s+"
-                r"(?:tes?|les?|des?)?\s*"
-                r"(?:dés?|dégâts?|damage|attaque|jet|roll)"
-                r"|"
-                r"(?:lance|roule|roll|jet\s+de?)\s+"
-                r"(?:tes?|les?|des?|ses?)?\s*"
-                r"(?:dés?\s+de\s+)?(?:dégâts?|damage)"
-                r"[^.!?\n]{0,20}"
-                r"(?P<char3>Kaelen|Elara|Thorne|Lyra)"
-                ,
-                _re.IGNORECASE
-            )
-            if (not is_system
-                    and name == "Alexis_Le_MJ"
-                    and content
-                    and _MJ_DICE_REQUEST.search(str(content))):
-                from state_manager import roll_dice as _roll_dice_auto
-                _mj_content = str(content)
-                for _m in _MJ_DICE_REQUEST.finditer(_mj_content):
-                    _char = (_m.group("char") or _m.group("char2") or _m.group("char3") or "").strip()
-                    if not _char:
+                    if not _d_targets:
                         continue
-                    _dice_str = (_m.group("dice") if "dice" in _m.groupdict() and _m.group("dice") else None)
 
-                    if _dice_str:
-                        # Dice formula explicite dans la demande → on l'utilise
-                        _d_parts = _re.match(r"(\d+)d(\d+)(?:\s*([+\-]\s*\d+))?", _dice_str)
-                        if _d_parts:
-                            _dn, _df = int(_d_parts.group(1)), int(_d_parts.group(2))
-                            _db = int((_d_parts.group(3) or "0").replace(" ", "")) if _d_parts.group(3) else 0
-                            _dice_formula = f"{_dn}d{_df}"
-                            _result = _roll_dice_auto(_char, _dice_formula, _db)
+                    for _tgt in _d_targets:
+                        import json as _json_d
+
+                        if _d_action == "degats":
+                            _montant = int(_d.get("montant", 0))
+                            _type_d  = _d.get("type_degat", "")
+                            _type_str = f" de {_type_d}" if _type_d else ""
+                            _instr = (
+                                f"[DIRECTIVE SYSTÈME — DÉGÂTS] ⚠️ APPEL D'OUTIL OBLIGATOIRE\n"
+                                f"Destinataire : {_tgt} UNIQUEMENT\n"
+                                f"{_montant} dégâts{_type_str}\n\n"
+                                f"▶ {_tgt} : tu DOIS appeler update_hp maintenant (règle 4 exception).\n"
+                                f"   Appel exact : update_hp("
+                                f"character_name=\"{_tgt}\", amount=-{_montant})\n\n"
+                                f"Après le retour de l'outil, narre en 1-2 phrases comment tu "
+                                f"encaisses le coup. Pas de chiffres.\n"
+                                f"⚠️ Cette réponse NE COÛTE AUCUNE ressource hors-tour."
+                            )
+                            _pending_damage_narrators.add(_tgt)
+                            # Rafraîchit UI après que l'agent aura appelé update_hp
+                            try:
+                                _app.root.after(500, _app._refresh_char_stats)
+                            except Exception:
+                                pass
+                            try:
+                                if _app._combat_tracker is not None:
+                                    _app.root.after(600, _app._combat_tracker.sync_pc_hp_from_state)
+                            except Exception:
+                                pass
+
+                        elif _d_action == "soin":
+                            _montant = int(_d.get("montant", 0))
+                            _directive_json = _json_d.dumps(
+                                {"action":"soin","cible":_tgt,"montant":_montant},
+                                ensure_ascii=False
+                            )
+                            _instr = (
+                                f"[DIRECTIVE SYSTÈME — SOIN]\n"
+                                f"{_directive_json}\n\n"
+                                f"{_tgt} : appelle update_hp(character_name=\"{_tgt}\", amount=+{_montant}) "
+                                f"IMMÉDIATEMENT — AVANT tout texte.\n"
+                                f"Ensuite, narre en 1 phrase ta réaction au soin."
+                            )
+
+                        elif _d_action in ("jet_sauvegarde", "jet_competence", "jet_attaque"):
+                            _carac  = _d.get("caracteristique", "")
+                            _dc     = _d.get("dc")
+                            _de     = _d.get("de", "1d20")
+                            _bonus  = int(_d.get("bonus", 0))
+                            _dc_str = f" contre DC {_dc}" if _dc else ""
+                            _action_label = {
+                                "jet_sauvegarde": "Jet de sauvegarde",
+                                "jet_competence": "Jet de compétence",
+                                "jet_attaque":    "Jet d'attaque",
+                            }.get(_d_action, "Jet")
+                            # Lookup du bonus réel depuis les stats si bonus=0 non spécifié
+                            _real_bonus = _bonus
+                            if _real_bonus == 0 and _tgt in _CHAR_MECHANICS:
+                                _stats = _CHAR_MECHANICS[_tgt]
+                                _carac_low = _carac.lower()
+                                _real_bonus = (
+                                    _stats.get("saves", {}).get(_carac_low)
+                                    or _stats.get("skills", {}).get(_carac_low)
+                                    or 0
+                                )
+                            _directive_json = _json_d.dumps(_d, ensure_ascii=False)
+                            _instr = (
+                                f"[DIRECTIVE SYSTÈME — JET] ⚠️ APPEL D'OUTIL OBLIGATOIRE\n"
+                                f"Destinataire : {_tgt} UNIQUEMENT\n"
+                                f"{_action_label} de {_carac}{_dc_str}\n\n"
+                                f"▶ {_tgt} : tu DOIS appeler roll_dice maintenant (règle 4 exception).\n"
+                                f"   Appel exact : roll_dice("
+                                f"character_name=\"{_tgt}\", "
+                                f"dice_type=\"{_de}\", "
+                                f"bonus={_real_bonus})\n\n"
+                                f"Après le résultat du dé, narre en 1 phrase comment "
+                                f"{_tgt} vit physiquement ce moment. "
+                                f"Ne mentionne pas le chiffre du résultat."
+                            )
+
                         else:
                             continue
-                    else:
-                        # Pas de formule explicite → dés de dégâts par défaut du personnage
-                        _cm = _CHAR_MECHANICS.get(_char, {})
-                        _dn, _df, _db = _cm.get("dmg_melee", (1, 8, 0))
-                        _dice_formula = f"{_dn}d{_df}"
-                        _result = _roll_dice_auto(_char, _dice_formula, _db)
 
-                    _auto_feedback = (
-                        f"[RÉSULTAT SYSTÈME — JET AUTOMATIQUE]\n"
-                        f"{_char} → {_dice_formula} : {_result}"
-                    )
-                    _app.msg_queue.put({
-                        "sender": f"🎲 Dés ({_char})",
-                        "text":   _result,
-                        "color":  "#4fc3f7",
-                    })
-                    _chat_log.log_dice(_char, _dice_formula, _result)
-                    _original_receive(
-                        self_mgr,
-                        {"role": "user", "content": _auto_feedback, "name": "Alexis_Le_MJ"},
-                        sender,
-                        request_reply=False,
-                        silent=True,
-                    )
-                    break  # un seul jet auto par message MJ
-
+                        _app.msg_queue.put({
+                            "sender": "⚙️ Système",
+                            "text":   _instr,
+                            "color":  "#ef9a9a" if _d_action == "degats" else "#4fc3f7",
+                        })
+                        _original_receive(
+                            self_mgr,
+                            {"role": "user", "content": _instr, "name": "Alexis_Le_MJ"},
+                            sender, request_reply=False, silent=True,
+                        )
             # Appel normal
             _original_receive(self_mgr, message, sender, request_reply, silent)
 
@@ -2359,6 +3184,8 @@ class AutogenEngineMixin:
             # ── SUIVI COMBAT : marque la ressource hors-tour consommée ──────────
             # Classifie le contenu pour consommer réaction ou parole (ou les deux).
             # Les appels d'outils demandés par le MJ (roll_dice, etc.) sont exemptés.
+            # Les narrations de dégâts reçus (_pending_damage_narrators) sont aussi
+            # exemptées : ce n'est pas une action du personnage, juste un état.
             if (not is_system
                     and not is_mj_roll_response
                     and COMBAT_STATE["active"]
@@ -2367,48 +3194,53 @@ class AutogenEngineMixin:
                     and content
                     and str(content).strip() != "[SILENCE]"):
 
-                _content_str = str(content)
+                # Narration de dégâts reçus → aucune ressource consommée
+                if name in _pending_damage_narrators:
+                    _pending_damage_narrators.discard(name)
+                    # Pas de tracking de parole/réaction pour cette réponse
+                else:
+                    _content_str = str(content)
 
-                # Déclencheurs mécaniques D&D → consomme la RÉACTION
-                _REACTION_TRIGGER = _re.compile(
-                    r"\b(r[eé]action|attaque d.opportunit[eé]|bouclier|riposte"
-                    r"|pas de c[oô]t[eé]|sort de r[eé]action|contre-attaque"
-                    r"|j.utilise (ma|mon) action de r[eé]action"
-                    r"|j.interpose|frappe en r[eé]action)\b",
-                    _re.IGNORECASE
-                )
-                # Parole explicite → consomme la PAROLE
-                _SPEECH_TRIGGER = _re.compile(
-                    r'[«»\"\u201c\u201d]'                        # guillemets
-                    r'|\bje (crie|hurle|chuchote|dis|murmure|siffle|avertis|lance un cri|lance un mot)\b'
-                    r'|\b(attention|garde[sz]?-vous|derrière|à droite|à gauche|recule[sz]?|fuyez)\b',
-                    _re.IGNORECASE
-                )
+                    # Déclencheurs mécaniques D&D → consomme la RÉACTION
+                    _REACTION_TRIGGER = _re.compile(
+                        r"\b(r[eé]action|attaque d.opportunit[eé]|bouclier|riposte"
+                        r"|pas de c[oô]t[eé]|sort de r[eé]action|contre-attaque"
+                        r"|j.utilise (ma|mon) action de r[eé]action"
+                        r"|j.interpose|frappe en r[eé]action)\b",
+                        _re.IGNORECASE
+                    )
+                    # Parole explicite → consomme la PAROLE
+                    _SPEECH_TRIGGER = _re.compile(
+                        r'[«»\"\u201c\u201d]'                        # guillemets
+                        r'|\bje (crie|hurle|chuchote|dis|murmure|siffle|avertis|lance un cri|lance un mot)\b'
+                        r'|\b(attention|garde[sz]?-vous|derrière|à droite|à gauche|recule[sz]?|fuyez)\b',
+                        _re.IGNORECASE
+                    )
 
-                is_reaction = bool(_REACTION_TRIGGER.search(_content_str))
-                is_speech   = bool(_SPEECH_TRIGGER.search(_content_str))
+                    is_reaction = bool(_REACTION_TRIGGER.search(_content_str))
+                    is_speech   = bool(_SPEECH_TRIGGER.search(_content_str))
 
-                # Par défaut (contenu non vide et non classifié → parole prudente)
-                if not is_reaction and not is_speech:
-                    is_speech = True
+                    # Par défaut (contenu non vide et non classifié → parole prudente)
+                    if not is_reaction and not is_speech:
+                        is_speech = True
 
-                if is_reaction and name not in COMBAT_STATE["reactions_used"]:
-                    COMBAT_STATE["reactions_used"].add(name)
-                    _app._update_agent_combat_prompts()
-                    _app.msg_queue.put({
-                        "sender": "⚔️ Combat",
-                        "text":   f"↺ {name} — réaction hors-tour consommée pour ce round.",
-                        "color":  "#5588cc"
-                    })
+                    if is_reaction and name not in COMBAT_STATE["reactions_used"]:
+                        COMBAT_STATE["reactions_used"].add(name)
+                        _app._update_agent_combat_prompts()
+                        _app.msg_queue.put({
+                            "sender": "⚔️ Combat",
+                            "text":   f"↺ {name} — réaction hors-tour consommée pour ce round.",
+                            "color":  "#5588cc"
+                        })
 
-                if is_speech and name not in COMBAT_STATE["speech_used"]:
-                    COMBAT_STATE["speech_used"].add(name)
-                    _app._update_agent_combat_prompts()
-                    _app.msg_queue.put({
-                        "sender": "⚔️ Combat",
-                        "text":   f"💬 {name} — parole hors-tour consommée pour ce round.",
-                        "color":  "#8855aa"
-                    })
+                    if is_speech and name not in COMBAT_STATE["speech_used"]:
+                        COMBAT_STATE["speech_used"].add(name)
+                        _app._update_agent_combat_prompts()
+                        _app.msg_queue.put({
+                            "sender": "⚔️ Combat",
+                            "text":   f"💬 {name} — parole hors-tour consommée pour ce round.",
+                            "color":  "#8855aa"
+                        })
 
             if name != "Alexis_Le_MJ" or is_system:
                 if isinstance(message, dict) and message.get("role") == "tool":
@@ -2428,7 +3260,7 @@ class AutogenEngineMixin:
                     _app.msg_queue.put({"sender": display_name, "text": display_text, "color": color})
                     if not is_system and display_name in PLAYER_NAMES:
                         log_tts_start(display_name, str(display_text))
-                        _app.audio_queue.put((_tts_clean(display_text), display_name))
+                        _enqueue_tts(display_text, display_name)
 
                 if tool_calls:
                     _app.msg_queue.put({"sender": name, "text": "✨[Est en train de préparer une action/un sort...]", "color": "#aaaaaa"})
@@ -2452,6 +3284,7 @@ class AutogenEngineMixin:
         
         while True:
             try:
+                self._stop_event.clear()   # évite qu'un event résiduel stoppe la reprise
                 self._set_llm_running(True)
                 mj_agent.initiate_chat(
                     manager,

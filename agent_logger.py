@@ -37,6 +37,11 @@ _lock = threading.Lock()
 _llm_starts: dict[str, float] = {}
 _tts_starts: dict[str, float] = {}
 
+# ── Référence optionnelle vers face_windows (injectée par DnDApp) ─────────────
+# Permet d'activer la bulle de pensée pour les appels LLM hors groupchat
+# (messages privés, votes, images). Setter : set_face_windows_ref(dict).
+_face_windows_ref: dict = {}
+
 
 def _char_color(name: str) -> str:
     return _COLORS.get(name, "\033[97m")
@@ -57,6 +62,24 @@ def _print(line: str):
         print(line, flush=True)
 
 
+def set_face_windows_ref(face_windows: dict):
+    """Injecte la référence face_windows depuis DnDApp.
+    Appelé une seule fois après create_character_faces().
+    """
+    global _face_windows_ref
+    _face_windows_ref = face_windows
+
+
+def _set_thinking(name: str, thinking: bool):
+    """Active/désactive la bulle de pensée sur l'avatar de name (si ouvert)."""
+    face = _face_windows_ref.get(name)
+    if face:
+        try:
+            face.set_thinking(thinking)
+        except Exception:
+            pass
+
+
 # ── API publique ───────────────────────────────────────────────────────────────
 
 def log_llm_start(name: str, prompt_preview: str = "", context: str = ""):
@@ -68,6 +91,7 @@ def log_llm_start(name: str, prompt_preview: str = "", context: str = ""):
     context        : label du contexte ("groupchat", "msg_privé", "vote", "image"…)
     """
     _llm_starts[name] = time.perf_counter()
+    _set_thinking(name, True)
     cc = _char_color(name)
     ctx = f" [{context}]" if context else ""
     prev = f"  {_DIM}↳ {prompt_preview[:100].strip()}…{_RESET}" if prompt_preview else ""
@@ -84,6 +108,7 @@ def log_llm_end(name: str, response_preview: str = "", error: str = ""):
     """
     t0 = _llm_starts.pop(name, None)
     elapsed = time.perf_counter() - t0 if t0 else 0.0
+    _set_thinking(name, False)
     cc = _char_color(name)
 
     if error:

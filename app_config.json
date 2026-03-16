@@ -38,14 +38,14 @@
   "piper": {
     "models_dir": "piper_models",
     "voices": {
-      "Kaelen": "fr_FR-siwis-low",
+      "Kaelen": "fr_FR-siwis-medium",
       "Elara": "fr_FR-siwis-medium",
       "Thorne": "fr_FR-gilles-low",
       "Lyra": "fr_FR-upmc-medium",
-      "default": "fr_FR-siwis-low"
+      "default": "fr_FR-siwis-medium"
     },
     "pitch": {
-      "Kaelen": -5.0,
+      "Kaelen": -4.5,
       "Elara": 0.0,
       "Thorne": 2.0,
       "Lyra": 4.0,

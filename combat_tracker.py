@@ -22,6 +22,7 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import random
 import json
+import threading
 
 # ─── Intégration bestiary (optionnelle) ───────────────────────────────────────
 try:
@@ -412,11 +413,18 @@ class CombatTracker:
         self.current_idx = -1
         self.round_num   = 0
         self.combat_active = False
-        self._rows: dict = {}   # uid → frame widgets
-        self.kill_pool: list  = []  # combatants retirés via Kill Pool
+        self._rows: dict = {}          # uid → frame widgets
+        self._row_widgets: dict = {}   # uid → {hp_lbl, bar_canvas, draw_hp_bar} — mises à jour in-place
+        self._save_timer = None        # timer de sauvegarde différée (debounce)
+        self.kill_pool: list  = []     # combatants retirés via Kill Pool
 
         self._build_window()
         self._restore_combat_state()
+        # Préchauffage du bestiary en arrière-plan pour éviter le freeze
+        # au premier _ct_pick() (chargement du JSON ~2–5 MB)
+        if _BESTIARY_OK:
+            threading.Thread(target=_bestiary_load, daemon=True,
+                             name="bestiary-preload").start()
 
     # ── Construction de la fenêtre ────────────────────────────────────────────
     def _build_window(self):
@@ -518,10 +526,10 @@ class CombatTracker:
             try:
                 if not self._inner.winfo_exists(): return
                 self._canvas.configure(scrollregion=self._canvas.bbox("all"))
-                self._inner.after(400, _poll_ct_scroll)
+                self._inner.after(2000, _poll_ct_scroll)
             except Exception:
                 pass
-        self._inner.after(200, _poll_ct_scroll)
+        self._inner.after(500, _poll_ct_scroll)
 
         self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
         self._canvas.configure(yscrollcommand=self._scroll.set)
@@ -661,6 +669,12 @@ class CombatTracker:
                   padx=8, pady=3, cursor="hand2",
                   command=self._add_npc).grid(row=fr, column=6, padx=(4, 0))
 
+        tk.Button(add_frame, text="+ Héros",
+                  bg=_darken(C["green"], 0.35), fg=C["green_bright"],
+                  font=("Consolas", 9, "bold"), relief="flat",
+                  padx=8, pady=3, cursor="hand2",
+                  command=self._add_missing_pc).grid(row=fr, column=7, padx=(4, 0))
+
         # ── Infos combat ───────────────────────────────────────────────────
         info_frame = tk.Frame(bot, bg="#0d1018")
         info_frame.pack(side=tk.RIGHT, padx=20, pady=10)
@@ -733,44 +747,92 @@ class CombatTracker:
         self._ct_status.config(text=f"CR {cr}  PV:{hp}  CA:{ac}", fg=C["green_bright"])
 
     # ── Import PJ depuis state_manager ────────────────────────────────────────
+    # ── Sauvegarde différée (debounce) ───────────────────────────────────────
+
+    def _schedule_save(self, delay_ms: int = 800):
+        """Sauvegarde différée : annule le timer précédent et repart de zéro.
+        Évite les I/O disque répétées lors de rafales de clics (HP, conditions…).
+        Les événements critiques (changement de tour, fin de combat) appellent
+        _save_combat_state() directement sans passer par ce debounce."""
+        if self._save_timer is not None:
+            try:
+                self.win.after_cancel(self._save_timer)
+            except Exception:
+                pass
+        try:
+            self._save_timer = self.win.after(delay_ms, self._do_scheduled_save)
+        except Exception:
+            pass  # fenêtre détruite entre temps
+
+    def _do_scheduled_save(self):
+        self._save_timer = None
+        self._save_combat_state()
+
     # ── Persistance du combat ─────────────────────────────────────────────────
 
     def _save_combat_state(self):
-        """Sérialise l'état complet du tracker dans campaign_state.json."""
+        """Sérialise l'état complet du tracker dans campaign_state.json.
+        L'écriture disque est effectuée dans un thread daemon pour ne pas
+        bloquer le thread Tk (le snapshot est pris immédiatement, thread-safe)."""
         try:
             from state_manager import load_state as _ls, save_state as _ss
-            state = _ls()
-            state["combat_tracker"] = {
-                "active":      self.combat_active,
-                "round_num":   self.round_num,
-                "current_idx": self.current_idx,
+            # Snapshot immédiat dans le thread Tk — pas de race condition
+            snapshot = {
+                "active":         self.combat_active,
+                "round_num":      self.round_num,
+                "current_idx":    self.current_idx,
                 "reactions_used": list(COMBAT_STATE.get("reactions_used", set())),
                 "speech_used":    list(COMBAT_STATE.get("speech_used",    set())),
-                "combatants":  [c.to_dict() for c in self.combatants],
+                "combatants":     [c.to_dict() for c in self.combatants],
             }
-            _ss(state)
+
+            def _write():
+                try:
+                    state = _ls()
+                    state["combat_tracker"] = snapshot
+                    _ss(state)
+                except Exception as e:
+                    print(f"[CombatTracker] Erreur sauvegarde (thread) : {e}")
+
+            threading.Thread(target=_write, daemon=True, name="ct-save").start()
         except Exception as e:
             print(f"[CombatTracker] Erreur sauvegarde : {e}")
 
     def sync_pc_hp_from_state(self):
         """
         Synchronise les PV des PJ dans le tracker depuis campaign_state["characters"].
-        Appelé depuis autogen_engine chaque fois que update_hp() modifie les PV
-        (dégâts reçus, soins) afin que le tracker reste cohérent avec la fiche.
+        Appelé depuis autogen_engine chaque fois que update_hp() modifie les PV.
+        Mise à jour in-place via _row_widgets — pas de rebuild complet de la liste.
         Thread-safe : doit être appelé via root.after() depuis le thread Tk.
         """
         try:
             from state_manager import load_state as _ls
             _st = _ls()
             chars = _st.get("characters", {})
-            changed = False
+            needs_full_refresh = False
             for cb in self.combatants:
                 if cb.is_pc and cb.name in chars:
                     new_hp = chars[cb.name].get("hp", cb.hp)
                     if cb.hp != new_hp:
+                        was_up = cb.hp > 0
                         cb.hp = new_hp
-                        changed = True
-            if changed:
+                        rw = self._row_widgets.get(cb.uid)
+                        if rw:
+                            try:
+                                rw["hp_lbl"].config(
+                                    text=f"{max(0, cb.hp)} / {cb.max_hp}",
+                                    fg=cb.hp_color(),
+                                    font=("Consolas", 13, "bold"),
+                                )
+                                rw["draw_hp_bar"](rw["bar_canvas"], cb)
+                            except Exception:
+                                needs_full_refresh = True
+                        else:
+                            needs_full_refresh = True
+                        # Afficher les jets de mort si le PJ vient de tomber à 0
+                        if cb.is_pc and cb.hp == 0 and was_up:
+                            needs_full_refresh = True
+            if needs_full_refresh:
                 self._refresh_list()
         except Exception as e:
             print(f"[CombatTracker] sync_pc_hp_from_state : {e}")
@@ -851,16 +913,132 @@ class CombatTracker:
             print(f"[CombatTracker] Erreur import PJ : {e}")
         self._refresh_list()
 
+    def _add_missing_pc(self):
+        """
+        Ouvre une petite fenêtre listant les PJ présents dans campaign_state
+        mais absents du tracker. Permet de les ajouter un par un avec
+        leur initiative saisie manuellement.
+        """
+        try:
+            state = self._load_state()
+            all_chars = state.get("characters", {})
+        except Exception as e:
+            print(f"[CombatTracker] Erreur chargement state : {e}")
+            return
+
+        # PJ déjà dans le tracker
+        present = {c.name for c in self.combatants if c.is_pc}
+        missing = {name: data for name, data in all_chars.items()
+                   if name not in present}
+
+        if not missing:
+            messagebox.showinfo("Héros",
+                                "Tous les héros sont déjà dans le tracker.",
+                                parent=self.win)
+            return
+
+        # Fenêtre de sélection
+        dlg = tk.Toplevel(self.win)
+        dlg.title("Ajouter un héros")
+        dlg.configure(bg=C["bg"])
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        tk.Label(dlg, text="Héros absents du combat",
+                 bg=C["bg"], fg=C["gold"],
+                 font=("Consolas", 11, "bold")).pack(pady=(12, 4), padx=16)
+        tk.Label(dlg, text="Saisissez l'initiative puis cliquez sur Ajouter.",
+                 bg=C["bg"], fg=C["fg_dim"],
+                 font=("Consolas", 8)).pack(padx=16)
+
+        tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=8, pady=8)
+
+        for name, data in missing.items():
+            row = tk.Frame(dlg, bg=C["bg"])
+            row.pack(fill=tk.X, padx=16, pady=4)
+
+            color = PC_COLORS.get(name, "#a0c0ff")
+            tk.Label(row, text=name, bg=C["bg"], fg=color,
+                     font=("Consolas", 11, "bold"), width=10,
+                     anchor="w").pack(side=tk.LEFT)
+
+            tk.Label(row, text=f"PV:{data.get('hp', '?')}/{data.get('max_hp', '?')}",
+                     bg=C["bg"], fg=C["fg_dim"],
+                     font=("Consolas", 9), width=12).pack(side=tk.LEFT, padx=(4, 8))
+
+            tk.Label(row, text="Init:", bg=C["bg"], fg=C["fg_dim"],
+                     font=("Consolas", 9)).pack(side=tk.LEFT)
+
+            init_var = tk.StringVar(value="")
+            init_entry = tk.Entry(row, textvariable=init_var,
+                                  bg=C["entry_bg"], fg=C["fg_gold"],
+                                  font=("Consolas", 10), width=5,
+                                  insertbackground=C["gold"], relief="flat",
+                                  justify="center")
+            init_entry.pack(side=tk.LEFT, padx=(2, 8), ipady=2)
+
+            def _do_add(n=name, d=data, iv=init_var, dlg_ref=dlg):
+                try:
+                    init_val = int(iv.get())
+                except ValueError:
+                    # Pas d'initiative saisie → lancer le dé
+                    dex = PC_DEX_BONUS.get(n, 2)
+                    init_val = random.randint(1, 20) + dex
+
+                c = Combatant(
+                    name=n, is_pc=True,
+                    max_hp=d.get("max_hp", 20),
+                    current_hp=d.get("hp"),
+                    ac=16,
+                    initiative=init_val,
+                    dex_bonus=PC_DEX_BONUS.get(n, 2),
+                    color=PC_COLORS.get(n, "#a0c0ff"),
+                )
+                self.combatants.append(c)
+                self._sort_and_refresh()
+                self._save_combat_state()
+                if self.chat_queue:
+                    self.chat_queue.put({
+                        "sender": "⚔️ Combat",
+                        "text":   f"➕ {n} rejoint le combat (Init: {init_val}).",
+                        "color":  "#c8a820",
+                    })
+                # Retirer la ligne du dialogue
+                for w in row.winfo_children():
+                    w.destroy()
+                tk.Label(row, text=f"✅ {n} ajouté(e)",
+                         bg=C["bg"], fg=C["green_bright"],
+                         font=("Consolas", 9)).pack(side=tk.LEFT)
+
+            tk.Button(row, text="Ajouter",
+                      bg=_darken(C["green"], 0.35), fg=C["green_bright"],
+                      font=("Consolas", 9, "bold"), relief="flat",
+                      padx=6, pady=2, cursor="hand2",
+                      command=_do_add).pack(side=tk.LEFT)
+
+        tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=8, pady=8)
+        tk.Button(dlg, text="Fermer",
+                  bg=_darken(C["red"], 0.4), fg="#e07070",
+                  font=("Consolas", 9), relief="flat", padx=10, pady=4,
+                  command=dlg.destroy).pack(pady=(0, 12))
+
     # ── Refresh complet de la liste ───────────────────────────────────────────
     def _refresh_list(self):
         for w in self._inner.winfo_children():
             w.destroy()
         self._rows.clear()
+        self._row_widgets.clear()
 
         for idx, c in enumerate(self.combatants):
             is_active = (self.combat_active and idx == self.current_idx)
             self._build_row(c, idx, is_active)
 
+        # update_idletasks() est nécessaire ici : _refresh_list est le chemin
+        # des rebuilds complets (ajout/retrait de combatant, début/fin de combat,
+        # restauration). Sans lui, bbox("all") renvoie None et la scrollregion
+        # reste vide → seule la première ligne est visible.
+        # Ce n'est plus le chemin chaud (le changement de tour passe par
+        # _update_active_rows qui ne touche pas la scrollregion).
         self._canvas.update_idletasks()
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
 
@@ -921,10 +1099,11 @@ class CombatTracker:
 
         skull = " [X]" if c.is_dead else (" [~]" if c.is_down else "")
         star  = " *"   if active else ""
-        tk.Label(name_f, text=c.name + skull + star, bg=row_bg,
-                 fg=C["fg_gold"] if active else c.color,
-                 font=("Consolas", 11, "bold") if c.is_pc else ("Consolas", 10, "bold"),
-                 anchor="w").pack(anchor="w")
+        name_lbl = tk.Label(name_f, text=c.name + skull + star, bg=row_bg,
+                            fg=C["fg_gold"] if active else c.color,
+                            font=("Consolas", 11, "bold") if c.is_pc else ("Consolas", 10, "bold"),
+                            anchor="w")
+        name_lbl.pack(anchor="w")
 
         # Boutons sous le nom
         btn_row = tk.Frame(name_f, bg=row_bg)
@@ -981,7 +1160,6 @@ class CombatTracker:
         bar_canvas.pack(fill=tk.X, pady=(1, 3))
 
         def draw_hp_bar(canvas=bar_canvas, cb=c):
-            canvas.update_idletasks()
             w = canvas.winfo_width()
             if w < 4:
                 w = 140
@@ -1010,24 +1188,32 @@ class CombatTracker:
                 val = int(var.get()) if var.get().strip() else 0
             except ValueError:
                 val = 0
+            was_up = cb.hp > 0
             cb.hp = max(0, min(cb.max_hp, cb.hp + sign * val))
+            # ── Mise à jour in-place : uniquement les widgets HP de cette ligne ──
             lbl.config(text=f"{max(0,cb.hp)} / {cb.max_hp}", fg=cb.hp_color(),
                        font=("Consolas", 13, "bold") if cb.is_pc else ("Consolas", 10, "bold"))
             draw_hp_bar(canvas, cb)
             var.set("")
             # ── Sync bidirectionnel : tracker → campaign_state["characters"] ──
+            # Exécuté dans un thread daemon pour ne pas bloquer le thread Tk.
             if cb.is_pc:
-                try:
-                    from state_manager import load_state as _ls, save_state as _ss
-                    _st = _ls()
-                    if cb.name in _st.get("characters", {}):
-                        _st["characters"][cb.name]["hp"] = cb.hp
-                        _ss(_st)
-                except Exception as _e:
-                    print(f"[CombatTracker] Sync HP -> state_manager : {_e}")
-            self._refresh_list()
-            self._save_combat_state()
-            if cb.is_pc and cb.hp == 0:
+                _name, _hp = cb.name, cb.hp
+                def _sync_hp(name=_name, hp=_hp):
+                    try:
+                        from state_manager import load_state as _ls, save_state as _ss
+                        _st = _ls()
+                        if name in _st.get("characters", {}):
+                            _st["characters"][name]["hp"] = hp
+                            _ss(_st)
+                    except Exception as _e:
+                        print(f"[CombatTracker] Sync HP -> state_manager : {_e}")
+                threading.Thread(target=_sync_hp, daemon=True, name="ct-hp-sync").start()
+            # Sauvegarde différée — pas de I/O disque synchrone à chaque clic
+            self._schedule_save()
+            # Rebuild complet seulement si un PJ tombe à 0 (affiche les jets de mort)
+            if cb.is_pc and cb.hp == 0 and was_up:
+                self._refresh_list()
                 self._open_death_saves(cb)
 
         tk.Button(hp_btn_f, text="+ Soin",
@@ -1074,7 +1260,32 @@ class CombatTracker:
 
         # ── Col 6 : Actions ───────────────────────────────────────────────
         act_f = _col(162)
-        self._build_action_economy(act_f, c, row_bg, active)
+        act_inner = self._build_action_economy(act_f, c, row_bg, active)
+
+        # Bouton réinit — uniquement sur la ligne active ; géré par _update_active_rows
+        if active:
+            reset_btn = tk.Button(act_inner, text="↺ Réinit. actions",
+                                  bg=_darken(C["gold"], 0.3), fg=C["gold"],
+                                  font=("Consolas", 7, "bold"), relief="flat",
+                                  padx=4, cursor="hand2",
+                                  command=lambda cb=c: (cb.reset_turn_resources(),
+                                                        self._refresh_list()))
+            reset_btn.pack(anchor="w", pady=(2, 0))
+        else:
+            reset_btn = None
+
+        # Stocker toutes les refs — act_inner et reset_btn sont maintenant définis
+        self._row_widgets[c.uid] = {
+            "hp_lbl":      hp_lbl,
+            "bar_canvas":  bar_canvas,
+            "draw_hp_bar": draw_hp_bar,
+            "row_frame":   row,
+            "name_lbl":    name_lbl,
+            "act_inner":   act_inner,
+            "reset_btn":   reset_btn,
+            "is_pc":       c.is_pc,
+            "combatant":   c,
+        }
 
         # ── Col 7 : Concentration ─────────────────────────────────────────
         conc_f = _col(58)
@@ -1152,13 +1363,14 @@ class CombatTracker:
                 else:
                     cb.conditions[cn] = True
                     b.config(bg=cd["color"], fg="white")
-                self._save_combat_state()
+                self._schedule_save()
 
             btn.config(command=_toggle)
 
     def _build_action_economy(self, parent, c: Combatant,
                                row_bg: str, active: bool):
-        """Cases à cocher pour Action / Bonus / Réaction + mouvement."""
+        """Cases à cocher pour Action / Bonus / Réaction + mouvement.
+        Retourne le frame inner pour permettre l'ajout externe du bouton réinit."""
         inner = tk.Frame(parent, bg=row_bg)
         inner.pack(fill=tk.BOTH, expand=True)
 
@@ -1213,15 +1425,9 @@ class CombatTracker:
         mv_e.bind("<FocusOut>", _set_mv)
         mv_e.bind("<Return>",   _set_mv)
 
-        # Bouton réinitialiser tour
-        if active:
-            tk.Button(inner, text="↺ Réinit. actions",
-                      bg=_darken(C["gold"], 0.3), fg=C["gold"],
-                      font=("Consolas", 7, "bold"), relief="flat",
-                      padx=4, cursor="hand2",
-                      command=lambda cb=c: (cb.reset_turn_resources(),
-                                            self._refresh_list())
-                      ).pack(anchor="w", pady=(2, 0))
+        # Le bouton "↺ Réinit. actions" est ajouté par _build_row (actif)
+        # ou par _update_active_rows (changement de tour) — pas ici.
+        return inner
 
     def _mini_death_saves(self, parent, c: Combatant):
         """Affiche les jets de mort compacts sous la barre de vie."""
@@ -1308,13 +1514,80 @@ class CombatTracker:
         # ── Déclenche automatiquement le tour si c'est un PJ ──
         self._trigger_pc_turn_if_needed()
 
+    def _update_active_rows(self, old_idx: int, new_idx: int):
+        """Mise à jour visuelle chirurgicale des deux lignes affectées par le
+        changement de tour. Ne rebuild PAS la liste entière.
+
+        Modifie uniquement :
+          - bordure et bg du frame de ligne
+          - label de nom (ajout/retrait de " *", couleur)
+          - bouton "↺ Réinit. actions" (créé sur la nouvelle ligne active,
+            détruit sur l'ancienne)
+        """
+        def _deactivate(idx):
+            if not (0 <= idx < len(self.combatants)):
+                return
+            cb   = self.combatants[idx]
+            rw   = self._row_widgets.get(cb.uid)
+            if not rw:
+                return
+            rf   = rw["row_frame"]
+            # bg avant → bg après
+            old_bg = C["row_active"] if cb.is_pc else _lighten(C["row_active"], 0.15)
+            new_bg = C["row_pc"]     if cb.is_pc else C["row_npc"]
+            _set_row_bg_recursive(rf, old_bg, new_bg)
+            rf.config(highlightbackground=C["border"], highlightthickness=1)
+            # Nom : retirer l'étoile
+            skull = " [X]" if cb.is_dead else (" [~]" if cb.is_down else "")
+            rw["name_lbl"].config(text=cb.name + skull, fg=cb.color)
+            # Supprimer le bouton réinit
+            btn = rw.get("reset_btn")
+            if btn:
+                try:
+                    btn.destroy()
+                except Exception:
+                    pass
+                rw["reset_btn"] = None
+
+        def _activate(idx):
+            if not (0 <= idx < len(self.combatants)):
+                return
+            cb   = self.combatants[idx]
+            rw   = self._row_widgets.get(cb.uid)
+            if not rw:
+                return
+            rf   = rw["row_frame"]
+            old_bg = C["row_pc"]     if cb.is_pc else C["row_npc"]
+            new_bg = C["row_active"] if cb.is_pc else _lighten(C["row_active"], 0.15)
+            _set_row_bg_recursive(rf, old_bg, new_bg)
+            rf.config(highlightbackground=C["border_hot"], highlightthickness=2)
+            # Nom : ajouter l'étoile
+            skull = " [X]" if cb.is_dead else (" [~]" if cb.is_down else "")
+            rw["name_lbl"].config(text=cb.name + skull + " *", fg=C["fg_gold"])
+            # Ajouter le bouton réinit si absent
+            if rw.get("reset_btn") is None:
+                btn = tk.Button(rw["act_inner"], text="↺ Réinit. actions",
+                                bg=_darken(C["gold"], 0.3), fg=C["gold"],
+                                font=("Consolas", 7, "bold"), relief="flat",
+                                padx=4, cursor="hand2",
+                                command=lambda c=cb: (c.reset_turn_resources(),
+                                                      self._refresh_list()))
+                btn.pack(anchor="w", pady=(2, 0))
+                rw["reset_btn"] = btn
+
+        _deactivate(old_idx)
+        _activate(new_idx)
+        self._update_round_label()
+
     def _next_turn(self):
         if not self.combat_active:
             return
 
+        old_idx = self.current_idx
+
         # Réinitialise les actions du combatant actif
-        if 0 <= self.current_idx < len(self.combatants):
-            self.combatants[self.current_idx].reset_turn_resources()
+        if 0 <= old_idx < len(self.combatants):
+            self.combatants[old_idx].reset_turn_resources()
 
         # Avance
         self.current_idx += 1
@@ -1322,16 +1595,16 @@ class CombatTracker:
             self.current_idx = 0
             self.round_num  += 1
             self._log(f"\n══ Round {self.round_num} ══")
-            COMBAT_STATE["reactions_used"] = set()   # reset au nouveau round
-            COMBAT_STATE["speech_used"]    = set()   # reset au nouveau round
+            COMBAT_STATE["reactions_used"] = set()
+            COMBAT_STATE["speech_used"]    = set()
 
         # ── Mise à jour état partagé ──
         COMBAT_STATE["round_num"] = self.round_num
         active_c = self.combatants[self.current_idx] if self.combatants else None
         COMBAT_STATE["active_combatant"] = active_c.name if active_c else None
 
-        self._update_round_label()
-        self._refresh_list()
+        # Mise à jour visuelle chirurgicale — PAS de rebuild complet
+        self._update_active_rows(old_idx, self.current_idx)
         self._log_turn()
         self._save_combat_state()
 
@@ -1656,6 +1929,20 @@ class CombatTracker:
         c = self.combatants[self.current_idx]
         if c.is_pc and not c.is_down:
             self.pc_turn_callback(c.name)
+
+
+# ─── Helper recoloriage récursif ─────────────────────────────────────────────
+
+def _set_row_bg_recursive(widget, old_bg: str, new_bg: str):
+    """Recolorie récursivement tous les widgets d'une ligne dont le bg == old_bg.
+    Laisse intacts les widgets avec un bg différent (Entry, Canvas, badges…)."""
+    try:
+        if widget.cget("bg") == old_bg:
+            widget.config(bg=new_bg)
+    except Exception:
+        pass
+    for child in widget.winfo_children():
+        _set_row_bg_recursive(child, old_bg, new_bg)
 
 
 # ─── Helpers couleur ──────────────────────────────────────────────────────────

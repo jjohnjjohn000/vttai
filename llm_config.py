@@ -158,3 +158,14 @@ ABILITY_COLORS = {
     "Sagesse":      "#ce93d8",
     "Charisme":     "#f06292",
 }
+
+
+# ─── Verrou global SSL/httpx ──────────────────────────────────────────────────
+# Python 3.10 / Linux : OpenSSL n'est pas thread-safe quand plusieurs threads
+# partagent le même pool de connexions httpx (segfault dans ssl.py:read).
+# Ce verrou UNIQUE est importé par autogen_engine.py ET llm_control_mixin.py
+# pour sérialiser TOUS les appels au réseau LLM, qu'ils viennent du groupchat
+# autogen, des messages privés MJ ou des votes.
+# Impact perf : négligeable (autogen est déjà séquentiel par agent).
+import threading as _threading_ssl
+_SSL_LOCK = _threading_ssl.Lock()

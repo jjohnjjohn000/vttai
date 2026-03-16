@@ -5,11 +5,38 @@ import shutil
 import atexit
 import threading
 import asyncio
+import time
 import re
 import queue as _queue
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ─── Logger TTS avec timestamps ──────────────────────────────────────────────
+
+_VI_LOG_LOCK = threading.Lock()
+
+def _ts() -> str:
+    t  = time.time()
+    ms = int((t % 1) * 1000)
+    return time.strftime("%H:%M:%S", time.localtime(t)) + f".{ms:03d}"
+
+_C = {
+    "cyan":    "\033[96m",  "yellow":  "\033[93m",
+    "green":   "\033[92m",  "red":     "\033[91m",
+    "grey":    "\033[90m",  "reset":   "\033[0m",
+}
+
+def _log(tag: str, msg: str, color: str = ""):
+    col   = _C.get(color, "")
+    reset = _C["reset"] if col else ""
+    tid   = threading.current_thread().name
+    with _VI_LOG_LOCK:
+        print(f"{_C['grey']}{_ts()}{_C['reset']}  {col}[TTS/{tag}]{reset}  {msg}"
+              f"  {_C['grey']}({tid}){_C['reset']}", flush=True)
+
+def _ms(t0: float) -> str:
+    return f"{(time.perf_counter() - t0)*1000:.0f}ms"
 
 VOICE_MAPPING = {
     "Kaelen": "fr-FR-HenriNeural",
@@ -178,22 +205,31 @@ def _generate_chunk_async(voice_id, text, rate):
         os.close(fd)
     except Exception:
         return None
+    t0 = time.perf_counter()
+    preview = text[:50].replace("\n", " ")
+    _log("edge-async", f"▶ « {preview}… »  ({len(text)} car)", "cyan")
     future = asyncio.run_coroutine_threadsafe(
         _generate_async(voice_id, text, rate, tmp), loop
     )
     try:
         ok = future.result(timeout=10)
     except Exception as e:
-        print(f"[TTS] Erreur future: {e}")
+        _log("edge-async", f"✗ future : {e}  {_ms(t0)}", "red")
         ok = False
     if not ok or not os.path.getsize(tmp):
         try: os.remove(tmp)
         except OSError: pass
+        _log("edge-async", f"✗ fichier vide  {_ms(t0)}", "red")
         return None
+    sz = os.path.getsize(tmp)
+    _log("edge-async", f"✓ {sz//1024} KB  {_ms(t0)}", "green")
     return tmp
 
 # --- Backend CLI ---
 def _generate_chunk_cli(voice_id, text, rate):
+    t0      = time.perf_counter()
+    preview = text[:50].replace("\n", " ")
+    _log("edge-cli", f"▶ « {preview}… »  ({len(text)} car)", "cyan")
     try:
         fd, tmp = tempfile.mkstemp(suffix=".mp3", prefix="tts_")
         os.close(fd)
@@ -207,39 +243,88 @@ def _generate_chunk_cli(voice_id, text, rate):
                 timeout=8, capture_output=True, text=True,
             )
             if result.returncode == 0 and os.path.getsize(tmp) > 0:
+                sz = os.path.getsize(tmp)
+                _log("edge-cli", f"✓ {sz//1024} KB  {_ms(t0)}", "green")
                 return tmp
             if "NoAudioReceived" not in result.stderr:
+                _log("edge-cli", f"✗ returncode={result.returncode}  {_ms(t0)}", "red")
                 break
         except subprocess.TimeoutExpired:
-            print(f"[TTS] Timeout CLI: {text[:50]}")
+            _log("edge-cli", f"✗ timeout 8s  {_ms(t0)}", "red")
             break
         except FileNotFoundError:
+            _log("edge-cli", "✗ edge-tts CLI introuvable", "red")
             break
         open(tmp, 'wb').close()
     try: os.remove(tmp)
     except OSError: pass
     return None
 
-# --- Lecture ffplay ---
+# --- Durée WAV (pour timeout calculé) ---
+def _wav_duration_s(path: str) -> float:
+    """Retourne la durée en secondes d'un fichier WAV, ou 0 si illisible."""
+    import wave as _wave
+    try:
+        with _wave.open(path, "rb") as wf:
+            return wf.getnframes() / wf.getframerate()
+    except Exception:
+        return 0.0
+
+
+# --- Lecture audio (aplay pour WAV, ffplay pour MP3) ---
 def _play_file(tmp_path):
+    """
+    Joue un fichier audio :
+      - WAV → aplay (via PulseAudio/PipeWire, pas de lock exclusif ALSA)
+      - MP3 / autre → ffplay
+    Timeout calculé sur la durée réelle du fichier × 1.5 + 5s de marge.
+    ffplay ne sera plus jamais lancé avec un timeout de 60s pour un clip de 3s.
+    """
+    sz       = os.path.getsize(tmp_path) if os.path.exists(tmp_path) else 0
+    is_wav   = tmp_path.lower().endswith(".wav")
+    player   = "aplay" if (is_wav and shutil.which("aplay")) else "ffplay"
+    t0       = time.perf_counter()
+    _log(player, f"▶ {os.path.basename(tmp_path)}  {sz//1024} KB  {sz} B", "cyan")
+
     proc = None
     try:
-        proc = subprocess.Popen(
-            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", tmp_path],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        if not _AUDIO_PAUSE_EVENT.is_set():
+            _log(player, "  session en pause — ignoré", "grey")
+            return False
+
+        # Timeout calculé
+        if is_wav:
+            dur_s = _wav_duration_s(tmp_path)
+        else:
+            dur_s = sz / 16_000   # estimation MP3 128 kbps
+        play_timeout = max(dur_s * 1.5 + 5.0, 8.0)
+        _log(player, f"  durée estimée {dur_s:.1f}s  timeout {play_timeout:.0f}s", "grey")
+
+        if player == "aplay":
+            cmd = ["aplay", "-q", tmp_path]
+        else:
+            cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", tmp_path]
+
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with _proc_lock:
             _active_processes.append(proc)
         try:
-            proc.wait(timeout=60)
+            proc.wait(timeout=play_timeout)
         except subprocess.TimeoutExpired:
-            proc.kill(); proc.wait(); return False
+            proc.kill(); proc.wait()
+            _log(player, f"✗ timeout {play_timeout:.0f}s (durée estimée {dur_s:.1f}s)  {_ms(t0)}", "red")
+            return False
         finally:
             with _proc_lock:
                 if proc in _active_processes:
                     _active_processes.remove(proc)
-        return proc.returncode in (0, -15)
-    except Exception:
+
+        ok = proc.returncode in (0, -15)
+        _log(player, f"{'✓' if ok else '✗'} terminé  {_ms(t0)}  rc={proc.returncode}", "green" if ok else "red")
+        return ok
+
+    except Exception as e:
+        _log(player, f"✗ exception : {e}  {_ms(t0)}", "red")
         return False
     finally:
         try: os.remove(tmp_path)
@@ -250,26 +335,60 @@ def _play_file(tmp_path):
 def _prefetch_voice_edgetts(text: str, character_name: str) -> list[str]:
     """
     [Interne] Génère tous les chunks audio edge-tts en avance (sans les jouer).
-    Retourne une liste de chemins mp3 prêts à lire, dans l'ordre.
+    Retourne une liste ORDONNÉE de chemins mp3 prêts à lire.
     Appelé depuis un thread de préfetch pendant que la voix précédente joue.
+
+    Les chunks sont générés EN PARALLÈLE (ThreadPoolExecutor, max 4 workers).
+    L'ordre est garanti par indexation des futures.
     """
+    from concurrent.futures import ThreadPoolExecutor, wait as _fw, ALL_COMPLETED
+
+    t0 = time.perf_counter()
     use_async = _check_edge_tts_async()
     if not FFPLAY_AVAILABLE or (not use_async and not EDGE_TTS_CLI):
+        _log("prefetch", "✗ aucun backend disponible", "red")
         return []
 
     voice_id    = VOICE_MAPPING.get(character_name, VOICE_MAPPING["default"])
     voice_speed = _normalize_rate(SPEED_MAPPING.get(character_name, SPEED_MAPPING["default"]))
     clean_text  = _clean_for_tts(text)
     if clean_text is None:
+        _log("prefetch", f"{character_name}  ✗ texte vide après nettoyage", "grey")
         return []
 
     chunks    = _split_chunks(clean_text)
     _generate = _generate_chunk_async if use_async else _generate_chunk_cli
-    files     = []
-    for chunk in chunks:
-        f = _generate(voice_id, chunk, voice_speed)
-        if f:
-            files.append(f)
+    backend   = "async" if use_async else "cli"
+    n_workers = min(len(chunks), 4)
+    _log("prefetch", f"{character_name}  {len(chunks)} chunk(s)  backend={backend}  workers={n_workers}  texte={len(clean_text)} car", "yellow")
+
+    if n_workers <= 1 or len(chunks) == 1:
+        files = []
+        for i, chunk in enumerate(chunks):
+            tc = time.perf_counter()
+            f  = _generate(voice_id, chunk, voice_speed)
+            if f:
+                files.append(f)
+            _log("prefetch", f"  chunk {i+1}/{len(chunks)}  {_ms(tc)}", "grey")
+        _log("prefetch", f"✓ {len(files)}/{len(chunks)} fichiers  total {_ms(t0)}", "green")
+        return files
+
+    results: list[str | None] = [None] * len(chunks)
+
+    def _gen(idx: int, chunk: str):
+        tc = time.perf_counter()
+        results[idx] = _generate(voice_id, chunk, voice_speed)
+        _log("prefetch", f"  chunk {idx+1}/{len(chunks)} terminé  {_ms(tc)}", "grey")
+
+    t_pool = time.perf_counter()
+    _log("prefetch", f"  lancement ThreadPoolExecutor({n_workers})", "yellow")
+    with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="edgetss-pre") as ex:
+        futures = [ex.submit(_gen, i, ch) for i, ch in enumerate(chunks)]
+        _fw(futures, return_when=ALL_COMPLETED)
+    _log("prefetch", f"  pool terminé  {_ms(t_pool)}", "yellow")
+
+    files = [f for f in results if f]
+    _log("prefetch", f"✓ {len(files)}/{len(chunks)} fichiers  total {_ms(t0)}", "green")
     return files
 
 
@@ -308,42 +427,74 @@ def _play_voice_edgetts(text, character_name):
     [Interne] edge-tts async (si dispo) ou CLI.
     Pipeline : génération chunk N+1 en parallèle de la lecture chunk N.
     """
+    t0 = time.perf_counter()
+    _log("play_edge", f"▶ {character_name}", "cyan")
+
     if not FFPLAY_AVAILABLE:
-        print(f"[TTS] ffplay manquant."); return False
+        _log("play_edge", "✗ ffplay manquant", "red"); return False
     use_async = _check_edge_tts_async()
     if not use_async and not EDGE_TTS_CLI:
-        print(f"[TTS] Aucun backend."); return False
+        _log("play_edge", "✗ aucun backend", "red"); return False
 
     voice_id    = VOICE_MAPPING.get(character_name, VOICE_MAPPING["default"])
     voice_speed = _normalize_rate(SPEED_MAPPING.get(character_name, SPEED_MAPPING["default"]))
 
     clean_text = _clean_for_tts(text)
     if clean_text is None:
+        _log("play_edge", "✗ texte vide après nettoyage", "grey")
         return False
 
-    chunks = _split_chunks(clean_text)
+    chunks    = _split_chunks(clean_text)
     _generate = _generate_chunk_async if use_async else _generate_chunk_cli
+    backend   = "async" if use_async else "cli"
+    n_workers = min(len(chunks), 4)
+    _log("play_edge", f"  {len(chunks)} chunk(s)  backend={backend}  workers={n_workers}  texte={len(clean_text)} car", "yellow")
 
-    # Pipeline : thread génère dans une queue bornée, on lit au fur et à mesure
+    # Pipeline : génère tous les chunks EN PARALLÈLE, les place dans la queue
+    # DANS L'ORDRE pour préserver la cohérence narrative.
     file_queue = _queue.Queue(maxsize=3)
 
     def _generate_all():
-        for chunk in chunks:
-            file_queue.put(_generate(voice_id, chunk, voice_speed))
+        from concurrent.futures import ThreadPoolExecutor
+
+        tg = time.perf_counter()
+        _log("gen_edge", f"  pool({n_workers}) démarré pour {len(chunks)} chunks", "yellow")
+
+        with ThreadPoolExecutor(max_workers=n_workers,
+                                thread_name_prefix="edgetss-gen") as ex:
+            # Soumettre tous les chunks simultanément
+            futures = [ex.submit(_generate, voice_id, chunk, voice_speed)
+                       for chunk in chunks]
+            # Récupérer dans l'ordre pour garantir la séquence audio
+            for i, fut in enumerate(futures):
+                try:
+                    result = fut.result(timeout=12)
+                    file_queue.put(result)
+                    _log("gen_edge", f"  chunk {i+1}/{len(chunks)} en queue  {_ms(tg)}", "grey")
+                except Exception as _e:
+                    _log("gen_edge", f"  ✗ chunk {i+1} : {_e}", "red")
+                    file_queue.put(None)
+        _log("gen_edge", f"  pool terminé  {_ms(tg)}", "yellow")
         file_queue.put("__DONE__")
 
     gen_thread = threading.Thread(target=_generate_all, daemon=True)
     gen_thread.start()
 
     any_played = False
+    chunk_idx  = 0
     while True:
         item = file_queue.get()
         if item == "__DONE__":
             break
+        chunk_idx += 1
+        tp = time.perf_counter()
+        _log("play_edge", f"  ▶ lecture chunk {chunk_idx}/{len(chunks)}", "cyan")
         if item is not None and _play_file(item):
             any_played = True
+            _log("play_edge", f"  ✓ chunk {chunk_idx}  {_ms(tp)}", "green")
 
     gen_thread.join(timeout=15)
+    _log("play_edge", f"✓ terminé  total {_ms(t0)}", "green" if any_played else "yellow")
     return any_played
 
 # ─── Pause / Reprise audio ───────────────────────────────────────────────────
