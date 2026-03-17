@@ -81,8 +81,20 @@ class UISetupMixin:
         btn_send = tk.Button(input_frame, text="Envoyer", bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), command=self.send_text)
         btn_send.pack(side=tk.LEFT, padx=(0, 5))
 
-        btn_voice = tk.Button(input_frame, text="🎤 Parler", bg="#2196F3", fg="white", font=("Arial", 10, "bold"), command=self.send_voice)
-        btn_voice.pack(side=tk.LEFT, padx=(0, 5))
+        # ── Bouton Push-to-Talk (maintenir = enregistrer, relâcher = envoyer) ──
+        # On stocke la référence dans self.btn_voice pour que _on_ptt_press /
+        # _on_ptt_release puissent modifier son apparence en temps réel.
+        self.btn_voice = tk.Button(
+            input_frame, text="🎤 Parler",
+            bg="#2196F3", fg="white",
+            font=("Arial", 10, "bold"),
+        )
+        self.btn_voice.pack(side=tk.LEFT, padx=(0, 5))
+
+        # ButtonPress  → début enregistrement
+        # ButtonRelease → arrêt + transcription (dans un thread daemon)
+        self.btn_voice.bind("<ButtonPress-1>",   lambda e: self._on_ptt_press())
+        self.btn_voice.bind("<ButtonRelease-1>", lambda e: self._on_ptt_release())
 
         self.btn_stop = tk.Button(input_frame, text="⏹ Stop LLMs", bg="#880000", fg="white",
                                   font=("Arial", 10, "bold"), command=self.stop_llms, state=tk.DISABLED)
@@ -130,6 +142,9 @@ class UISetupMixin:
 
         tk.Button(action_frame, text="📜 Journal de Quêtes", bg="#1a3a5c", fg="#64b5f6",
                   font=("Arial", 10, "bold"), command=self.open_quest_journal).pack(fill=tk.X, pady=3)
+
+        tk.Button(action_frame, text="📖 Chroniques de Campagne", bg="#1e1a3a", fg="#c8b8ff",
+                  font=("Arial", 10, "bold"), command=self.open_campaign_log_viewer).pack(fill=tk.X, pady=3)
 
         tk.Button(action_frame, text="🎲 Lanceur de Dés", bg="#2a1a3a", fg="#ce93d8",
                   font=("Arial", 10, "bold"), command=self.open_dice_roller).pack(fill=tk.X, pady=3)
@@ -264,6 +279,10 @@ class UISetupMixin:
                   command=lambda: self._advance_calendar(7)).pack(side=tk.LEFT)
 
         self._refresh_calendar_widget()
+
+        # ── Liaison Push-to-Talk clavier ──────────────────────────────────────
+        # Doit être appelé après la création de root pour que root.bind fonctionne.
+        self.root.after(200, self._ptt_apply_hotkey)
 
     # ─── Fiches personnages (sidebar) ─────────────────────────────────────────
 

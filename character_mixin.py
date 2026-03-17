@@ -25,7 +25,7 @@ import tkinter as tk
 
 from state_manager import load_state, save_state
 from window_state import _get_win_geometry, _save_window_state
-from voice_interface import record_audio_and_transcribe
+from voice_interface import record_audio_and_transcribe, ptt_start, ptt_stop_and_transcribe
 from character_faces import CharacterFaceWindow, CHARACTER_DATA
 
 
@@ -117,6 +117,65 @@ class CharacterMixin:
                 pass
         except Exception as e:
             print(f"[popout] Erreur avatar {char_name}: {e}")
+
+        # ── Bouton « Faire parler » ───────────────────────────────────────────
+        speak_bar = tk.Frame(win, bg=char_bg)
+        speak_bar.pack(fill=tk.X, padx=8, pady=(0, 6))
+
+        speak_entry = tk.Entry(
+            speak_bar, bg="#252535", fg="#666677",
+            insertbackground="#cccccc", relief="flat",
+            font=("Arial", 9),
+        )
+        speak_entry.insert(0, "Prends la parole...")
+
+        def _on_entry_focus_in(e):
+            if speak_entry.get() == "Prends la parole...":
+                speak_entry.delete(0, tk.END)
+                speak_entry.config(fg="#cccccc")
+
+        def _on_entry_focus_out(e):
+            if not speak_entry.get().strip():
+                speak_entry.insert(0, "Prends la parole...")
+                speak_entry.config(fg="#666677")
+
+        speak_entry.bind("<FocusIn>",  _on_entry_focus_in)
+        speak_entry.bind("<FocusOut>", _on_entry_focus_out)
+
+        def _do_speak(event=None):
+            hint = speak_entry.get().strip()
+            if hint == "Prends la parole...":
+                hint = ""
+            if hint:
+                msg = (
+                    f"{char_name}, le MJ t'invite à prendre la parole sur ce sujet : {hint}. "
+                    f"Exprime-toi en roleplay, en 1-3 phrases."
+                )
+            else:
+                msg = (
+                    f"{char_name}, prends la parole spontanément. "
+                    f"Dis quelque chose d'intéressant en roleplay, en 1-3 phrases, "
+                    f"en réagissant au contexte actuel."
+                )
+            # Injection dans le groupchat normal — AutoGen gère le contexte complet
+            self.msg_queue.put({"sender": "Alexis_Le_MJ", "text": msg, "color": "#4CAF50"})
+            self.user_input = msg
+            self.input_event.set()
+            speak_entry.delete(0, tk.END)
+            speak_entry.insert(0, "Prends la parole...")
+            speak_entry.config(fg="#666677")
+
+        speak_entry.bind("<Return>", _do_speak)
+
+        btn_speak = tk.Button(
+            speak_bar, text="Parler",
+            bg=color, fg="#0d0d0d",
+            font=("Arial", 9, "bold"),
+            relief="flat", cursor="hand2", padx=8, pady=3,
+            command=_do_speak,
+        )
+        btn_speak.pack(side=tk.RIGHT)
+        speak_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4, padx=(0, 4))
 
         # ── En-tête coloré ────────────────────────────────────────────────────
         hdr = tk.Frame(win, bg=color, pady=4)
@@ -651,6 +710,123 @@ class CharacterMixin:
 
     # ─── Entrée vocale ────────────────────────────────────────────────────────
 
+    # ─── Liaison clavier PTT ─────────────────────────────────────────────────
+
+    def _ptt_apply_hotkey(self):
+        """
+        Lit la touche PTT depuis APP_CONFIG et la lie à root.
+        Délie l'ancienne touche si elle a changé.
+        Appelé au démarrage (setup_ui) et après chaque sauvegarde de config.
+        """
+        try:
+            from app_config import get_ptt_config
+            hotkey = get_ptt_config().get("hotkey", "F12").strip()
+        except Exception:
+            hotkey = "F12"
+
+        old_hotkey = getattr(self, "_ptt_current_hotkey", None)
+
+        # Délier l'ancienne touche si elle diffère
+        if old_hotkey and old_hotkey != hotkey:
+            try:
+                self.root.unbind(f"<KeyPress-{old_hotkey}>")
+                self.root.unbind(f"<KeyRelease-{old_hotkey}>")
+            except Exception:
+                pass
+
+        # Lier la nouvelle touche (idempotent si inchangée)
+        if hotkey:
+            try:
+                self.root.bind(f"<KeyPress-{hotkey}>",   lambda e: self._on_ptt_press())
+                self.root.bind(f"<KeyRelease-{hotkey}>", lambda e: self._on_ptt_release())
+                self._ptt_current_hotkey = hotkey
+                print(f"[PTT] Touche liée : {hotkey}  (+ bouton souris 🎤 Parler)")
+            except Exception as e:
+                print(f"[PTT] Erreur bind '{hotkey}' : {e}")
+
+    def _on_ptt_press(self):
+        """Démarre l'enregistrement push-to-talk.
+        Sur Linux/X11, la touche maintenue génère des KeyPress/KeyRelease répétés
+        (~50 ms). On annule le KeyRelease en attente (debounce) pour ne jamais
+        interrompre un enregistrement en cours."""
+        # Annuler le release différé s'il n'a pas encore tiré (key-repeat X11)
+        after_id = getattr(self, "_ptt_release_after_id", None)
+        if after_id is not None:
+            try:
+                self.root.after_cancel(after_id)
+            except Exception:
+                pass
+            self._ptt_release_after_id = None
+
+        if getattr(self, "_ptt_active", False):
+            return  # enregistrement déjà en cours — ignorer le repeat
+
+        if self.input_event.is_set():
+            self.msg_queue.put({
+                "sender": "Système",
+                "text":   "⚠ Le moteur traite encore la réponse — patientez.",
+                "color":  "#FF9800",
+            })
+            return
+
+        self._ptt_active = True
+
+        # Feedback visuel : bouton rouge pendant l'enregistrement
+        try:
+            self.btn_voice.config(bg="#c0392b", text="⏺ Enregistrement...")
+        except Exception:
+            pass
+
+        self.msg_queue.put({
+            "sender": "Système",
+            "text":   "🎤 Enregistrement… (relâchez pour envoyer)",
+            "color":  "#2196F3",
+        })
+        ptt_start()
+
+    def _on_ptt_release(self):
+        """Planifie l'arrêt PTT avec un délai de 120 ms (debounce X11 key-repeat).
+        Si un nouveau KeyPress arrive avant le délai, le release est annulé."""
+        if not getattr(self, "_ptt_active", False):
+            return
+
+        # Délai suffisant pour absorber la période de répétition X11 (~30 ms)
+        # mais court enough pour ne pas se sentir
+        self._ptt_release_after_id = self.root.after(120, self._do_ptt_stop)
+
+    def _do_ptt_stop(self):
+        """Exécute l'arrêt réel du PTT — appelé après le délai de debounce."""
+        self._ptt_release_after_id = None
+        if not getattr(self, "_ptt_active", False):
+            return
+        self._ptt_active = False
+
+        # Restaurer l'apparence du bouton immédiatement (thread Tk)
+        try:
+            self.btn_voice.config(bg="#2196F3", text="🎤 Parler")
+        except Exception:
+            pass
+
+        def _transcribe_and_send():
+            texte = ptt_stop_and_transcribe()
+            if not texte or texte.startswith("["):
+                self.msg_queue.put({
+                    "sender": "Système",
+                    "text":   f"🎤 {texte or '[Aucun audio]'}",
+                    "color":  "#FF9800",
+                })
+                return
+            self.user_input = texte
+            self.msg_queue.put({
+                "sender": "Alexis_Le_MJ (Vocal)",
+                "text":   texte,
+                "color":  "#4CAF50",
+            })
+            self.input_event.set()
+
+        threading.Thread(target=_transcribe_and_send, daemon=True, name="ptt-transcribe").start()
+
+    # ─── Ancienne méthode (conservée pour compatibilité éventuelle) ──────────
     def send_voice(self):
         if not self.input_event.is_set():
             def voice_thread():

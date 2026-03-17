@@ -111,6 +111,9 @@ DEFAULTS: dict = {
         "poll_geometry_ms":    2000,
         "stats_refresh_ms":    2000,
     },
+    "ptt": {
+        "hotkey": "F12",   # keysym Tk — ex: "F12", "space", "Insert", "grave"
+    },
     "campaign_name": "campagne",   # Nom du dossier de sauvegarde (campagne/<nom>/)
 }
 
@@ -176,6 +179,10 @@ def get_piper_pitch(char_name: str) -> float:
     """Retourne le pitch shift (demi-tons) configuré pour un personnage Piper."""
     pitch_cfg = APP_CONFIG.get("piper", {}).get("pitch", DEFAULTS["piper"]["pitch"])
     return float(pitch_cfg.get(char_name, pitch_cfg.get("default", 0.0)))
+
+def get_ptt_config() -> dict:
+    return APP_CONFIG.get("ptt", DEFAULTS["ptt"])
+
 
 def get_campaign_name() -> str:
     """Retourne le nom de la campagne (utilisé pour le dossier de sauvegarde)."""

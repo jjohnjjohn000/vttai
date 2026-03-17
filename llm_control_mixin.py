@@ -29,6 +29,7 @@ from llm_config   import StopLLMRequested, build_llm_config, _SSL_LOCK
 from state_manager import roll_dice, load_state
 from agent_logger  import log_llm_start, log_llm_end, log_tts_start
 from state_manager import get_active_characters
+from chat_log_writer import strip_mechanical_blocks
 
 # ─── Verrou global SSL/httpx ──────────────────────────────────────────────────
 # _SSL_LOCK est importé depuis llm_config.py — objet UNIQUE partagé avec
@@ -207,7 +208,7 @@ class LLMControlMixin:
 
     # ─── Message privé MJ → agent ────────────────────────────────────────────
 
-    def _send_private_message(self, char_name: str, message: str):
+    def _send_private_message(self, char_name: str, message: str, inject_groupchat: bool = True):
         import autogen  # lazy
         """Envoie un message secret directement à un agent (bypass groupchat). Affiché en chat côté MJ."""
         agent = self._agents.get(char_name)
@@ -243,34 +244,53 @@ class LLMControlMixin:
         # FIX SEGFAULT SSL : on sérialise tous les appels directs via _DIRECT_LLM_LOCK
         # ET on force la création d'un client httpx isolé (pas de pool partagé)
         # pour éviter la collision OpenSSL entre threads sur Linux/Python 3.10.
-        try:
-            import httpx as _httpx
-            import openai as _openai
-            cfg0 = agent.llm_config["config_list"][0]
-            # Client httpx neuf à chaque appel → pas de pool SSL partagé
+        # Itère sur toute la config_list pour reproduire le comportement de fallback
+        # d'AutoGen (si le modèle principal retourne 404/429, on tente le suivant).
+        import httpx as _httpx
+        import openai as _openai
+
+        config_list = agent.llm_config.get("config_list", [])
+        temperature = agent.llm_config.get("temperature", 0.7)
+        text_content = ""
+        last_error = None
+
+        log_llm_start(char_name, prompt, context="msg_privé")
+        for cfg in config_list:
             http_client = _httpx.Client()
-            oa_client = _openai.OpenAI(
-                api_key     = cfg0["api_key"],
-                base_url    = str(cfg0.get("base_url", "https://api.openai.com/v1")),
-                http_client = http_client,
-            )
-            log_llm_start(char_name, prompt, context="msg_privé")
-            with _DIRECT_LLM_LOCK:
-                resp = oa_client.chat.completions.create(
-                    model    = cfg0["model"],
-                    messages = [
-                        {"role": "system", "content": system_msg},
-                        {"role": "user",   "content": prompt},
-                    ],
-                    max_tokens  = 300,
-                    temperature = agent.llm_config.get("temperature", 0.7),
+            try:
+                oa_client = _openai.OpenAI(
+                    api_key     = cfg["api_key"],
+                    base_url    = str(cfg.get("base_url", "https://api.openai.com/v1")),
+                    http_client = http_client,
+                    default_headers = cfg.get("default_headers", {}),
                 )
-            text_content = (resp.choices[0].message.content or "").strip()
-            log_llm_end(char_name, response_preview=text_content)
-            http_client.close()
-        except Exception as e:
-            log_llm_end(char_name, error=str(e))
-            self.msg_queue.put({"sender": "❌ Erreur", "text": f"Échec msg privé pour {char_name} : {e}", "color": "#F44336"})
+                with _DIRECT_LLM_LOCK:
+                    resp = oa_client.chat.completions.create(
+                        model    = cfg["model"],
+                        messages = [
+                            {"role": "system", "content": system_msg},
+                            {"role": "user",   "content": prompt},
+                        ],
+                        max_tokens  = 800,
+                        temperature = temperature,
+                    )
+                choice = resp.choices[0]
+                text_content = (choice.message.content or "").strip()
+                finish = getattr(choice, "finish_reason", "?")
+                if finish == "length":
+                    print(f"[msg_privé] ⚠ {char_name} — finish_reason=length, réponse tronquée par max_tokens")
+                log_llm_end(char_name, response_preview=text_content)
+                last_error = None
+                break  # succès → on sort de la boucle
+            except Exception as e:
+                last_error = e
+                print(f"[msg_privé] {char_name} — modèle {cfg.get('model','?')} échoué : {e}, essai suivant…")
+            finally:
+                http_client.close()
+
+        if last_error is not None:
+            log_llm_end(char_name, error=str(last_error))
+            self.msg_queue.put({"sender": "❌ Erreur", "text": f"Échec msg privé pour {char_name} : {last_error}", "color": "#F44336"})
             return
 
         if not text_content or text_content == "[SILENCE]":
@@ -281,24 +301,30 @@ class LLMControlMixin:
             # L'agent veut parler au groupe directement — on injecte sans demander
             clean_text = text_content[len("[GROUPE]"):].strip()
             self.msg_queue.put({"sender": char_name, "text": clean_text, "color": char_color})
-            log_tts_start(char_name, clean_text)
-            self.audio_queue.put((clean_text, char_name))
-            # Injecter dans le groupchat comme si c'était un vrai message du joueur
-            relayed = f"[{char_name}, s'adressant au groupe] {clean_text}"
-            if self._llm_running and not self._waiting_for_mj:
-                self._pending_interrupt_input = relayed
-                self._pending_interrupt_display = None
-                self._inject_stop()
-            else:
-                self.user_input = relayed
-                self.input_event.set()
+            _tts_groupe = strip_mechanical_blocks(clean_text)
+            if _tts_groupe:
+                log_tts_start(char_name, _tts_groupe)
+                self.audio_queue.put((_tts_groupe, char_name))
+            # Injecter dans le groupchat seulement si demandé
+            # (inject_groupchat=False depuis le bouton Parler pour éviter le double message)
+            if inject_groupchat:
+                relayed = f"[{char_name}, s'adressant au groupe] {clean_text}"
+                if self._llm_running and not self._waiting_for_mj:
+                    self._pending_interrupt_input = relayed
+                    self._pending_interrupt_display = None
+                    self._inject_stop()
+                else:
+                    self.user_input = relayed
+                    self.input_event.set()
 
         else:
             # L'agent répond en secret ([SECRET] ou pas de balise reconnue)
             clean_text = text_content[len("[SECRET]"):].strip() if text_content.startswith("[SECRET]") else text_content
             self.msg_queue.put({"sender": f"🔒 {char_name} (privé)", "text": clean_text, "color": char_color})
-            log_tts_start(char_name, clean_text)
-            self.audio_queue.put((clean_text, char_name))
+            _tts_secret = strip_mechanical_blocks(clean_text)
+            if _tts_secret:
+                log_tts_start(char_name, _tts_secret)
+                self.audio_queue.put((_tts_secret, char_name))
             # Garder le bouton relay : le MJ peut décider de partager au groupe
             self.msg_queue.put({"action": "relay_button", "char_name": char_name, "reply_text": clean_text})
 
@@ -396,9 +422,10 @@ class LLMControlMixin:
                         "text":   f"→ **{choice}**" + (f"  —  {raison}" if raison else ""),
                         "color":  color
                     })
-                    tts_text = raison or choice
-                    log_tts_start(name, tts_text)
-                    self.audio_queue.put((tts_text, name))
+                    tts_text = strip_mechanical_blocks(raison or choice)
+                    if tts_text:
+                        log_tts_start(name, tts_text)
+                        self.audio_queue.put((tts_text, name))
 
         # Décompte
         tally: dict[str, list[str]] = {c: [] for c in choices}
@@ -514,5 +541,7 @@ class LLMControlMixin:
 
         if text_content:
             self.msg_queue.put({"sender": char_name, "text": text_content, "color": "#e0e0e0"})
-            log_tts_start(char_name, text_content)
-            self.audio_queue.put((text_content, char_name))
+            _tts_skill = strip_mechanical_blocks(text_content)
+            if _tts_skill:
+                log_tts_start(char_name, _tts_skill)
+                self.audio_queue.put((_tts_skill, char_name))

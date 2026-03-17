@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "clog_000",
+      "label": "Prologue — Arrivée en Barovie",
+      "session_range": [
+        0,
+        0
+      ],
+      "date_archived": "2026-03-16T00:00:00",
+      "summary": "### Archives de la Campagne : L'Appel de Séluné et les Premières Épreuves (Prologue)\n\n**Origine et Mission**\n\nLe groupe fut arraché à son monde et téléporté en Barovie, terre étrangère et oppressante, enveloppée d'une brume perpétuelle. C'est la voix de **Séluné** elle-même qui les accueillit dans ce nouvel exil, leur révélant qu'ils avaient été choisis pour achever la purification de cette terre maudite et terrasser le mal qui la ronge depuis des siècles.\n\n**Le Village de Barovie et l'Église Maudite**\n\nÀ leur arrivée au village de Barovie, le groupe fit la connaissance d'**Ismark Kolyanovich**, un homme pressé et inquiet, qui repartit rapidement chez lui. L'église du village les attira ensuite — ils y découvrirent le **Père Donavich**, ivre et prostré en pleurs devant l'autel. La vérité fut vite révélée : le prêtre retenait dans la cave de l'église son propre fils, transformé en mort-vivant. Le groupe purgea la créature, mettant fin à ce calvaire. La réaction du père fut violente : fou de rage et de douleur, il dut être endormi avant que le groupe ne quitte les lieux.\n\n**Ireena, Ismark et la Route vers Vallaki**\n\nLe groupe rejoignit ensuite **Ismark** et sa sœur **Ireena Kolyanovich** à leur demeure. Ensemble, ils élaborèrent un plan : conduire Ireena en sécurité jusqu'à **Vallaki**, la ville fortifiée à l'ouest. Le voyage les mena le long d'une route sinistre, où ils croisèrent un vieux moulin isolé à l'aspect macabre — un détail qui ne manqua pas d'éveiller la méfiance du groupe.\n\n**Portes Fermées et Détour vers Krezk**\n\nÀ leur arrivée, les portes de **Vallaki** leur furent refusées — aucune entrée possible. Le groupe envisagea alors **Krezk** comme destination alternative, et tenta de convaincre Ireena de les accompagner vers une mare magique où elle avait jadis eu une vision. Profondément mal à l'aise, Ireena refusa et repartit avec Ismark en direction de Vallaki. Les deux frère et sœur réussirent finalement à entrer dans la ville, laissant le groupe derrière les murs fermés.\n\n**Le Moulin des Guenaudes et les Enfants Rescapés**\n\nIsmark avait auparavant mentionné la disparition de plusieurs enfants du village, tous orientés vers le vieux moulin aperçu sur la route. Le groupe s'y rendit. Ils y affrontèrent des **guenaudes** dans un combat acharné — deux d'entre elles prirent la fuite. Deux enfants furent rescapés des griffes des sorcières. Conscients que les familles des enfants risquaient de les revendre aux guenaudes, le groupe décida de les emmener avec eux et prit finalement la route d'**Argynvostholt**, leur premier véritable bastion en Barovie.\n\n*Archivé manuellement — événements précédant les sessions numérotées.*",
+      "keywords": [
+        "Séluné",
+        "Barovie",
+        "Ismark",
+        "Ireena",
+        "Donavich",
+        "église",
+        "mort-vivant",
+        "Vallaki",
+        "Krezk",
+        "moulin",
+        "guenaudes",
+        "enfants",
+        "Argynvostholt",
+        "Kaelen",
+        "Elara",
+        "Thorne",
+        "Lyra",
+        "téléportation",
+        "purge",
+        "mission"
+      ],
+      "characters": [
+        "Kaelen",
+        "Elara",
+        "Thorne",
+        "Lyra"
+      ],
+      "locations": [
+        "Village de Barovie",
+        "Vallaki",
+        "Krezk",
+        "Argynvostholt"
+      ],
+      "importance": 3,
+      "auto_archived": false,
+      "agent_reads": {
+        "Kaelen": "2026-03-16T21:27:19",
+        "Elara": "2026-03-16T21:27:19",
+        "Thorne": "2026-03-16T21:27:19",
+        "Lyra": "2026-03-16T21:27:19"
+      }
+    },
+    {
+      "id": "clog_001",
+      "label": "Sessions 1–15",
+      "session_range": [
+        1,
+        15
+      ],
+      "date_archived": "2026-03-16T17:41:13",
+      "summary": "### Archives de la Campagne : Le Cœur Brisé d'Argynvostholt (Sessions 1-15)\n\n**Synthèse Historique**\n\nAprès avoir rejeté l'asile incertain de Vallaki, le groupe, escortant **Ireena et Ismark Kolyanovich** ainsi que les orphelins rescapés du moulin des guenaudes, a fait d'**Argynvostholt** son bastion. L'imposant manoir, ancien siège de l'Ordre du Dragon d'Argent, s'est révélé être un sanctuaire complexe, hanté par des échos de trahison et une \"maladie spirituelle\" profonde. Sous l'impulsion de **Kaelen**, qui a exigé un serment de protection absolue, Ireena a pris un rôle de leader, transformant la ruine en un foyer pour les innocents.\n\n**La Guerre contre l'Invisible**\nLa sécurisation du site a rapidement polarisé les approches du groupe. D'un côté, **Lyra** a promu une vision de purification spirituelle, cherchant à apaiser les âmes des chevaliers défunts, tandis que **Thorne** et **Elara** privilégiaient une approche pragmatique et technique. Le travail de nettoyage fut titanesque : après avoir barricadé les zones les plus fragiles au rez-de-chaussée, le groupe s'est divisé pour purger les tours et les étages supérieurs. \n\nL'exploration a mené à des découvertes majeures :\n*   **Le Phare de l'Ordre** : Kaelen et Elara, au prix d'une escalade périlleuse, ont réactivé le phare sommital. Alimenté par une conscience draconique résiduelle, ce mécanisme purifie l'atmosphère, neutralise la compulsion malveillante des revenants et renforce le moral des réfugiés.\n*   **Le Cimetière et le Mausolée** : Lyra a identifié le mausolée d'Argynvost, déchiffrant des inscriptions draconiques qui attestent de la grandeur passée du lieu. Elle insiste désormais sur la nécessité de consacrer le cimetière pour ériger une défense spirituelle pérenne.\n*   **Les Anomalies du Second Étage** : L'exploration des niveaux supérieurs a révélé une architecture piégée par des sorts d'Évocation. Lors d'une confrontation brutale, le groupe a été pris au piège par un mur de force spectral. La menace des fantômes, quasi invulnérables aux armes conventionnelles, a été contenue grâce à la puissance arcanique d'Elara (utilisant la *Désintégration*) et à la précision tactique de Thorne.\n\n**État de la Situation**\nArgynvostholt est désormais une forteresse opérationnelle, mais une forteresse en sursis. Le rez-de-chaussée est placé sous la garde vigilante de **Kaelen**, garantissant la sécurité d'Ireena et des enfants. Ismark a consolidé le premier étage, tandis que le second étage, bien que partiellement purgé, reste une zone de haute instabilité magique. \n\n**Continuité Narrative**\n*   **Menaces** : La nature de la \"souillure\" du manoir, symbolisée par le sarcophage vide et les vestiges corrompus, suggère que le repos d'Argynvost reste altéré. La question de l'origine de cette corruption demeure un point central.\n*   **Dynamique interne** : Le fossé philosophique entre le pragmatisme tactique d'Elara/Thorne et la ferveur spirituelle de Lyra/Kaelen continue de structurer les décisions du groupe.\n*   **Prochaines étapes** : La sécurisation complète des tours supérieures et la consécration définitive du cimetière sont les priorités pour clore la phase de fortification. \n\n*Archivé le 15 mars 2026 par le Chroniqueur IA.*",
+      "keywords": [
+        "Kaelen",
+        "Thorne",
+        "Argynvostholt",
+        "Cimetière",
+        "Étage",
+        "groupe",
+        "spirituelle",
+        "Vallaki",
+        "Eva",
+        "Phare",
+        "Ireena",
+        "serment",
+        "sanctuaire",
+        "Ismark",
+        "Manoir",
+        "Lyra",
+        "Elara",
+        "Moulin",
+        "revenants",
+        "sort",
+        "Campagne",
+        "Brisé",
+        "Sessions",
+        "Synthèse",
+        "Historique"
+      ],
+      "characters": [
+        "Kaelen",
+        "Elara",
+        "Thorne",
+        "Lyra"
+      ],
+      "locations": [],
+      "importance": 2,
+      "auto_archived": true,
+      "agent_reads": {
+        "Kaelen": "2026-03-16T21:57:52",
+        "Elara": "2026-03-16T21:57:52",
+        "Thorne": "2026-03-16T21:57:52",
+        "Lyra": "2026-03-16T21:57:52"
+      }
+    },
+    {
+      "id": "clog_003",
+      "label": "Sessions 16–18",
+      "session_range": [
+        16,
+        18
+      ],
+      "date_archived": "2026-03-16T18:46:47",
+      "summary": "────────────────────────────────────────────────────────────\n  Sessions 16–18  (sessions 16–18)\n  Archivé le : 2026-03-16T12:00:00\n  Mots-clés  : Argynvostholt, Elara, Lyra, Thorne, Ismark, cicatrice arcanique, illusion, Argynvost, dragon, tour Ouest, purifications, faiblesses structurelles\n────────────────────────────────────────────────────────────\n\n### Archives de la Campagne : L’Écho du Dragon et les Ombres de la Mémoire (Sessions 16–18)\n\n**Synthèse Historique**\n\nLa fortification d'Argynvostholt s'est poursuivie avec une intensité accrue, bien que teintée de méfiance croissante à l'égard de leur allié, **Ismark Kolyanovich**. Alors que **Kaelen** assurait une garde imperturbable au rez-de-chaussée pour protéger **Ireena** et les réfugiés, le reste du groupe s’est lancé dans une exploration méthodique des étages supérieurs, révélant des failles structurelles préoccupantes et des anomalies magiques persistantes.\n\n**L'Incursion dans le Passé et la Corruption**\nL'exploration du deuxième étage a mis en lumière la dangerosité latente du manoir. Après avoir neutralisé des spectres menaçants grâce à la puissance arcanique d'**Elara** et à la détermination de **Thorne**, le groupe a été confronté à des phénomènes perturbateurs. Une \"tête de Thorne\" voilée apparue dans une chambre en ruine a permis à Elara d’identifier la nature du mal local : des « cicatrices arcaniques », des échos de la corruption de **Strahd** imprégnés dans la terre même. Ces illusions ne peuvent être dissipées par la magie conventionnelle, mais exigent la neutralisation d'un point de focalisation occulte.\n\nLe troisième étage, quant à lui, a été le théâtre d’une tension diplomatique. **Ismark** a soutenu que les précédents explorateurs — les \"Héros de l'Aube Brisée\" — avaient libéré l'âme du capitaine de l'Ordre et récupéré une épée légendaire. Toutefois, les analyses techniques d’Elara et le scepticisme de Thorne ont contredit cette version des faits, ne trouvant aucune trace de rituel de libération ni aucune preuve des dommages structurels colossaux qu'Ismark attribuait à des « obus » mystérieux. Cette divergence d'informations a durablement entaché la confiance du groupe envers leur guide local.\n\n**La Révélation de la Statue**\nLe tournant majeur de cette période est survenu lors de l'exploration des tours. Une statue de dragon a délivré une prophétie énigmatique : *« Quand le dragon rêvera dans son tombeau légitime, la lumière d'Argynvost brillera et chassera les ténèbres de cette terre. »* Pour **Lyra**, cette injonction est claire : la véritable purification du bastion ne pourra aboutir que si les restes profanés d'Argynvost sont retrouvés et honorés. Cette quête devient désormais l'objectif cardinal pour assurer la pérennité du sanctuaire.\n\n**État de la Situation**\nArgynvostholt demeure un havre précaire. Si la lumière du phare continue de repousser les ténèbres, la structure physique du manoir se dégrade rapidement, nécessitant des réparations urgentes. L'attention du groupe se concentre désormais sur la sécurisation de la tour Ouest, tout en naviguant dans un climat de méfiance grandissante envers les récits fournis par Ismark.\n\n*Archivé le 16 mars 2026 par le Chroniqueur IA.*",
+      "keywords": [
+        "Thorne",
+        "Ismark",
+        "Elara",
+        "lumière",
+        "Sessions",
+        "dragon",
+        "groupe",
+        "Phare",
+        "sanctuaire",
+        "Strahd",
+        "Argynvostholt",
+        "Lyra",
+        "Ireena",
+        "prophétie",
+        "Kaelen",
+        "quête",
+        "ténèbres",
+        "Manoir",
+        "magie",
+        "Archivé",
+        "Mots-clés",
+        "Argynvost",
+        "Ouest",
+        "Archives",
+        "Campagne"
+      ],
+      "characters": [
+        "Kaelen",
+        "Elara",
+        "Thorne",
+        "Lyra"
+      ],
+      "locations": [],
+      "importance": 2,
+      "auto_archived": true,
+      "agent_reads": {
+        "Kaelen": "2026-03-16T21:57:52",
+        "Elara": "2026-03-16T21:57:52",
+        "Thorne": "2026-03-16T21:57:52",
+        "Lyra": "2026-03-16T21:57:52"
+      }
+    },
+    {
+      "id": "clog_004",
+      "label": "Sessions 19–21",
+      "session_range": [
+        19,
+        21
+      ],
+      "date_archived": "2026-03-16T21:39:57",
+      "summary": "### Archives de la Campagne : L’Ancre du Destin et la Faille du Monde (Sessions 19–21)\n\n**Synthèse Historique**\n\nLa fortification d'Argynvostholt a franchi une étape déterminante, passant d'un simple refuge de fortune à un véritable bastion de résistance. Sous l'impulsion spirituelle d'**Ireena Kolyana**, dont la transfiguration a galvanisé les survivants, le manoir a été consacré comme « l'enclume sur laquelle sera reforger le monde ». Cette ferveur nouvelle a permis au groupe — **Kaelen, Elara, Thorne et Lyra** — de passer d'une stratégie de défense passive à une offensive structurelle indispensable.\n\n**La Consolidation de l’Espoir**\nAlors que le phare d’Argynvost continue de projeter une lumière purificatrice, le groupe a compris que la simple force des armes ne suffirait pas. Sous la direction pragmatique d’Elara, une expédition a été organisée pour remédier aux faiblesses structurelles du manoir. La quête des restes d’Argynvost, identifiée comme la condition *sine qua non* pour que le Fanal déploie sa pleine puissance, est devenue la priorité absolue, validée par la vision royale d'Ireena.\n\n**La Brèche Cosmique**\nCependant, alors que les préparatifs de l'expédition vers Krezk touchaient à leur fin, la réalité elle-même a manifesté une instabilité alarmante. À la sortie du manoir, une déchirure spatiale — une blessure dans le tissu de la Barovie — s'est ouverte, manquant d'engloutir **Thorne**. Cet événement, plus inquiétant que les menaces locales de Strahd, a révélé aux compagnons que leur lutte s'inscrit dans un péril cosmique. Cette faille, toujours non résolue, plane désormais comme une épée de Damoclès sur le sanctuaire, rendant l'urgence de retrouver des alliés experts, telle qu'**Ezmerelda**, plus critique que jamais.\n\n**L'Expédition vers Krezk**\nMalgré ces pressions, le groupe a maintenu sa détermination. Traversant des terres où les menaces (bandits, lycanthropes et la mystérieuse sorcière de Berez) s'intensifient, les compagnons ont atteint Krezk après une traversée marquée par une anomalie mélodique troublante près du pont de la Rivière Corbeau. Arrivés aux portes du village, ils ont entamé des pourparlers officiels avec le Maire Krezkov afin de recruter des artisans qualifiés pour la restauration du manoir.\n\n**Continuité Narrative**\n*   **Quêtes** : La priorité est le recrutement du maçon de Krezk pour sauver l'intégrité physique du bastion. La quête spirituelle pour ramener les restes d'Argynvost à son « tombeau légitime » demeure le pilier central de la victoire contre les ténèbres.\n*   **Menaces** : En plus de la tyrannie de Strahd, le groupe fait face à une corruption de la réalité (la faille spatiale) et à la montée en puissance de la lycanthropie à l'approche de la pleine lune.\n*   **Dynamique** : La confiance envers Ismark Kolyanovich, bien que sollicité pour la gestion interne d'Argynvostholt, demeure tempérée par le besoin d'expertise externe (Ezmerelda). Le groupe navigue désormais avec une conscience accrue de la nature instable du monde barovien.\n\n*Archivé le 16 mars 2026 par le Chroniqueur IA.*",
+      "keywords": [
+        "Krezk",
+        "Faille",
+        "Monde",
+        "groupe",
+        "manoir",
+        "Elara",
+        "Krezkov",
+        "Ismark",
+        "cosmique",
+        "Ireena",
+        "Argynvostholt",
+        "Kaelen",
+        "Thorne",
+        "Lyra",
+        "lumière",
+        "Phare",
+        "sort",
+        "Strahd",
+        "ténèbres",
+        "Ezmerelda",
+        "quête",
+        "sanctuaire",
+        "menaces",
+        "Campagne",
+        "Ancre"
+      ],
+      "characters": [
+        "Kaelen",
+        "Elara",
+        "Thorne",
+        "Lyra"
+      ],
+      "locations": [],
+      "importance": 2,
+      "auto_archived": true,
+      "agent_reads": {
+        "Kaelen": "2026-03-16T21:44:50",
+        "Elara": "2026-03-16T21:44:50",
+        "Thorne": "2026-03-16T21:44:50",
+        "Lyra": "2026-03-16T21:44:50"
+      }
+    }
+  ],
+  "meta": {}
+}

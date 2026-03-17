@@ -29,7 +29,7 @@ from app_config    import (get_agent_config, get_chronicler_config,
                            get_groupchat_config, get_memories_config)
 from state_manager import (
     load_state, save_state, get_npcs,
-    use_spell_slot, update_hp,
+    use_spell_slot, update_hp, add_temp_hp,
     get_scene_prompt, get_active_quests_prompt,
     get_memories_prompt_compact, get_calendar_prompt,
     get_session_logs_prompt, get_active_characters,
@@ -38,7 +38,7 @@ from state_manager import (
 from agent_logger  import log_tts_start
 from combat_tracker import COMBAT_STATE, _is_fully_silenced
 from combat_map_panel import get_map_prompt
-from chat_log_writer import ChatLogWriter
+from chat_log_writer import ChatLogWriter, strip_mechanical_blocks
 
 
 class AutogenEngineMixin:
@@ -152,7 +152,7 @@ class AutogenEngineMixin:
             "\n     C'est le MJ seul qui décrit ce qui existe dans le monde."
             "\n     Exemple INTERDIT : 'Je trouve une brique sur pivot dissimulée par la suie.'"
             "\n     Exemple CORRECT  : 'Mes doigts s'arrêtent. Quelque chose cloche ici.'"
-            "\n  4. NE JAMAIS appeler roll_dice, use_spell_slot, update_hp de ta propre initiative."
+            "\n  4. NE JAMAIS appeler roll_dice, use_spell_slot, update_hp, add_temp_hp de ta propre initiative."
             "\n     EXCEPTION : si tu reçois une [DIRECTIVE SYSTÈME — JET] ou [DIRECTIVE SYSTÈME — DÉGÂTS]"
             "\n     avec ton nom, tu DOIS appeler l'outil indiqué IMMÉDIATEMENT, AVANT tout texte."
             "\n  5. NE JAMAIS inventer un résultat différent de celui donné par le système.\n"
@@ -476,6 +476,21 @@ class AutogenEngineMixin:
                 update_hp, caller=_upd_agent, executor=mj_agent,
                 name="update_hp",
                 description=_update_hp_desc,
+            )
+
+        # add_temp_hp : enregistré sur TOUS les agents joueurs.
+        _add_temp_hp_desc = (
+            "Ajouter des PV temporaires à un personnage (sorts, capacités raciales, etc.). "
+            "Règle D&D 5e : les PV temporaires ne se cumulent pas — seul le plus grand total est conservé. "
+            "Ils absorbent les dégâts AVANT les PV réels. Les soins ne les restaurent pas. "
+            "Paramètres : character_name (str, ex: 'Lyra'), amount (int positif, ex: 8). "
+            "À appeler dès que le MJ confirme que tu gagnes des PV temporaires."
+        )
+        for _upd_agent in [kaelen_agent, elara_agent, thorne_agent, lyra_agent]:
+            autogen.agentchat.register_function(
+                add_temp_hp, caller=_upd_agent, executor=mj_agent,
+                name="add_temp_hp",
+                description=_add_temp_hp_desc,
             )
 
         # Kaelen et Thorne : combat (dés + sorts)
@@ -1245,133 +1260,70 @@ class AutogenEngineMixin:
             except Exception:
                 return []
 
-        # ── Traduction FR → EN des noms de sorts (pour le matching) ─────────────
-        # Les agents LLM utilisent les noms français ; les sorts sont stockés en anglais.
-        # Cette table couvre tous les sorts susceptibles d'apparaître en campagne FR.
-        # Clés : formes françaises normalisées (sans accents, lowercase) attendues du LLM.
-        _SPELL_FR_EN: dict[str, str] = {
-            # ── Sorts d'Elara ──
-            "desintegration":           "Disintegrate",
-            "desintegrer":              "Disintegrate",
-            "boule de feu":             "Fireball",
-            "projectile magique":       "Magic Missile",
-            "armure du mage":           "Mage Armor",
-            "armure de mage":           "Mage Armor",
-            "detection de la magie":    "Detect Magic",
-            "detecter la magie":        "Detect Magic",
-            "contresort":               "Counterspell",
-            "contre-sort":              "Counterspell",
-            "dissipation de la magie":  "Dispel Magic",
-            "dissiper la magie":        "Dispel Magic",
-            "porte dimensionnelle":     "Dimension Door",
-            "mur de force":             "Wall of Force",
-            "teleportation":            "Teleport",
-            "mot de pouvoir etourdissant": "Power Word Stun",
-            "mot de pouvoir : etourdissement": "Power Word Stun",
-            "trait de feu":             "Fire Bolt",
-            "rayon de feu":             "Fire Bolt",
-            "prestidigitation":         "Prestidigitation",
-            # ── Sorts de Kaelen ──
-            "soins":                    "Cure Wounds",
-            "soin des blessures":       "Cure Wounds",
-            "faveur divine":            "Divine Favor",
-            "bouclier de la foi":       "Shield of Faith",
-            "restauration partielle":   "Lesser Restoration",
-            "petite restauration":      "Lesser Restoration",
-            "pas brumeux":              "Misty Step",
-            "lumiere du jour":          "Daylight",
-            "protection contre l energie": "Protection from Energy",
-            "protection de l energie":  "Protection from Energy",
-            "bannissement":             "Banishment",
-            # ── Sorts de Lyra ──
-            "lumiere":                  "Light",
-            "resistance":               "Resistance",
-            "benediction":              "Bless",
-            "benedir":                  "Bless",
-            "mot de guerison":          "Healing Word",
-            "mot de soin":              "Healing Word",
-            "stabilisation":            "Spare the Dying",
-            "soins de groupe":          "Mass Cure Wounds",
-            "sanctuaire mortel":        "Death Ward",
-            "grande restauration":      "Greater Restoration",
-            "consecration":             "Hallow",
-            "guerison":                 "Heal",
-            "resurrection":             "Resurrection",
-            # ── Génériques courants ──
-            "bouclier":                 "Shield",
-            "saut":                     "Jump",
-            "chute de plume":           "Feather Fall",
-            "image majeure":            "Major Image",
-            "image mineure":            "Minor Image",
-            "invisibilite":             "Invisibility",
-            "grande invisibilite":      "Greater Invisibility",
-            "vol":                      "Fly",
-            "levitation":               "Levitate",
-            "sphere de feu":            "Fireball",
-            "cone de froid":            "Cone of Cold",
-            "eclair":                   "Lightning Bolt",
-            "chaine d eclairs":         "Chain Lightning",
-            "metamorphose":             "Polymorph",
-            "transmutation superieure": "True Polymorph",
-            "nuage mortel":             "Cloudkill",
-            "nuage incendiaire":        "Incendiary Cloud",
-            "tempete de neige":         "Ice Storm",
-            "blizzard":                 "Ice Storm",
-            "marche sur l eau":         "Water Walk",
-            "communication avec les morts": "Speak with Dead",
-            "communication avec les animaux": "Speak with Animals",
-            "communion avec la nature": "Commune with Nature",
-            "clairvoyance":             "Clairvoyance",
-            "scrutation":               "Scrying",
-            "telekinesie":              "Telekinesis",
-            "suggestion":               "Suggestion",
-            "suggestion de groupe":     "Mass Suggestion",
-            "charme-personne":          "Charm Person",
-            "domination de personne":   "Dominate Person",
-            "domination de monstre":    "Dominate Monster",
-            "peur":                     "Fear",
-            "confusion":                "Confusion",
-            "silence":                  "Silence",
-            "obscurcissement":          "Darkness",
-            "lueurs feeriques":         "Faerie Fire",
-            "mains brulantes":          "Burning Hands",
-            "pas dimensionnel":         "Dimension Door",
-            "portail":                  "Gate",
-            "soin de groupe":           "Mass Cure Wounds",
-            "soin massif":              "Mass Cure Wounds",
-            "rappel a la vie":          "Raise Dead",
-            "animation des morts":      "Animate Dead",
-            "squelette":                "Animate Dead",
-            "zombie":                   "Animate Dead",
-            "convocation d elementaire": "Conjure Elemental",
-            "convocation de demons":    "Conjure Fey",
-            "cercle de mort":           "Circle of Death",
-            "souffle de vie":           "Mass Cure Wounds",
-            "sanctuary":                "Sanctuary",
-            "sanctuaire":               "Sanctuary",
-            "gardiens spirituels":      "Spirit Guardians",
-            "lien divin":               "Divine Bond",
-            "frappe lumineuse":         "Guiding Bolt",
-            "trait lumineux":           "Guiding Bolt",
-            "trappe dimensionnelle":    "Dimension Door",
-            "armure":                   "Mage Armor",
-        }
+        def _extract_spell_name_llm(intention: str, char_name: str) -> str:
+            """
+            Utilise un LLM léger pour identifier le nom canonique du sort lancé.
+
+            Stratégie LLM + vérification codée :
+              - Le LLM reçoit le texte brut de l'intention ET la liste des sorts préparés.
+              - Il retourne UNIQUEMENT le nom exact du sort tel qu'il apparaît dans la liste,
+                ou "AUCUN" s'il ne reconnaît aucun sort.
+              - La vérification reste entièrement codée dans _is_spell_prepared.
+
+            Avantages vs regex :
+              - Gère naturellement les rituels ("en tant que rituel"), abréviations,
+                variantes de langue (FR/EN), fautes de frappe légères.
+              - Zéro maintenance : pas de table de traduction à mettre à jour.
+            """
+            import re as _re
+            prepared = _get_prepared_spell_names(char_name)
+            if not prepared:
+                return intention.strip()[:50]
+
+            spell_list = ", ".join(prepared)
+            prompt = (
+                f"Tu es un assistant de règles D&D 5e. "
+                f"Voici la liste des sorts préparés de {char_name} : {spell_list}.\n\n"
+                f"Dans ce texte d'action : \"{intention}\"\n\n"
+                f"Quel sort de la liste est lancé ? "
+                f"Réponds UNIQUEMENT avec le nom exact du sort tel qu'il apparaît dans la liste. "
+                f"Si aucun sort de la liste n'est mentionné, réponds : AUCUN. "
+                f"Aucune explication, aucune ponctuation supplémentaire."
+            )
+            try:
+                import autogen as _ag
+                from llm_config import build_llm_config, _default_model
+                from app_config import get_chronicler_config
+                _chron = get_chronicler_config()
+                _model = _chron.get("model", _default_model)
+                _cfg   = build_llm_config(_model, temperature=0.0)
+                client = _ag.OpenAIWrapper(config_list=_cfg["config_list"])
+                response = client.create(messages=[{"role": "user", "content": prompt}])
+                raw = (response.choices[0].message.content or "").strip()
+                # Nettoyer fences markdown éventuelles
+                raw = _re.sub(r"^```[a-z]*\s*", "", raw)
+                raw = _re.sub(r"\s*```$", "", raw.strip()).strip()
+                if raw.upper() == "AUCUN" or not raw:
+                    return ""
+                return raw
+            except Exception as e:
+                print(f"[SpellExtract] Erreur LLM : {e}")
+                # Fallback : retourner l'intention brute tronquée
+                return intention.strip()[:50]
 
         def _is_spell_prepared(char_name: str, spell_name: str) -> bool:
             """Retourne True si spell_name correspond à un sort préparé du personnage.
 
             Stratégie de correspondance (par ordre de priorité) :
               1. Égalité exacte après normalisation Unicode + lowercase.
-              2. Le nom du JSON est contenu dans la saisie LLM (ex. "gardiens spirituels"
-                 dans "j'invoque des gardiens spirituels autour de moi").
-              3. La saisie LLM est contenue dans le nom du JSON (ex. "boule de feu" dans
-                 un nom de sort étendu).
-              4. Traduction FR→EN : si la forme française normalisée figure dans
-                 _SPELL_FR_EN, on répète les tests 1-3 avec le nom anglais traduit.
+              2. Le nom du JSON est contenu dans la saisie (substring).
+              3. La saisie est contenue dans le nom du JSON.
 
-            Les cantrips (level=0) sont TOUJOURS autorisés — ils ne consomment pas de slot
-            et le vrai gardien est l'absence d'emplacement disponible, pas cette liste.
+            Note : la traduction FR→EN est désormais gérée en amont par
+            _extract_spell_name_llm, qui retourne directement le nom canonique
+            de la liste. Cette fonction reste le gardien déterministe final.
 
+            Les cantrips (level=0) sont TOUJOURS autorisés.
             Si le personnage n'a pas de liste de sorts définie → non restrictif (True).
             """
             import unicodedata as _ud
@@ -1384,7 +1336,6 @@ class AutogenEngineMixin:
 
             try:
                 state = load_state()
-                # ── Nouvelle structure : spells_prepared = liste de noms anglais ──
                 spell_names = (
                     state.get("characters", {})
                     .get(char_name, {})
@@ -1397,10 +1348,6 @@ class AutogenEngineMixin:
                 if not needle:
                     return True
 
-                # ── Ajouter la traduction FR→EN comme needle alternatif ──────────
-                needle_en = _norm(_SPELL_FR_EN.get(needle, spell_name.strip()))
-                needles = {needle, needle_en}  # set pour dédupliquer si pas de trad
-
                 # Essayer de récupérer le niveau via spell_data (cantrips toujours OK)
                 try:
                     from spell_data import get_spell as _gs, load_spells as _ls
@@ -1412,21 +1359,16 @@ class AutogenEngineMixin:
                     sp_name_n = _norm(name)
                     if not sp_name_n:
                         continue
-                    for ndl in needles:
-                        match = (
-                            sp_name_n == ndl
-                            or (len(sp_name_n) >= 5 and sp_name_n in ndl)
-                            or (len(ndl) >= 5 and ndl in sp_name_n)
-                        )
-                        if match:
-                            break
-                    else:
-                        continue
-                    # Cantrip (niveau 0) → toujours autorisé sans slot
-                    sp_data = _gs(name)
-                    if sp_data and int(sp_data.get("level", 1)) == 0:
+                    match = (
+                        sp_name_n == needle
+                        or (len(sp_name_n) >= 5 and sp_name_n in needle)
+                        or (len(needle) >= 5 and needle in sp_name_n)
+                    )
+                    if match:
+                        sp_data = _gs(name)
+                        if sp_data and int(sp_data.get("level", 1)) == 0:
+                            return True
                         return True
-                    return True   # sort préparé → autorisé
 
                 return False
             except Exception:
@@ -1632,30 +1574,10 @@ class AutogenEngineMixin:
                 dc_val    = _extract_dc(regle)
 
                 # ── Vérification liste de sorts préparés ─────────────────────
-                # Extraire le nom du sort depuis intention ou regle.
-                # On cherche le premier mot significatif après les mots-clés de sort.
+                # Le LLM identifie le nom canonique du sort depuis l'intention brute,
+                # gérant naturellement les rituels, variantes FR/EN, abréviations, etc.
                 if not is_cantrip:
-                    _SORT_PREFIX_KW = (
-                        # Formules explicites
-                        "sort :", "sort:", "sort de", "magie :",
-                        # Verbes de lancement (ordre du plus spécifique au plus général)
-                        "j'invoque", "j'appelle", "je convoque", "j'incante",
-                        "j'utilise", "j'active", "je déclenche", "je projette",
-                        "je lance", "lance", "incante", "utilise", "cast",
-                    )
-                    _spell_name_candidate = intention.strip()
-                    for _pfx in _SORT_PREFIX_KW:
-                        if _pfx in intention.lower():
-                            _spell_name_candidate = intention.lower().split(_pfx, 1)[-1].strip()
-                            # Retire l'article initial (le/la/les/un/une/des)
-                            import re as _re_sp
-                            _spell_name_candidate = _re_sp.sub(
-                                r'^(le |la |les |l\'|un |une |des )', '',
-                                _spell_name_candidate
-                            )
-                            break
-                    # Tronquer à 50 chars et nettoyer ponctuation
-                    _spell_name_candidate = _spell_name_candidate[:50].split("(")[0].split(",")[0].split(".")[0].strip()
+                    _spell_name_candidate = _extract_spell_name_llm(intention, char_name)
 
                     if _spell_name_candidate and not _is_spell_prepared(char_name, _spell_name_candidate):
                         _avail = _get_prepared_spell_names(char_name)
@@ -2107,7 +2029,7 @@ class AutogenEngineMixin:
                 dans audio_queue. Cela permet à Piper/edge-tts de commencer
                 la synthèse de la phrase 1 pendant que la phrase 2 est en attente,
                 réduisant la latence perçue sur les longues répliques."""
-                cleaned = _tts_clean(text)
+                cleaned = _tts_clean(strip_mechanical_blocks(text))
                 for sentence in _split_sentences(cleaned):
                     _app.audio_queue.put((sentence, char_name))
             if isinstance(message, dict):
@@ -2178,7 +2100,7 @@ class AutogenEngineMixin:
             # Quand le MJ demande un jet (dégâts, attaque, sauvegarde, soin…), l'agent
             # doit pouvoir exécuter l'appel d'outil sans que ça lui coûte une ressource
             # hors-tour, même s'il est silencieux ou que ce n'est pas son tour.
-            _FREE_TOOLS = frozenset({"roll_dice", "update_hp", "use_spell_slot"})
+            _FREE_TOOLS = frozenset({"roll_dice", "update_hp", "use_spell_slot", "add_temp_hp"})
             is_mj_roll_response = False
             if tool_calls and isinstance(tool_calls, list):
                 for _tc in tool_calls:
@@ -2189,6 +2111,13 @@ class AutogenEngineMixin:
                     )
                     if _fn_name in _FREE_TOOLS:
                         is_mj_roll_response = True
+                        # Sync tracker après add_temp_hp
+                        if _fn_name == "add_temp_hp":
+                            try:
+                                if _app._combat_tracker is not None:
+                                    _app.root.after(300, _app._combat_tracker.sync_pc_hp_from_state)
+                            except Exception:
+                                pass
                         break
 
             # ── FILTRE COMBAT : PJ hors-tour tente une action ──────────────
@@ -2510,23 +2439,9 @@ class AutogenEngineMixin:
                     # Même logique que dans _execute_action_mechanics mais ici
                     # on intercepte AVANT d'envoyer la carte de confirmation au MJ.
                     if _pre_is_spell and _pre_lvl and _pre_lvl > 0:
-                        _SORT_PREFIX_KW = (
-                            "sort :", "sort:", "sort de", "magie :",
-                            "j'invoque", "j'appelle", "je convoque", "j'incante",
-                            "j'utilise", "j'active", "je déclenche", "je projette",
-                            "je lance", "lance", "incante", "utilise", "cast",
+                        _pre_spell_candidate = _extract_spell_name_llm(
+                            _sub["intention"], name
                         )
-                        _pre_spell_candidate = _sub["intention"].strip()
-                        for _pfx in _SORT_PREFIX_KW:
-                            if _pfx in _sub["intention"].lower():
-                                _pre_spell_candidate = _sub["intention"].lower().split(_pfx, 1)[-1].strip()
-                                import re as _re_sp2
-                                _pre_spell_candidate = _re_sp2.sub(
-                                    r'^(le |la |les |l\'|un |une |des )', '',
-                                    _pre_spell_candidate
-                                )
-                                break
-                        _pre_spell_candidate = _pre_spell_candidate[:50].split("(")[0].split(",")[0].split(".")[0].strip()
 
                         if _pre_spell_candidate and not _is_spell_prepared(name, _pre_spell_candidate):
                             _avail2 = _get_prepared_spell_names(name)
@@ -3146,11 +3061,6 @@ class AutogenEngineMixin:
                         else:
                             continue
 
-                        _app.msg_queue.put({
-                            "sender": "⚙️ Système",
-                            "text":   _instr,
-                            "color":  "#ef9a9a" if _d_action == "degats" else "#4fc3f7",
-                        })
                         _original_receive(
                             self_mgr,
                             {"role": "user", "content": _instr, "name": "Alexis_Le_MJ"},

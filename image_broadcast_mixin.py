@@ -14,6 +14,7 @@ import concurrent.futures
 
 from state_manager  import get_location_image_base64, get_scene
 from agent_logger   import log_llm_start, log_llm_end, log_tts_start
+from chat_log_writer import strip_mechanical_blocks
 
 
 class ImageBroadcastMixin:
@@ -110,8 +111,10 @@ class ImageBroadcastMixin:
                 if text and text != "[SILENCE]":
                     color = self.CHAR_COLORS.get(name, "#e0e0e0")
                     self.msg_queue.put({"sender": name, "text": text, "color": color})
-                    log_tts_start(name, text)
-                    self.audio_queue.put((text, name))
+                    tts_text = strip_mechanical_blocks(text)
+                    if tts_text:
+                        log_tts_start(name, tts_text)
+                        self.audio_queue.put((tts_text, name))
 
             except Exception as e:
                 log_llm_end(name, error=str(e))
@@ -213,8 +216,10 @@ class ImageBroadcastMixin:
                 if text and text != "[SILENCE]":
                     color = self.CHAR_COLORS.get(name, "#e0e0e0")
                     self.msg_queue.put({"sender": name, "text": text, "color": color})
-                    log_tts_start(name, text)
-                    self.audio_queue.put((text, name))
+                    tts_text = strip_mechanical_blocks(text)
+                    if tts_text:
+                        log_tts_start(name, tts_text)
+                        self.audio_queue.put((tts_text, name))
 
             except Exception as e:
                 log_llm_end(name, error=str(e))

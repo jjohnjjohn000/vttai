@@ -23,6 +23,7 @@ from app_config   import get_chronicler_config
 from state_manager import (
     load_state, get_scene_prompt, get_active_quests_prompt,
     get_memories_prompt_compact, save_session_log, update_summary,
+    get_full_campaign_history_prompt,
 )
 
 
@@ -101,6 +102,12 @@ class SessionMixin:
                 importance_min=_chron.get("memories_importance", 1)
             )
 
+            # Historique long terme (campaign_log.json) — peut être vide au début
+            try:
+                full_history_txt = get_full_campaign_history_prompt()
+            except Exception:
+                full_history_txt = ""
+
             system_prompt = _chron.get("system_prompt", (
                 "Tu es le Chroniqueur IA d'une campagne D&D. "
                 "Génère un résumé complet et immersif de la session qui vient de se terminer. "
@@ -111,9 +118,16 @@ class SessionMixin:
                 "Écris à la 3e personne comme un chroniqueur historique."
             ))
 
+            # Inclure l'historique long terme seulement s'il existe (évite le bruit)
+            history_section = (
+                f"--- CHRONIQUES ARCHIVÉES (MÉMOIRE LONGUE DURÉE) ---\n{full_history_txt}\n\n"
+                if full_history_txt.strip() else ""
+            )
+
             user_prompt = (
-                f"--- CONTEXTE CAMPAGNE ---\n{old_summary}\n\n"
-                f"--- SCÈNE FINALE ---\n{scene_txt}\n\n"
+                f"--- RÉSUMÉ RÉCENT DE LA CAMPAGNE ---\n{old_summary}\n\n"
+                + history_section
+                + f"--- SCÈNE FINALE ---\n{scene_txt}\n\n"
                 f"--- QUÊTES ACTIVES ---\n{quests_txt}\n\n"
                 f"--- MÉMOIRES CLÉS ---\n{memories_txt}\n\n"
                 f"--- TRANSCRIPTION DE LA SESSION ---\n{chat_history}\n\n"
@@ -156,7 +170,20 @@ class SessionMixin:
                 "color":  "#F44336",
             })
 
-        # ── 4. Réinitialiser pour la prochaine session ───────────────────────
+        # ── 4. Auto-archivage des sessions trop anciennes ────────────────────
+        # Lance l'archivage en arrière-plan (génération LLM possible).
+        # N'attend PAS la fin avant de déclencher le reset.
+        def _try_auto_archive():
+            try:
+                self._auto_archive_old_sessions()
+            except AttributeError:
+                pass  # CampaignLogMixin non injecté (mode lite)
+            except Exception as _e:
+                print(f"[session_mixin] Auto-archivage échoué : {_e}")
+
+        threading.Thread(target=_try_auto_archive, daemon=True).start()
+
+        # ── 5. Réinitialiser pour la prochaine session ───────────────────────
         self.root.after(1500, self._reset_for_new_session)
 
     # ─── Réinitialisation ────────────────────────────────────────────────────

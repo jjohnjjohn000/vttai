@@ -954,6 +954,11 @@ class PanelsMixin:
         def _on_saved(new_cfg):
             """Callback appelé après sauvegarde : recharge la config et met les agents à jour live."""
             reload_app_config()
+            # Rebind la touche PTT si elle a changé
+            try:
+                self._ptt_apply_hotkey()
+            except Exception as _e:
+                print(f"[Config] Erreur rebind PTT : {_e}")
             # Si les agents sont déjà initialisés, reconstruire leurs prompts immédiatement
             if hasattr(self, "_agents") and self._agents:
                 try:

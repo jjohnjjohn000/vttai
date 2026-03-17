@@ -15,6 +15,7 @@ from tkinter import scrolledtext
 
 from voice_interface import play_voice, prefetch_voice, play_prefetched
 from agent_logger    import log_tts_end
+from chat_log_writer import strip_mechanical_blocks
 
 
 class ChatMixin:
@@ -521,7 +522,9 @@ class ChatMixin:
             self._remove_tag_line(tag_relay)
             self._remove_tag_line(tag_dismiss)
             self.append_message(char_name, reply_text, color)
-            self.audio_queue.put((reply_text, char_name))
+            tts_relay = strip_mechanical_blocks(reply_text)
+            if tts_relay:
+                self.audio_queue.put((tts_relay, char_name))
             relayed = f"[{char_name}, s'adressant au groupe] {reply_text}"
             if self._llm_running and not self._waiting_for_mj:
                 self._pending_interrupt_input = relayed
@@ -1116,42 +1119,41 @@ class ChatMixin:
 
         Notifie le chat (thread-safe) du résultat.
         """
-        import json, os, requests
+        import json, os
         from state_manager import (
             get_memories, add_memory, update_memory,
             MEMORY_CATEGORIES,
         )
 
         def _call_claude(prompt):
-            """Appel à l'API Anthropic (claude-haiku) pour classification/résumé."""
+            """Appel LLM pour classification/résumé mémoire.
+            Utilise le même fournisseur que le reste de l'app (build_llm_config),
+            plus besoin d'une ANTHROPIC_API_KEY séparée.
+            """
+            import re as _re
             try:
-                api_key = os.getenv("ANTHROPIC_API_KEY", "")
-                if not api_key:
-                    try:
-                        from dotenv import dotenv_values
-                        api_key = dotenv_values().get("ANTHROPIC_API_KEY", "")
-                    except Exception:
-                        pass
-                if not api_key:
-                    return ""
-                resp = requests.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": api_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": "claude-haiku-4-5-20251001",
-                        "max_tokens": 400,
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
-                    timeout=15,
-                )
-                data = resp.json()
-                return data.get("content", [{}])[0].get("text", "").strip()
+                import autogen as _ag
+                from llm_config import build_llm_config, _default_model
+                from app_config import get_chronicler_config
+
+                # Utilise le modèle du Chroniqueur (léger et rapide)
+                _chron = get_chronicler_config()
+                _model = _chron.get("model", _default_model)
+                _cfg   = build_llm_config(_model, temperature=0.2)
+                client = _ag.OpenAIWrapper(config_list=_cfg["config_list"])
+
+                response = client.create(messages=[
+                    {"role": "user", "content": prompt}
+                ])
+                raw = (response.choices[0].message.content or "").strip()
+
+                # Nettoyer les fences markdown si le modèle les ajoute quand même
+                raw = _re.sub(r"^```(?:json)?\s*", "", raw)
+                raw = _re.sub(r"\s*```$", "", raw.strip())
+                return raw.strip()
+
             except Exception as e:
-                print(f"[Memory] Erreur API Claude : {e}")
+                print(f"[Memory] Erreur LLM mémoire : {e}")
                 return ""
 
         existing = get_memories(importance_min=1, visible_only=False)

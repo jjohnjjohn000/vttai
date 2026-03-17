@@ -539,13 +539,62 @@ def update_hp(character_name: str, amount: int) -> str:
     state = load_state()
     if character_name not in state["characters"]:
         return f"Erreur MJ : Personnage {character_name} introuvable."
-    current_hp = state["characters"][character_name]["hp"]
-    max_hp = state["characters"][character_name]["max_hp"]
-    new_hp = max(0, min(current_hp + amount, max_hp))
-    state["characters"][character_name]["hp"] = new_hp
+    char       = state["characters"][character_name]
+    max_hp     = char["max_hp"]
+    current_hp = char["hp"]
+
+    detail = ""
+
+    if amount < 0:
+        # ── Dégâts : les PV temporaires absorbent en premier ────────────────
+        temp_hp = char.get("temp_hp", 0)
+        dmg     = abs(amount)
+        if temp_hp > 0:
+            absorbed = min(temp_hp, dmg)
+            char["temp_hp"] = temp_hp - absorbed
+            detail = f" ({absorbed} absorbés par PV temporaires)"
+            dmg = dmg - absorbed
+        new_hp = max(0, current_hp - dmg)
+    else:
+        # ── Soins : ne restaurent PAS les PV temporaires (règle D&D 5e) ─────
+        new_hp = min(current_hp + amount, max_hp)
+
+    char["hp"] = new_hp
     save_state(state)
+
+    temp_suffix = f" (+{char.get('temp_hp', 0)} tmp)" if char.get("temp_hp", 0) > 0 else ""
     action = "soigné" if amount > 0 else "blessé"
-    return f"[RÉSULTAT SYSTÈME] {character_name} a été {action} de {abs(amount)}. PV actuels : {new_hp}/{max_hp}."
+    return (
+        f"[RÉSULTAT SYSTÈME] {character_name} a été {action} de {abs(amount)}{detail}. "
+        f"PV actuels : {new_hp}/{max_hp}{temp_suffix}."
+    )
+
+
+def add_temp_hp(character_name: str, amount: int) -> str:
+    """Ajoute des PV temporaires à un personnage.
+    Règle D&D 5e : les PV temp ne se cumulent PAS — on garde seulement le plus grand.
+    """
+    if amount <= 0:
+        return "[RÉSULTAT SYSTÈME] Erreur : le montant de PV temporaires doit être positif."
+    state = load_state()
+    if character_name not in state["characters"]:
+        return f"Erreur MJ : Personnage {character_name} introuvable."
+    char         = state["characters"][character_name]
+    current_temp = char.get("temp_hp", 0)
+    new_temp     = max(current_temp, amount)   # règle 5e : on prend le meilleur
+    char["temp_hp"] = new_temp
+    save_state(state)
+    if new_temp == current_temp and current_temp > 0:
+        return (
+            f"[RÉSULTAT SYSTÈME] {character_name} conserve ses {current_temp} PV temporaires "
+            f"(supérieurs aux {amount} proposés)."
+        )
+    return (
+        f"[RÉSULTAT SYSTÈME] {character_name} gagne {new_temp} PV temporaires"
+        + (f" (remplacent les {current_temp} précédents)." if current_temp > 0 else ".")
+    )
+
+
 
 # ============================================================
 # --- JOURNAL DE QUÊTES ---
@@ -1038,6 +1087,61 @@ def get_session_logs_prompt(max_sessions: int = 3) -> str:
         lines.append(f"\n📖 Session {log['session']}  ({log['date']})")
         lines.append(f"  {log['resume']}")
     return "\n".join(lines)
+
+# ============================================================
+# --- JOURNAL LONG TERME (campaign_log.json) ---
+# ============================================================
+
+def _get_campaign_log_instance():
+    """Import lazy de CampaignLog (évite les imports circulaires au chargement)."""
+    try:
+        from campaign_log import get_campaign_log
+        return get_campaign_log()
+    except ImportError:
+        return None
+
+
+def get_campaign_log_toc_prompt() -> str:
+    """
+    Retourne la table des matières compacte du journal archivé.
+    Ultra-compact — injecté en permanence dans le system_message de tous les agents.
+    Retourne "" si le journal est vide.
+    """
+    log = _get_campaign_log_instance()
+    return log.get_toc_prompt() if log else ""
+
+
+def get_campaign_log_prompt(
+    context_text: str = "",
+    char_name:    str = "",
+    max_entries:  int = 2,
+) -> str:
+    """
+    Retourne les entrées du journal archivé les plus pertinentes pour le
+    contexte courant d'un agent.
+
+    context_text : texte de la scène / dernier message
+    char_name    : nom du personnage recevant le prompt (suivi de lecture)
+    max_entries  : max entrées injectées (défaut : 2 pour ne pas surcharger)
+    """
+    log = _get_campaign_log_instance()
+    if log is None:
+        return ""
+    return log.get_relevant_prompt(
+        context_text = context_text,
+        char_name    = char_name,
+        max_entries  = max_entries,
+    )
+
+
+def get_full_campaign_history_prompt() -> str:
+    """
+    Retourne tout le journal archivé.
+    Réservé au Chroniqueur IA pour avoir la vue complète de la campagne.
+    """
+    log = _get_campaign_log_instance()
+    return log.get_full_history_prompt() if log else ""
+
 
 # ============================================================
 # --- LISTE DE SORTS PAR PERSONNAGE ---

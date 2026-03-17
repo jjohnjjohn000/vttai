@@ -34,6 +34,21 @@ _SYSTEM_PREFIX   = re.compile(r'^\s*\[RÉSULTAT SYSTÈME', re.IGNORECASE)
 _ACTION_ONLY     = re.compile(r'^\s*\[ACTION\]', re.IGNORECASE)
 _SILENCE         = re.compile(r'^\s*\[SILENCE\]\s*$', re.IGNORECASE)
 
+# Patterns pour le filtrage TTS
+_ACTION_BLOCK_RE = re.compile(
+    r'\[ACTION\].*?(?=\n\n|\[ACTION\]|\[FIN_DE_TOUR\]|$)',
+    re.DOTALL | re.IGNORECASE,
+)
+_FIN_TOUR_RE = re.compile(r'\[FIN_DE_TOUR\]', re.IGNORECASE)
+
+
+def strip_mechanical_blocks(text: str) -> str:
+    """Supprime les blocs [ACTION] et [FIN_DE_TOUR] du texte avant envoi au TTS.
+    Le roleplay narratif est conservé intégralement."""
+    text = _ACTION_BLOCK_RE.sub('', text)
+    text = _FIN_TOUR_RE.sub('', text)
+    return text.strip()
+
 # Noms des agents joueurs + MJ
 _NARRATIVE_SENDERS = frozenset({
     "Kaelen", "Elara", "Thorne", "Lyra", "Alexis_Le_MJ", "Alexis Le MJ",

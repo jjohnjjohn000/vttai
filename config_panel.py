@@ -19,6 +19,7 @@ from tkinter import scrolledtext, ttk
 from app_config import (
     APP_CONFIG, DEFAULTS, KNOWN_MODELS,
     load_app_config, save_app_config, reload_app_config,
+    get_ptt_config,
 )
 from piper_tts import KNOWN_PIPER_VOICES, piper_available
 
@@ -585,6 +586,85 @@ def _tab_voice_ui(nb, cfg, vars_):
     # Affichage initial correct
     _update_panels()
 
+    # ── Push-to-Talk ─────────────────────────────────────────────────────────
+    _section(tab, "Push-to-Talk (PTT)", ACCENT)
+
+    ptt_cfg = cfg.get("ptt", DEFAULTS.get("ptt", {"hotkey": "F12"}))
+    ptt_hotkey_var = tk.StringVar(value=ptt_cfg.get("hotkey", "F12"))
+
+    ptt_row = tk.Frame(tab, bg=BG)
+    ptt_row.pack(fill=tk.X, padx=20, pady=6)
+
+    tk.Label(ptt_row, text="Touche PTT", bg=BG, fg=FG_DIM,
+             font=FONT_LBL, width=28, anchor="w").pack(side=tk.LEFT)
+
+    # Affichage de la touche courante
+    ptt_display = tk.Label(
+        ptt_row,
+        textvariable=ptt_hotkey_var,
+        bg=BG2, fg=ACCENT,
+        font=("Consolas", 11, "bold"),
+        width=12, anchor="center",
+        relief="flat", pady=4,
+    )
+    ptt_display.pack(side=tk.LEFT, padx=(0, 8))
+
+    ptt_status_var = tk.StringVar(value="")
+    ptt_status_lbl = tk.Label(ptt_row, textvariable=ptt_status_var,
+                               bg=BG, fg=GOLD, font=("Consolas", 9))
+    ptt_status_lbl.pack(side=tk.LEFT, padx=4)
+
+    _ptt_capture_active = [False]   # flag mutable dans la closure
+
+    def _start_ptt_capture():
+        """Entre en mode capture : le prochain appui de touche devient le nouveau hotkey."""
+        if _ptt_capture_active[0]:
+            return
+        _ptt_capture_active[0] = True
+        ptt_status_var.set("Appuyez sur la touche souhaitée…")
+        ptt_display.config(bg="#1a2a1a", fg=GOLD)
+        btn_capture.config(state=tk.DISABLED)
+
+        def _on_key_capture(event):
+            keysym = event.keysym
+            # Ignorer les touches mortes / modificateurs seuls
+            if keysym in ("Shift_L", "Shift_R", "Control_L", "Control_R",
+                          "Alt_L", "Alt_R", "Super_L", "Super_R", "Meta_L",
+                          "Meta_R", "Caps_Lock", "Num_Lock", "Scroll_Lock"):
+                return "break"
+            ptt_hotkey_var.set(keysym)
+            ptt_display.config(bg=BG2, fg=ACCENT)
+            ptt_status_var.set(f"✓ Touche capturée : {keysym}")
+            tab.after(2000, lambda: ptt_status_var.set(""))
+            tab.unbind("<KeyPress>")
+            _ptt_capture_active[0] = False
+            btn_capture.config(state=tk.NORMAL)
+            return "break"
+
+        tab.focus_set()
+        tab.bind("<KeyPress>", _on_key_capture)
+
+    btn_capture = tk.Button(
+        ptt_row, text="Changer",
+        bg=BG3, fg=ACCENT,
+        font=("Arial", 9), relief="flat", padx=10,
+        command=_start_ptt_capture,
+    )
+    btn_capture.pack(side=tk.LEFT)
+
+    # Note explicative
+    tk.Label(
+        tab,
+        text=(
+            "  Maintenez la touche PTT enfoncée pour parler, relâchez pour envoyer.\n"
+            "  Le bouton souris « 🎤 Parler » fonctionne aussi (maintenir = enregistrer).\n"
+            "  Touches conseillées : F12, Insert, grave (` ~), KP_0 (pavé 0)."
+        ),
+        bg=BG, fg=FG_DIM, font=("Consolas", 8), justify=tk.LEFT,
+    ).pack(anchor="w", padx=20, pady=(0, 6))
+
+    vars_["ptt"] = {"hotkey": ptt_hotkey_var}
+
     # ── Rafraîchissement interface ────────────────────────────────────────────
     _section(tab, "Rafraîchissement interface", GREEN)
 
@@ -659,7 +739,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
 
     vars_: dict = {
         "agents": {}, "chronicler": {}, "groupchat": {},
-        "memories": {}, "voice": {}, "ui": {}, "piper": {},
+        "memories": {}, "voice": {}, "ui": {}, "piper": {}, "ptt": {},
     }
 
     # Créer les 5 onglets
@@ -699,6 +779,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
             "voice":      {},
             "piper":      {},
             "ui":         {},
+            "ptt":        {},
         }
 
         for char, cvars in vars_["agents"].items():
@@ -757,6 +838,11 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
         new_cfg["ui"] = {
             "poll_geometry_ms":  uv["poll_geometry_ms"].get(),
             "stats_refresh_ms":  uv["stats_refresh_ms"].get(),
+        }
+
+        ptt_v = vars_.get("ptt", {})
+        new_cfg["ptt"] = {
+            "hotkey": ptt_v.get("hotkey", tk.StringVar(value="F12")).get(),
         }
 
         save_app_config(new_cfg)

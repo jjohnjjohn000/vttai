@@ -282,6 +282,7 @@ class Combatant:
         self.is_pc      = is_pc
         self.max_hp     = max_hp
         self.hp         = current_hp if current_hp is not None else max_hp
+        self.temp_hp    = 0   # PV temporaires (absorbent les dégâts en premier)
         self.ac         = ac
         self.initiative = initiative
         self.dex_bonus  = dex_bonus
@@ -322,6 +323,12 @@ class Combatant:
             return 0.0
         return max(0.0, min(1.0, self.hp / self.max_hp))
 
+    def temp_hp_pct(self) -> float:
+        """Fraction de la barre occupée par les PV temporaires (peut dépasser 1.0)."""
+        if self.max_hp <= 0:
+            return 0.0
+        return min(1.0, self.temp_hp / self.max_hp)
+
     def hp_color(self) -> str:
         p = self.hp_pct()
         if p > 0.50:
@@ -348,6 +355,7 @@ class Combatant:
             "is_pc":              self.is_pc,
             "max_hp":             self.max_hp,
             "hp":                 self.hp,
+            "temp_hp":            self.temp_hp,
             "ac":                 self.ac,
             "initiative":         self.initiative,
             "dex_bonus":          self.dex_bonus,
@@ -379,6 +387,7 @@ class Combatant:
         )
         c.bestiary_name       = d.get("bestiary_name", "")
         c.notes               = d.get("notes", "")
+        c.temp_hp             = d.get("temp_hp", 0)
         c.death_saves_success = d.get("death_saves_success", 0)
         c.death_saves_fail    = d.get("death_saves_fail", 0)
         c.action_used         = d.get("action_used", False)
@@ -812,15 +821,19 @@ class CombatTracker:
             needs_full_refresh = False
             for cb in self.combatants:
                 if cb.is_pc and cb.name in chars:
-                    new_hp = chars[cb.name].get("hp", cb.hp)
-                    if cb.hp != new_hp:
-                        was_up = cb.hp > 0
-                        cb.hp = new_hp
+                    new_hp   = chars[cb.name].get("hp", cb.hp)
+                    new_temp = chars[cb.name].get("temp_hp", 0)
+                    changed  = (cb.hp != new_hp) or (cb.temp_hp != new_temp)
+                    if changed:
+                        was_up   = cb.hp > 0
+                        cb.hp    = new_hp
+                        cb.temp_hp = new_temp
                         rw = self._row_widgets.get(cb.uid)
                         if rw:
                             try:
+                                temp_suffix = f"  +{cb.temp_hp}✦" if cb.temp_hp > 0 else ""
                                 rw["hp_lbl"].config(
-                                    text=f"{max(0, cb.hp)} / {cb.max_hp}",
+                                    text=f"{max(0, cb.hp)} / {cb.max_hp}{temp_suffix}",
                                     fg=cb.hp_color(),
                                     font=("Consolas", 13, "bold"),
                                 )
@@ -1151,8 +1164,9 @@ class CombatTracker:
         hp_f = _col(162)
 
         hp_font = ("Consolas", 13, "bold") if c.is_pc else ("Consolas", 10, "bold")
+        temp_suffix = f"  +{c.temp_hp}✦" if c.temp_hp > 0 else ""
         hp_lbl  = tk.Label(hp_f,
-                           text=f"{max(0,c.hp)} / {c.max_hp}",
+                           text=f"{max(0,c.hp)} / {c.max_hp}{temp_suffix}",
                            bg=row_bg, fg=c.hp_color(), font=hp_font)
         hp_lbl.pack(anchor="w")
 
@@ -1164,10 +1178,17 @@ class CombatTracker:
             if w < 4:
                 w = 140
             canvas.delete("all")
-            filled = int(w * cb.hp_pct())
+            # Fond
             canvas.create_rectangle(0, 0, w, 6, fill="#1a1a1a", outline="")
+            # PV réels
+            filled = int(w * cb.hp_pct())
             if filled > 0:
                 canvas.create_rectangle(0, 0, filled, 6, fill=cb.hp_color(), outline="")
+            # PV temporaires — segment jaune superposé à droite des PV réels
+            if cb.temp_hp > 0:
+                temp_w = max(3, int(w * min(1.0, cb.temp_hp / max(cb.max_hp, 1))))
+                x0 = min(filled, w - temp_w)
+                canvas.create_rectangle(x0, 0, x0 + temp_w, 6, fill="#f1c40f", outline="")
 
         bar_canvas.bind("<Configure>",
                         lambda e, cb=c, canvas=bar_canvas: (
@@ -1189,9 +1210,18 @@ class CombatTracker:
             except ValueError:
                 val = 0
             was_up = cb.hp > 0
+
+            if sign < 0 and cb.temp_hp > 0:
+                # Dégâts : les PV temp absorbent en premier
+                absorbed = min(cb.temp_hp, val)
+                cb.temp_hp -= absorbed
+                val -= absorbed
+
             cb.hp = max(0, min(cb.max_hp, cb.hp + sign * val))
-            # ── Mise à jour in-place : uniquement les widgets HP de cette ligne ──
-            lbl.config(text=f"{max(0,cb.hp)} / {cb.max_hp}", fg=cb.hp_color(),
+
+            temp_suffix = f"  +{cb.temp_hp}✦" if cb.temp_hp > 0 else ""
+            lbl.config(text=f"{max(0,cb.hp)} / {cb.max_hp}{temp_suffix}",
+                       fg=cb.hp_color(),
                        font=("Consolas", 13, "bold") if cb.is_pc else ("Consolas", 10, "bold"))
             draw_hp_bar(canvas, cb)
             var.set("")
@@ -1227,6 +1257,40 @@ class CombatTracker:
                   font=("Consolas", 7, "bold"), relief="flat", padx=3, cursor="hand2",
                   command=lambda cb=c, v=dmg_var, l=hp_lbl,
                   canvas=bar_canvas: apply_dmg(-1, cb, v, l, canvas)
+                  ).pack(side=tk.LEFT, padx=(2, 0))
+
+        def apply_temp(cb=c, var=dmg_var, lbl=hp_lbl, canvas=bar_canvas):
+            try:
+                val = int(var.get()) if var.get().strip() else 0
+            except ValueError:
+                val = 0
+            if val <= 0:
+                return
+            cb.temp_hp = max(cb.temp_hp, val)   # règle 5e : on prend le meilleur
+            temp_suffix = f"  +{cb.temp_hp}✦" if cb.temp_hp > 0 else ""
+            lbl.config(text=f"{max(0,cb.hp)} / {cb.max_hp}{temp_suffix}", fg=cb.hp_color(),
+                       font=("Consolas", 13, "bold") if cb.is_pc else ("Consolas", 10, "bold"))
+            draw_hp_bar(canvas, cb)
+            var.set("")
+            # Sync state_manager si PJ
+            if cb.is_pc:
+                _name, _tmp = cb.name, cb.temp_hp
+                def _sync_tmp(name=_name, tmp=_tmp):
+                    try:
+                        from state_manager import load_state as _ls, save_state as _ss
+                        _st = _ls()
+                        if name in _st.get("characters", {}):
+                            _st["characters"][name]["temp_hp"] = tmp
+                            _ss(_st)
+                    except Exception as _e:
+                        print(f"[CombatTracker] Sync temp_hp : {_e}")
+                threading.Thread(target=_sync_tmp, daemon=True, name="ct-tmp-sync").start()
+            self._schedule_save()
+
+        tk.Button(hp_btn_f, text="+Tmp",
+                  bg=_darken("#f1c40f", 0.35), fg="#f1c40f",
+                  font=("Consolas", 7, "bold"), relief="flat", padx=3, cursor="hand2",
+                  command=apply_temp
                   ).pack(side=tk.LEFT, padx=(2, 0))
 
         if c.is_pc and c.is_down:

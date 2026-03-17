@@ -62,6 +62,7 @@ from combat_tracker_mixin  import CombatTrackerMixin     # open_combat_tracker, 
 from image_broadcast_mixin import ImageBroadcastMixin    # _broadcast_location_image
 from llm_control_mixin     import LLMControlMixin        # stop_llms, send_text, vote, skill check
 from autogen_engine        import AutogenEngineMixin     # run_autogen — moteur principal
+from campaign_log_mixin    import CampaignLogMixin       # journal long terme + archivage
 
 # ── Imports des modules métier ─────────────────────────────────────────────────
 from state_manager import (
@@ -77,6 +78,7 @@ from state_manager import (
     save_session_log, get_session_logs_prompt,
     get_active_characters,
     get_spells_prompt,
+    get_campaign_log_toc_prompt, get_campaign_log_prompt,
 )
 from voice_interface   import record_audio_and_transcribe, play_voice
 from agent_logger      import log_llm_start, log_llm_end, log_tts_start, log_tts_end
@@ -111,6 +113,7 @@ class DnDApp(
     ImageBroadcastMixin,    # image_broadcast_mixin.py — images de lieu aux agents
     LLMControlMixin,        # llm_control_mixin.py   — contrôle LLM + MJ commands
     AutogenEngineMixin,     # autogen_engine.py       — moteur AutoGen complet
+    CampaignLogMixin,       # campaign_log_mixin.py   — journal long terme
 ):
     """Moteur de l'Aube Brisée — Interface du Maître de Jeu."""
 
@@ -318,6 +321,8 @@ class DnDApp(
           - l etat actuel des emplacements de sort (mis a jour a chaque tour)
           - le bloc de combat (si combat en cours)
           - la carte de combat (positions des tokens) si disponible
+          - la table des matières du journal long terme (compact, permanent)
+          - les entrées pertinentes du journal long terme (selon la scène)
         Appele apres chaque message joueur et apres toute activation de memoire contextuelle."""
         combat_block_fn = get_combat_prompt  # importe depuis combat_tracker
         # Carte de combat : toujours injectée si elle contient des tokens
@@ -331,6 +336,12 @@ class DnDApp(
         except Exception:
             _slots_state = {}
 
+        # Contexte de scène courant pour la recherche dans le journal long terme
+        try:
+            _scene_context = get_scene_prompt()
+        except Exception:
+            _scene_context = ""
+
         for name, agent in self._agents.items():
             base          = self._base_system_msgs.get(name, "")
             scene_block   = get_scene_prompt()
@@ -339,6 +350,13 @@ class DnDApp(
             cal_block     = get_calendar_prompt()
             ctx_block     = self._contextual_mem_block
             sessions_block= get_session_logs_prompt(max_sessions=3)
+            toc_block     = get_campaign_log_toc_prompt()
+            # Entrées long terme pertinentes pour la scène courante (max 2, par agent)
+            log_block     = get_campaign_log_prompt(
+                context_text = _scene_context,
+                char_name    = name,
+                max_entries  = 2,
+            )
             combat_block  = combat_block_fn(name)
 
             # Bloc spell slots dynamique - relit campaign_state a chaque rebuild
@@ -359,7 +377,8 @@ class DnDApp(
 
             agent.update_system_message(
                 base + scene_block + quest_block + mem_compact + cal_block
-                + sessions_block + get_spells_prompt(name)
+                + sessions_block + toc_block + log_block
+                + get_spells_prompt(name)
                 + ctx_block + slots_block + combat_block + map_block
             )
 

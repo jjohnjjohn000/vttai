@@ -422,6 +422,135 @@ def record_audio_and_transcribe():
         return "[Erreur réseau Google Speech.]"
 
 
+# ─── Push-to-Talk (PTT) ──────────────────────────────────────────────────────
+#
+# Contrairement à record_audio_and_transcribe() qui utilise la détection de
+# silence (VAD) de SpeechRecognition, le PTT enregistre tant que le bouton
+# est maintenu et s'arrête EXACTEMENT au relâchement — aucune coupure prématurée.
+#
+# API :
+#   ptt_start()                → ButtonPress  : démarre l'enregistrement
+#   ptt_stop_and_transcribe()  → ButtonRelease : arrête + transcrit (bloquant)
+
+_PTT_RATE     = 16000   # Hz — taux d'échantillonnage (Google Speech requiert ≥8kHz)
+_PTT_CHANNELS = 1       # mono
+_PTT_CHUNK    = 1024    # frames par buffer
+
+_ptt_frames:        list                    = []
+_ptt_stop_event:    threading.Event         = threading.Event()
+_ptt_record_thread: threading.Thread | None = None
+_ptt_transcribe_lock: threading.Lock        = threading.Lock()  # un seul transcribe à la fois
+
+
+def ptt_start() -> None:
+    """Démarre l'enregistrement PTT en arrière-plan.
+    Doit être appelé depuis le thread Tk sur ButtonPress.
+    Idempotent : un 2ᵉ appel sans ptt_stop_and_transcribe() entre les deux est ignoré."""
+    global _ptt_frames, _ptt_record_thread
+
+    if _ptt_record_thread is not None and _ptt_record_thread.is_alive():
+        return  # déjà en cours
+
+    _ptt_stop_event.clear()
+    _ptt_frames = []
+
+    def _record():
+        try:
+            import pyaudio  # lazy — même raison que speech_recognition
+            pa = pyaudio.PyAudio()
+            stream = pa.open(
+                format=pyaudio.paInt16,
+                channels=_PTT_CHANNELS,
+                rate=_PTT_RATE,
+                input=True,
+                frames_per_buffer=_PTT_CHUNK,
+            )
+            _log("ptt", "● Enregistrement démarré", "cyan")
+            while not _ptt_stop_event.is_set():
+                try:
+                    data = stream.read(_PTT_CHUNK, exception_on_overflow=False)
+                    _ptt_frames.append(data)
+                except Exception:
+                    break
+            stream.stop_stream()
+            stream.close()
+            pa.terminate()
+            _log("ptt", f"■ Enregistrement arrêté ({len(_ptt_frames)} chunks)", "yellow")
+        except Exception as e:
+            _log("ptt", f"✗ Erreur PyAudio : {e}", "red")
+
+    _ptt_record_thread = threading.Thread(target=_record, daemon=True, name="ptt-record")
+    _ptt_record_thread.start()
+
+
+def ptt_stop_and_transcribe() -> str:
+    """Arrête l'enregistrement PTT et retourne la transcription.
+    BLOQUANT — doit être appelé dans un thread daemon (pas le thread Tk).
+    Protégé par _ptt_transcribe_lock — un seul appel actif à la fois."""
+    global _ptt_record_thread
+
+    # Un seul transcribe à la fois — les appels concurrents (key-repeat résiduel)
+    # repartent immédiatement avec un message neutre.
+    if not _ptt_transcribe_lock.acquire(blocking=False):
+        _log("ptt", "✗ Transcription déjà en cours — ignoré", "grey")
+        return "[Transcription déjà en cours.]"
+
+    tmp_path = ""
+    try:
+        # Signaler l'arrêt et attendre la fin du thread d'enregistrement
+        _ptt_stop_event.set()
+        if _ptt_record_thread is not None:
+            _ptt_record_thread.join(timeout=1.0)
+        _ptt_record_thread = None
+
+        frames = list(_ptt_frames)
+        if not frames:
+            _log("ptt", "✗ Aucun frame capté", "red")
+            return "[Aucun audio capté.]"
+
+        import wave
+        import tempfile
+        import speech_recognition as sr
+
+        fd, tmp_path = tempfile.mkstemp(suffix=".wav", prefix="ptt_")
+        os.close(fd)
+
+        with wave.open(tmp_path, "wb") as wf:
+            wf.setnchannels(_PTT_CHANNELS)
+            wf.setsampwidth(2)          # paInt16 → 2 octets/sample
+            wf.setframerate(_PTT_RATE)
+            wf.writeframes(b"".join(frames))
+
+        duration_s = len(frames) * _PTT_CHUNK / _PTT_RATE
+        _log("ptt", f"  WAV écrit : {duration_s:.1f}s  ({len(frames)} chunks)", "grey")
+
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(tmp_path) as source:
+            audio = recognizer.record(source)
+
+        try:
+            result = recognizer.recognize_google(audio, language="fr-FR")
+            _log("ptt", f"✓ Transcription : « {result[:80]} »", "green")
+            return result
+        except sr.UnknownValueError:
+            _log("ptt", "✗ Audio non compris", "yellow")
+            return "[Audio non compris.]"
+        except sr.RequestError as e:
+            _log("ptt", f"✗ Erreur réseau Google Speech : {e}", "red")
+            return "[Erreur réseau Google Speech.]"
+
+    except Exception as e:
+        _log("ptt", f"✗ Exception transcription : {e}", "red")
+        return "[Erreur interne PTT.]"
+    finally:
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        _ptt_transcribe_lock.release()
+
+
 def _play_voice_edgetts(text, character_name):
     """
     [Interne] edge-tts async (si dispo) ou CLI.

@@ -1,6 +1,6 @@
 {
   "main": {
-    "w": 1178,
+    "w": 1180,
     "h": 1016,
     "x": 2356,
     "y": 1099
@@ -87,10 +87,10 @@
     "y": 0
   },
   "modal_config": {
-    "w": 760,
-    "h": 857,
-    "x": 2676,
-    "y": 1161
+    "w": 893,
+    "h": 954,
+    "x": 2581,
+    "y": 1137
   },
   "combat_tracker": {
     "w": 1920,
@@ -2618,5 +2618,11 @@
     ]
   },
   "_open_char_Elara": true,
-  "active_map_name": "Barovie"
+  "active_map_name": "Argynvostholt",
+  "campaign_log_viewer": {
+    "w": 1016,
+    "h": 614,
+    "x": 2201,
+    "y": 1344
+  }
 }
