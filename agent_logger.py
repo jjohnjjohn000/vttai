@@ -127,6 +127,44 @@ def log_llm_end(name: str, response_preview: str = "", error: str = ""):
         )
 
 
+def log_llm_model_used(name: str, model: str, configured_model: str = ""):
+    """
+    Appelé après chaque réponse autogen pour afficher quel modèle a réellement répondu.
+    Utile pour détecter les basculements silencieux sur un modèle de secours.
+
+    name             : nom du personnage
+    model            : modèle qui a effectivement répondu (extrait de la réponse API)
+    configured_model : modèle configuré dans app_config (pour comparaison)
+    """
+    cc = _char_color(name)
+
+    def _canonical(m):
+        # Retire les prefixes fournisseur : groq/ et openrouter/
+        for prefix in ("groq/", "openrouter/"):
+            if m.startswith(prefix):
+                return m[len(prefix):]
+        return m
+
+    was_fallback = (
+        configured_model
+        and _canonical(model) != _canonical(configured_model)
+    )
+
+    if was_fallback:
+        _print(
+            f"{_COL_TIME}{_now()}{_RESET}  "
+            f"{cc}🔀 {_BOLD}{name}{_RESET}{cc} — "
+            f"modèle configuré : {_DIM}{configured_model}{_RESET}{cc}  →  "
+            f"modèle ayant répondu : {_BOLD}{model}{_RESET}"
+            f"{_COL_ERR}  ⚠ FALLBACK DÉTECTÉ{_RESET}"
+        )
+    else:
+        _print(
+            f"{_COL_TIME}{_now()}{_RESET}  "
+            f"{cc}🤖 {_BOLD}{name}{_RESET}{cc} — répondu par : {model}{_RESET}"
+        )
+
+
 def log_tts_start(name: str, text_preview: str = ""):
     """
     Appelé quand le script est mis dans audio_queue (avant génération TTS).
@@ -142,16 +180,5 @@ def log_tts_start(name: str, text_preview: str = ""):
 
 
 def log_tts_end(name: str, success: bool = True):
-    """
-    Appelé quand play_voice() retourne (lecture terminée ou échouée).
-    """
-    t0 = _tts_starts.pop(name, None)
-    elapsed = time.perf_counter() - t0 if t0 else 0.0
-    cc = _char_color(name)
-    icon = "✔️ " if success else "⚠️ "
-    label = "lecture terminée" if success else "échec lecture"
-    _print(
-        f"{_COL_TIME}{_now()}{_RESET}  "
-        f"{cc}{icon}{_BOLD}{name}{_RESET}{cc} — {label} "
-        f"{_COL_TIME}({_fmt_ms(elapsed)}){_RESET}"
-    )
+    """Nettoyage du timer TTS — log supprimé (appelé N fois par phrase, cause 0ms)."""
+    _tts_starts.pop(name, None)

@@ -29,7 +29,7 @@ KNOWN_MODELS = [
     "gemini-1.5-pro",
     "gemini-1.5-flash",
     # Groq
-    "groq/llama-4-scout-17b-16e-instruct",
+    "groq/meta-llama/llama-4-scout-17b-16e-instruct",
     "groq/llama-3.3-70b-versatile",
     "groq/llama-3.1-70b-versatile",
     "groq/mixtral-8x7b-32768",
@@ -51,7 +51,7 @@ DEFAULTS: dict = {
             "temperature": 0.7,
         },
         "Thorne": {
-            "model":       "groq/llama-4-scout-17b-16e-instruct",
+            "model":       "groq/meta-llama/llama-4-scout-17b-16e-instruct",
             "temperature": 0.8,
         },
         "Lyra": {

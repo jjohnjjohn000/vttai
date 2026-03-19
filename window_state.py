@@ -127,6 +127,9 @@ class WindowManagerMixin:
         if self._win_state.get("_open_combat_tracker"):
             delay += 300
             self.root.after(delay, self.open_combat_tracker)
+        if self._win_state.get("_open_inventory"):
+            delay += 300
+            self.root.after(delay, self.open_inventory_panel)
         if self._win_state.get("_open_quest_journal"):
             delay += 300
             self.root.after(delay, self.open_quest_journal)

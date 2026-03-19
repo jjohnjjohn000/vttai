@@ -641,6 +641,195 @@ def save_quests(quests: list):
     state["quests"] = quests
     save_state(state)
 
+# ══════════════════════════════════════════════════════════════════════════════
+# INVENTAIRE DU GROUPE
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Structure dans campaign_state.json :
+#   "group_inventory": {
+#     "currency": {"platinum": 0, "gold": 0, "electrum": 0, "silver": 0, "copper": 0},
+#     "items": [
+#       { "id": str, "name": str, "quantity": int, "category": str,
+#         "rarity": str, "weight": float, "description": str,
+#         "attuned": bool, "attunement_by": str, "notes": str }
+#     ]
+#   }
+#
+# Catégories : arme, armure, potion, objet_magique, munition, outil, divers
+# Raretés    : commun, peu_commun, rare, très_rare, légendaire, artéfact
+# ══════════════════════════════════════════════════════════════════════════════
+
+import uuid as _uuid
+
+_RARITY_ORDER = ["commun", "peu_commun", "rare", "très_rare", "légendaire", "artéfact"]
+
+_EMPTY_INVENTORY = {
+    "currency": {"platinum": 0, "gold": 0, "electrum": 0, "silver": 0, "copper": 0},
+    "items": [],
+}
+
+
+def get_inventory() -> dict:
+    """Retourne l'inventaire du groupe (currency + items)."""
+    state = load_state()
+    inv = state.get("group_inventory")
+    if not inv:
+        return dict(_EMPTY_INVENTORY)
+    # Assurer la présence de toutes les clés monnaie
+    inv.setdefault("currency", {})
+    for coin in ("platinum", "gold", "electrum", "silver", "copper"):
+        inv["currency"].setdefault(coin, 0)
+    inv.setdefault("items", [])
+    return inv
+
+
+def save_inventory(inventory: dict):
+    """Sauvegarde l'inventaire dans campaign_state.json."""
+    state = load_state()
+    state["group_inventory"] = inventory
+    save_state(state)
+
+
+def get_inventory_prompt() -> str:
+    """
+    Génère un bloc de texte formaté pour injection dans les system prompts des agents.
+    Inclut monnaie et objets notables (quantité > 0).
+    """
+    inv = get_inventory()
+    cur = inv.get("currency", {})
+    items = inv.get("items", [])
+
+    lines = ["\n\n--- INVENTAIRE DU GROUPE ---"]
+
+    # Monnaie
+    coins = []
+    for coin, label in [("platinum","pp"), ("gold","po"), ("electrum","pe"),
+                         ("silver","pa"), ("copper","pc")]:
+        v = cur.get(coin, 0)
+        if v:
+            coins.append(f"{v} {label}")
+    lines.append("Monnaie : " + (", ".join(coins) if coins else "aucune"))
+
+    # Objets
+    if items:
+        lines.append("Objets :")
+        for item in items:
+            qty  = item.get("quantity", 1)
+            name = item.get("name", "?")
+            cat  = item.get("category", "")
+            rar  = item.get("rarity", "")
+            att  = item.get("attuned") and item.get("attunement_by")
+            att_str = f" [harmonisé: {item['attunement_by']}]" if att else ""
+            desc = item.get("description", "")
+            desc_str = f" — {desc}" if desc else ""
+            lines.append(f"  • {qty}× {name} ({cat}, {rar}){att_str}{desc_str}")
+    else:
+        lines.append("Objets : aucun")
+
+    return "\n".join(lines)
+
+
+# ── Tools LLM ──────────────────────────────────────────────────────────────────
+
+def add_item_to_inventory(name: str, quantity: int = 1, category: str = "divers",
+                           rarity: str = "commun", description: str = "",
+                           notes: str = "") -> str:
+    """
+    Ajoute un objet à l'inventaire du groupe (ou incrémente la quantité si déjà présent).
+    Paramètres : name (str), quantity (int), category (str), rarity (str),
+                 description (str), notes (str).
+    """
+    try:
+        quantity = int(quantity)
+    except (ValueError, TypeError):
+        quantity = 1
+
+    inv = get_inventory()
+    # Chercher un objet du même nom (insensible à la casse)
+    for item in inv["items"]:
+        if item["name"].lower() == name.lower():
+            item["quantity"] = item.get("quantity", 1) + quantity
+            save_inventory(inv)
+            return (f"[RÉSULTAT SYSTÈME] {name} : quantité mise à jour "
+                    f"({item['quantity']} au total).")
+
+    # Nouvel objet
+    inv["items"].append({
+        "id":             str(_uuid.uuid4())[:8],
+        "name":           name,
+        "quantity":       quantity,
+        "category":       category,
+        "rarity":         rarity,
+        "weight":         0.0,
+        "description":    description,
+        "attuned":        False,
+        "attunement_by":  "",
+        "notes":          notes,
+    })
+    save_inventory(inv)
+    return f"[RÉSULTAT SYSTÈME] {quantity}× {name} ajouté(s) à l'inventaire du groupe."
+
+
+def remove_item_from_inventory(name: str, quantity: int = 1) -> str:
+    """
+    Retire une quantité d'un objet de l'inventaire.
+    Si la quantité atteint 0, l'objet est supprimé.
+    Paramètres : name (str), quantity (int).
+    """
+    try:
+        quantity = int(quantity)
+    except (ValueError, TypeError):
+        quantity = 1
+
+    inv = get_inventory()
+    for i, item in enumerate(inv["items"]):
+        if item["name"].lower() == name.lower():
+            current = item.get("quantity", 1)
+            if quantity >= current:
+                inv["items"].pop(i)
+                save_inventory(inv)
+                return f"[RÉSULTAT SYSTÈME] {name} retiré(s) de l'inventaire (épuisé)."
+            else:
+                item["quantity"] = current - quantity
+                save_inventory(inv)
+                return (f"[RÉSULTAT SYSTÈME] {quantity}× {name} retiré(s). "
+                        f"Reste : {item['quantity']}.")
+    return f"[RÉSULTAT SYSTÈME] Objet introuvable dans l'inventaire : {name}."
+
+
+def update_currency(gold: int = 0, silver: int = 0, copper: int = 0,
+                    platinum: int = 0, electrum: int = 0) -> str:
+    """
+    Ajoute ou retire de la monnaie (valeurs positives = gain, négatives = dépense).
+    Paramètres : gold (int), silver (int), copper (int), platinum (int), electrum (int).
+    """
+    try:
+        gold = int(gold); silver = int(silver); copper = int(copper)
+        platinum = int(platinum); electrum = int(electrum)
+    except (ValueError, TypeError) as e:
+        return f"[RÉSULTAT SYSTÈME] Erreur paramètre monnaie : {e}."
+
+    inv = get_inventory()
+    cur = inv["currency"]
+    changes = []
+    for coin, delta, label in [
+        ("platinum", platinum, "pp"), ("gold", gold, "po"),
+        ("electrum", electrum, "pe"), ("silver", silver, "pa"), ("copper", copper, "pc"),
+    ]:
+        if delta != 0:
+            cur[coin] = max(0, cur.get(coin, 0) + delta)
+            sign = "+" if delta > 0 else ""
+            changes.append(f"{sign}{delta} {label} → {cur[coin]} {label}")
+    save_inventory(inv)
+    if not changes:
+        return "[RÉSULTAT SYSTÈME] Aucune modification de monnaie."
+    totals = ", ".join(f"{cur[c]} {'pp po pe pa pc'.split()[i]}"
+                       for i, c in enumerate(["platinum","gold","electrum","silver","copper"])
+                       if cur.get(c, 0) > 0)
+    return (f"[RÉSULTAT SYSTÈME] Monnaie mise à jour : {', '.join(changes)}. "
+            f"Total : {totals or 'vide'}.")
+
+
 def get_active_quests_prompt() -> str:
     """
     Génère un bloc de texte formaté pour injection dans les system prompts des agents.

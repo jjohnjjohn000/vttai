@@ -192,18 +192,24 @@ class LLMControlMixin:
                 return
             threading.Thread(target=self._send_private_message, args=(real_name, private_text), daemon=True).start()
             return
+        # ── Enter vide → parole spontanée ────────────────────────────────
+        # [PAROLE_SPONTANEE] est un marqueur reconnu par le sélecteur de
+        # speaker dans autogen_engine : il déclenche directement la rotation
+        # d'un PJ sans passer par l'analyse du contenu du message MJ.
+        if not text:
+            self.user_input = "[PAROLE_SPONTANEE]"
+            self.input_event.set()
+            return
+
         self.user_input = text
-        if text:
-            npc = self.active_npc
-            if npc:
-                display_name = f"🎭 {npc['name']}"
-                color = npc.get("color", "#c77dff")
-                self.msg_queue.put({"sender": display_name, "text": text, "color": color})
-                self.user_input = f"[{npc['name']}] : {text}"
-            else:
-                self.msg_queue.put({"sender": "Alexis_Le_MJ", "text": text, "color": "#4CAF50"})
+        npc = self.active_npc
+        if npc:
+            display_name = f"🎭 {npc['name']}"
+            color = npc.get("color", "#c77dff")
+            self.msg_queue.put({"sender": display_name, "text": text, "color": color})
+            self.user_input = f"[{npc['name']}] : {text}"
         else:
-            self.msg_queue.put({"sender": "Système", "text": "✅ [Approbation de l'action en cours...]", "color": "#aaaaaa"})
+            self.msg_queue.put({"sender": "Alexis_Le_MJ", "text": text, "color": "#4CAF50"})
         self.input_event.set()
 
     # ─── Message privé MJ → agent ────────────────────────────────────────────

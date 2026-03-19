@@ -26,7 +26,8 @@ import types
 
 from llm_config    import build_llm_config, _default_model, StopLLMRequested, _SSL_LOCK
 from app_config    import (get_agent_config, get_chronicler_config,
-                           get_groupchat_config, get_memories_config)
+                           get_groupchat_config, get_memories_config,
+                           APP_CONFIG, save_app_config, reload_app_config)
 from state_manager import (
     load_state, save_state, get_npcs,
     use_spell_slot, update_hp, add_temp_hp,
@@ -34,6 +35,8 @@ from state_manager import (
     get_memories_prompt_compact, get_calendar_prompt,
     get_session_logs_prompt, get_active_characters,
     get_spells_prompt,
+    get_inventory_prompt,
+    add_item_to_inventory, remove_item_from_inventory, update_currency,
 )
 from agent_logger  import log_tts_start
 from combat_tracker import COMBAT_STATE, _is_fully_silenced
@@ -85,15 +88,17 @@ class AutogenEngineMixin:
         # ── Chargement des configs LLM par personnage ─────────────────────────
         _char_state = load_state().get("characters", {})
         def _cfg(char_name: str) -> dict:
-            # Priorité : app_config > campaign_state > défaut env
-            ac = get_agent_config(char_name)
-            model = ac.get("model") or _char_state.get(char_name, {}).get("llm", _default_model)
-            temp  = ac.get("temperature", 0.7)
+            # Priorité : campaign_state > app_config > défaut env
+            model = (_char_state.get(char_name, {}).get("llm", "")
+                     or get_agent_config(char_name).get("model", "")
+                     or _default_model)
+            temp  = get_agent_config(char_name).get("temperature", 0.7)
             return build_llm_config(model, temperature=temp)
 
         def _provider_label(char_name: str) -> str:
-            ac = get_agent_config(char_name)
-            model = ac.get("model") or _char_state.get(char_name, {}).get("llm", _default_model)
+            model = (_char_state.get(char_name, {}).get("llm", "")
+                     or get_agent_config(char_name).get("model", "")
+                     or _default_model)
             if model.startswith("groq/"):        return f"Groq ({model[5:]})"
             if model.startswith("openrouter/"): return f"OpenRouter ({model[11:]})"
             return f"Gemini ({model})"
@@ -195,6 +200,7 @@ class AutogenEngineMixin:
         kaelen_agent = autogen.AssistantAgent(
             name="Kaelen",
             system_message=(
+                _regle_outils + 
                 "Tu es Kaelen, un Paladin Humain de niveau 15, hanté par un serment passé.\n"
                 "PERSONNALITÉ : Tu es économe en mots, fier et grave. Tes préoccupations sont toujours liées "
                 "à l'honneur, aux serments, à qui mérite protection et à ce qui constitue une cause juste. "
@@ -226,7 +232,7 @@ class AutogenEngineMixin:
                 + get_calendar_prompt()
                 + get_session_logs_prompt(max_sessions=3)
                 + get_spells_prompt("Kaelen")
-                + _regle_outils
+                + get_inventory_prompt()
             ),
             llm_config=_cfg("Kaelen"),
         )
@@ -234,6 +240,7 @@ class AutogenEngineMixin:
         elara_agent = autogen.AssistantAgent(
             name="Elara",
             system_message=(
+                _regle_outils + 
                 "Tu es Elara, une Magicienne de niveau 15, froide et méthodique.\n"
                 "PERSONNALITÉ : Tu analyses, tu quantifies, tu cherches les failles logiques. Tes questions portent "
                 "toujours sur la mécanique précise des choses : comment fonctionne la magie du phare, quelle est "
@@ -258,7 +265,7 @@ class AutogenEngineMixin:
                 + get_calendar_prompt()
                 + get_session_logs_prompt(max_sessions=3)
                 + get_spells_prompt("Elara")
-                + _regle_outils
+                + get_inventory_prompt()
             ),
             llm_config=_cfg("Elara"),
         )
@@ -266,6 +273,7 @@ class AutogenEngineMixin:
         thorne_agent = autogen.AssistantAgent(
             name="Thorne",
             system_message=(
+                _regle_outils + 
                 "Tu es Thorne, un Voleur (Assassin) Tieffelin de niveau 15, cynique et pragmatique.\n"
                 "PERSONNALITÉ : Tu vois le monde en termes de risques, de profits et de qui manipule qui. "
                 "Tes questions portent sur les motivations cachées, les pièges potentiels, ce qu'on ne te dit pas, "
@@ -292,7 +300,7 @@ class AutogenEngineMixin:
                 + get_memories_prompt_compact(importance_min=get_memories_config().get("compact_importance_min", 2))
                 + get_calendar_prompt()
                 + get_session_logs_prompt(max_sessions=3)
-                + _regle_outils
+                + get_inventory_prompt()
             ),
             llm_config=_cfg("Thorne"),
         )
@@ -300,6 +308,7 @@ class AutogenEngineMixin:
         lyra_agent = autogen.AssistantAgent(
             name="Lyra",
             system_message=(
+                _regle_outils + 
                 "Tu es Lyra, une Clerc (Domaine de la Vie) Demi-Elfe de niveau 15, bienveillante et implacable.\n"
                 "PERSONNALITÉ : Tu penses d'abord aux innocents qui souffrent, à la dimension spirituelle et divine "
                 "des événements, et à ce que les dieux pourraient vouloir ici. Tu poses des questions sur les victimes, "
@@ -325,7 +334,7 @@ class AutogenEngineMixin:
                 + get_calendar_prompt()
                 + get_session_logs_prompt(max_sessions=3)
                 + get_spells_prompt("Lyra")
-                + _regle_outils
+                + get_inventory_prompt()
             ),
             llm_config=_cfg("Lyra"),
         )
@@ -380,10 +389,51 @@ class AutogenEngineMixin:
                         # _SSL_LOCK : sérialise TOUS les appels httpx/OpenSSL pour éviter
                         # le segfault dans ssl.py quand deux threads partagent le pool SSL.
                         # Nécessaire car les daemon threads interrompus restent actifs.
+
+                        # ── Snapshot avant l'appel (usage cumulatif) ─────────────────
+                        # actual_usage_summary est cumulatif sur la session entière.
+                        # On prend un snapshot AVANT puis on diff APRÈS pour isoler
+                        # le modèle qui a répondu à CE call spécifique.
+                        _usage_before = dict(
+                            getattr(self_agent.client, "actual_usage_summary", None) or {}
+                        )
+
+                        # ── Reset du sticky-fallback d'AutoGen ────────────────────────
+                        # OpenAIWrapper mémorise le dernier index de config_list ayant
+                        # réussi (_last_config_idx). Sans reset, une erreur transitoire
+                        # suffit à faire basculer TOUS les appels suivants vers le
+                        # fallback — même quand le modèle primaire est de nouveau dispo.
+                        try:
+                            self_agent.client._last_config_idx = 0
+                        except Exception:
+                            pass
+
                         with _SSL_LOCK:
                             result[0] = _orig_gr(
                                 self_agent, messages=messages, sender=sender, **kwargs
                             )
+
+                        # ── Log du modèle ayant effectivement répondu ────────────────
+                        try:
+                            from agent_logger import log_llm_model_used
+                            from state_manager import load_state as _ls_log
+                            _usage_after = getattr(self_agent.client, "actual_usage_summary", None) or {}
+                            # Modèles nouveaux ou dont le compteur a augmenté depuis le snapshot
+                            _new = [
+                                m for m in _usage_after
+                                if m != "total_cost"
+                                and _usage_after[m] != _usage_before.get(m)
+                            ]
+                            actual = _new[0] if _new else None
+                            if actual:
+                                # Source de vérité : campaign_state d'abord
+                                _cs = _ls_log().get("characters", {}).get(name, {})
+                                configured = (_cs.get("llm", "")
+                                              or get_agent_config(name).get("model", "")
+                                              or "")
+                                log_llm_model_used(name, actual, configured)
+                        except Exception:
+                            pass
                     except StopLLMRequested:
                         # Thread interrompu via ctypes : on sort proprement
                         # Le lock with-block est déjà libéré par l'exception
@@ -491,6 +541,42 @@ class AutogenEngineMixin:
                 add_temp_hp, caller=_upd_agent, executor=mj_agent,
                 name="add_temp_hp",
                 description=_add_temp_hp_desc,
+            )
+
+        # ── Inventaire du groupe : enregistré sur TOUS les agents joueurs ────
+        # Les agents peuvent ajouter/retirer des objets et mettre à jour la
+        # monnaie quand le MJ annonce un gain ou une dépense.
+        _add_item_desc = (
+            "Ajouter un objet à l'inventaire du groupe (ou incrémenter sa quantité). "
+            "Paramètres : name (str), quantity (int, défaut 1), "
+            "category (str : arme/armure/potion/objet_magique/munition/outil/divers), "
+            "rarity (str : commun/peu_commun/rare/très_rare/légendaire/artéfact), "
+            "description (str), notes (str). "
+            "À appeler quand le MJ confirme que le groupe trouve ou reçoit un objet."
+        )
+        _remove_item_desc = (
+            "Retirer une quantité d'un objet de l'inventaire du groupe. "
+            "Paramètres : name (str), quantity (int, défaut 1). "
+            "À appeler quand le groupe utilise, perd ou vend un objet."
+        )
+        _currency_desc = (
+            "Mettre à jour la monnaie du groupe (positif = gain, négatif = dépense). "
+            "Paramètres : gold (int), silver (int), copper (int), platinum (int), electrum (int). "
+            "Exemple gain : gold=50, silver=10. Exemple dépense : gold=-30. "
+            "À appeler quand le MJ annonce un gain ou une dépense de monnaie."
+        )
+        for _inv_agent in [kaelen_agent, elara_agent, thorne_agent, lyra_agent]:
+            autogen.agentchat.register_function(
+                add_item_to_inventory, caller=_inv_agent, executor=mj_agent,
+                name="add_item_to_inventory", description=_add_item_desc,
+            )
+            autogen.agentchat.register_function(
+                remove_item_from_inventory, caller=_inv_agent, executor=mj_agent,
+                name="remove_item_from_inventory", description=_remove_item_desc,
+            )
+            autogen.agentchat.register_function(
+                update_currency, caller=_inv_agent, executor=mj_agent,
+                name="update_currency", description=_currency_desc,
             )
 
         # Kaelen et Thorne : combat (dés + sorts)
@@ -647,6 +733,36 @@ class AutogenEngineMixin:
             last_mj_idx, last_mj_content = _find_last_mj_msg()
 
             if last_mj_idx is not None:
+                # ── Garde approbation / message vide ──────────────────────────
+                # [APPROBATION] ou vide → MJ reprend la main (pas de rotation PJ).
+                # [PAROLE_SPONTANEE] → sauter l'analyse et aller direct à la rotation.
+                _stripped = last_mj_content.strip()
+                if _stripped == "[PAROLE_SPONTANEE]":
+                    # Un seul PJ parle puis retour au MJ — pas de round-robin.
+                    # Trouver si un PJ a déjà répondu APRÈS ce message [PAROLE_SPONTANEE].
+                    _ps_responded = _responded_since(last_mj_idx)
+                    if _ps_responded:
+                        # Un PJ a parlé → MJ reprend la main
+                        return mj_agent_ref or eligible[0]
+                    # Aucun PJ n'a encore parlé → choisir aléatoirement parmi les PJ
+                    players_eligible =[a for a in eligible if a.name in _ALL_PLAYERS]
+                    if players_eligible:
+                        import random
+                        return random.choice(players_eligible)
+
+                # ── Résultat d'outil : MJ a auto-répondu après exécution ──
+                # Ce n'est pas un vrai message narratif — ne pas déclencher
+                # de rotation de PJ. Retourner au MJ pour attendre le vrai input.
+                _is_tool_result = (
+                    _stripped.startswith("[RÉSULTAT SYSTÈME")
+                    or _stripped.startswith("Error: Function")
+                    or "Function" in _stripped and "not found" in _stripped
+                )
+                if _is_tool_result:
+                    if mj_agent_ref:
+                        return mj_agent_ref
+                    return eligible[0]
+
                 content_low = last_mj_content.lower()
 
                 # Cas 1 — noms explicites dans le message du MJ
@@ -679,29 +795,19 @@ class AutogenEngineMixin:
                 if mj_agent_ref:
                     return mj_agent_ref
 
-            # ─── Narration sans '?' : MJ parle → un seul PJ réagit (rotation) ─
+            # ─── MJ vient de parler sans cibler → attendre l'input ─────────
+            # Pas de rotation automatique. Le MJ attend que l'utilisateur
+            # tape quelque chose ou appuie sur Enter ([PAROLE_SPONTANEE]).
             if last_name == "Alexis_Le_MJ":
-                players_eligible = [a for a in eligible if a.name in _ALL_PLAYERS]
-                if players_eligible:
-                    recent_players = [
-                        m.get("name") for m in reversed(groupchat.messages[-20:])
-                        if m.get("name") in _ALL_PLAYERS
-                    ]
-                    last_player = next(iter(recent_players), None)
-                    if last_player:
-                        idx = next(
-                            (i for i, a in enumerate(players_eligible) if a.name == last_player),
-                            -1
-                        )
-                        return players_eligible[(idx + 1) % len(players_eligible)]
-                    return players_eligible[0]
+                return mj_agent_ref or eligible[0]
 
-            # ─── Fallback ultime : rotation parmi les éligibles ───────────────
-            if last_name:
-                idx = next(
-                    (i for i, a in enumerate(eligible) if a.name == last_name), -1
-                )
-                return eligible[(idx + 1) % len(eligible)]
+            # ─── Fallback ultime : choix aléatoire parmi les PJ éligibles ───────────────
+            players_eligible = [a for a in eligible if a.name in _ALL_PLAYERS]
+            if players_eligible:
+                import random
+                # Tente d'éviter de faire parler le même PJ deux fois de suite si d'autres sont dispos
+                candidates = [a for a in players_eligible if a.name != last_name]
+                return random.choice(candidates if candidates else players_eligible)
 
             return eligible[0]
 
@@ -2100,7 +2206,39 @@ class AutogenEngineMixin:
             # Quand le MJ demande un jet (dégâts, attaque, sauvegarde, soin…), l'agent
             # doit pouvoir exécuter l'appel d'outil sans que ça lui coûte une ressource
             # hors-tour, même s'il est silencieux ou que ce n'est pas son tour.
-            _FREE_TOOLS = frozenset({"roll_dice", "update_hp", "use_spell_slot", "add_temp_hp"})
+            #
+            # GARDE-FOU ANTI-PARASITE :
+            # Un appel d'outil n'est légitime que si une [DIRECTIVE SYSTÈME] récente
+            # existe dans l'historique pour cet agent. Sans directive → l'appel est
+            # bloqué et un message d'erreur est injecté dans le contexte autogen.
+            # Cela évite que les modèles faibles (arcee, llama free tier) appellent
+            # update_hp / roll_dice spontanément sans narration préalable.
+            _FREE_TOOLS = frozenset({"roll_dice", "update_hp", "use_spell_slot", "add_temp_hp",
+                              "add_item_to_inventory", "remove_item_from_inventory", "update_currency"})
+
+            def _has_recent_directive(agent_name: str) -> bool:
+                """Retourne True si une [DIRECTIVE SYSTÈME] récente dans l'historique
+                cible cet agent. Fenêtre : 10 derniers messages."""
+                try:
+                    for _msg in reversed((self.groupchat.messages if self.groupchat else [])[-10:]):
+                        _mc = str(_msg.get("content", ""))
+                        if "[DIRECTIVE SYSTÈME" in _mc and agent_name in _mc:
+                            return True
+                except Exception:
+                    pass
+                return False
+
+            def _extract_tool_args(tc) -> dict:
+                """Extrait les arguments d'un tool_call (dict ou objet)."""
+                try:
+                    import json as _j
+                    raw = (tc.get("function", {}).get("arguments", "{}")
+                           if isinstance(tc, dict)
+                           else getattr(getattr(tc, "function", None), "arguments", "{}"))
+                    return _j.loads(raw) if isinstance(raw, str) else (raw or {})
+                except Exception:
+                    return {}
+
             is_mj_roll_response = False
             if tool_calls and isinstance(tool_calls, list):
                 for _tc in tool_calls:
@@ -2109,16 +2247,67 @@ class AutogenEngineMixin:
                         if isinstance(_tc, dict)
                         else getattr(getattr(_tc, "function", None), "name", None)
                     )
-                    if _fn_name in _FREE_TOOLS:
-                        is_mj_roll_response = True
-                        # Sync tracker après add_temp_hp
-                        if _fn_name == "add_temp_hp":
-                            try:
-                                if _app._combat_tracker is not None:
-                                    _app.root.after(300, _app._combat_tracker.sync_pc_hp_from_state)
-                            except Exception:
-                                pass
-                        break
+                    if _fn_name not in _FREE_TOOLS:
+                        continue
+
+                    # ── Guard 1 : update_hp(amount=0) est toujours un appel parasite ──
+                    if _fn_name == "update_hp":
+                        _args = _extract_tool_args(_tc)
+                        if int(_args.get("amount", 1)) == 0:
+                            _parasite_msg = (
+                                f"[SYSTÈME — APPEL INVALIDE]\n"
+                                f"{name} a appelé update_hp(amount=0) — appel ignoré.\n"
+                                f"update_hp ne doit être appelé qu'avec un montant non nul "
+                                f"(négatif pour dégâts, positif pour soin) ET uniquement "
+                                f"sur instruction [DIRECTIVE SYSTÈME — DÉGÂTS/SOIN] du MJ.\n"
+                                f"Ne modifie JAMAIS tes PV de ta propre initiative."
+                            )
+                            _app.msg_queue.put({
+                                "sender": "⚠️ Système",
+                                "text": _parasite_msg,
+                                "color": "#cc4422",
+                            })
+                            _original_receive(
+                                self_mgr,
+                                {"role": "user", "content": _parasite_msg, "name": "Alexis_Le_MJ"},
+                                sender, request_reply=False, silent=True,
+                            )
+                            return   # bloquer le message entier
+
+                    # ── Guard 2 : appel sans directive MJ préalable → parasite ──────
+                    if name in PLAYER_NAMES and not _has_recent_directive(name):
+                        _parasite_msg = (
+                            f"[SYSTÈME — APPEL OUTIL REFUSÉ]\n"
+                            f"{name} a appelé {_fn_name} sans [DIRECTIVE SYSTÈME] du MJ.\n\n"
+                            f"RÈGLE ABSOLUE (point 4) :\n"
+                            f"  Tu ne peux PAS appeler {_fn_name} de ta propre initiative.\n"
+                            f"  Cet outil n'est autorisé QUE sur instruction explicite du MJ\n"
+                            f"  via [DIRECTIVE SYSTÈME — DÉGÂTS], [DIRECTIVE SYSTÈME — JET], etc.\n\n"
+                            f"Action requise : rédige une réponse narrative (roleplay) ou\n"
+                            f"déclare une action via un bloc [ACTION] si c'est ton tour."
+                        )
+                        _app.msg_queue.put({
+                            "sender": "⚠️ Système",
+                            "text": _parasite_msg,
+                            "color": "#cc4422",
+                        })
+                        _original_receive(
+                            self_mgr,
+                            {"role": "user", "content": _parasite_msg, "name": "Alexis_Le_MJ"},
+                            sender, request_reply=False, silent=True,
+                        )
+                        return   # bloquer le message entier
+
+                    # ── Appel légitime ────────────────────────────────────────────────
+                    is_mj_roll_response = True
+                    # Sync tracker après add_temp_hp
+                    if _fn_name == "add_temp_hp":
+                        try:
+                            if _app._combat_tracker is not None:
+                                _app.root.after(300, _app._combat_tracker.sync_pc_hp_from_state)
+                        except Exception:
+                            pass
+                    break
 
             # ── FILTRE COMBAT : PJ hors-tour tente une action ──────────────
             # Bloque tout [ACTION] ou tentative d'action physique si ce n'est
@@ -3229,38 +3418,120 @@ class AutogenEngineMixin:
                 err_msg = str(e)
                 is_quota_error = "RESOURCE_EXHAUSTED" in err_msg or "429" in err_msg or "quota" in err_msg.lower()
 
-                # ── Détection quota gemini-2.5-pro → bascule auto vers flash ──────
-                if is_quota_error and "gemini-2.5-pro" in err_msg:
+                # ── Fallback générique : détecte quel modèle a épuisé son quota
+                # et bascule TOUS les agents qui l'utilisent vers le suivant dans
+                # la chaîne de priorité définie dans llm_config.py.
+                # Source de vérité : app_config.json (lu via get_agent_config).
+                # campaign_state["characters"][x]["llm"] est aussi mis à jour
+                # pour que la fiche personnage reste cohérente.
+                # ─────────────────────────────────────────────────────────────────
+                # Chaîne de fallback : doit rester synchronisée avec llm_config.py.
+                _FALLBACK_CHAIN = [
+                    "gemini-3.1-pro-preview",
+                    "gemini-3.1-flash-lite-preview",
+                    "gemini-2.5-pro",
+                    "groq/meta-llama/llama-4-scout-17b-16e-instruct",
+                    "gemini-2.5-flash",
+                    "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+                    "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
+                    "openrouter/arcee-ai/trinity-large-preview:free",
+                ]
+
+                if is_quota_error:
                     try:
-                        state = load_state()
-                        switched = []
-                        for char_name, char_data in state.get("characters", {}).items():
-                            if char_data.get("llm", "") == "gemini-2.5-pro":
-                                state["characters"][char_name]["llm"] = "gemini-2.5-flash"
-                                switched.append(char_name)
-                        if switched:
-                            save_state(state)
+                        # Déterminer quel modèle a déclenché le 429
+                        exhausted_model = None
+                        for candidate in _FALLBACK_CHAIN:
+                            bare = candidate.split("/")[-1]
+                            if candidate in err_msg or bare in err_msg:
+                                exhausted_model = candidate
+                                break
+
+                        if exhausted_model is None:
+                            for _cn in ["Kaelen", "Elara", "Thorne", "Lyra"]:
+                                _m = get_agent_config(_cn).get("model", "")
+                                if _m and any(kw in err_msg for kw in ["gemini", "groq", "llama", "arcee"]):
+                                    exhausted_model = _m
+                                    break
+
+                        next_model = None
+                        if exhausted_model and exhausted_model in _FALLBACK_CHAIN:
+                            idx = _FALLBACK_CHAIN.index(exhausted_model)
+                            if idx + 1 < len(_FALLBACK_CHAIN):
+                                next_model = _FALLBACK_CHAIN[idx + 1]
+
+                        if next_model:
+                            switched = []
+                            # Source de vérité : campaign_state → on y écrit en premier
+                            try:
+                                state = load_state()
+                                for _cn in ["Kaelen", "Elara", "Thorne", "Lyra"]:
+                                    current = (_char_state.get(_cn, {}).get("llm", "")
+                                               or get_agent_config(_cn).get("model", ""))
+                                    if current == exhausted_model:
+                                        state.setdefault("characters", {}).setdefault(_cn, {})["llm"] = next_model
+                                        switched.append(_cn)
+                                if switched:
+                                    save_state(state)
+                            except Exception as _se:
+                                print(f"[Auto-Fallback] Erreur écriture campaign_state : {_se}")
+
+                            # Synchronisation app_config (secondaire)
+                            if switched:
+                                try:
+                                    cfg = APP_CONFIG
+                                    for _cn in switched:
+                                        cfg.setdefault("agents", {}).setdefault(_cn, {})["model"] = next_model
+                                    save_app_config(cfg)
+                                    reload_app_config()
+                                except Exception as _ae:
+                                    print(f"[Auto-Fallback] Erreur écriture app_config : {_ae}")
+                                print(f"[Auto-Fallback] {exhausted_model} → {next_model} pour : {switched}")
+                                self.msg_queue.put({
+                                    "sender": "⚠️ Système (Auto-Fallback)",
+                                    "text": (
+                                        f"⚡ Quota épuisé : {exhausted_model}\n"
+                                        f"✅ Basculement automatique → {next_model}\n"
+                                        f"Agents concernés : {', '.join(switched)}\n"
+                                        f"app_config.json et campaign_state.json mis à jour.\n"
+                                        f"Tapez un message pour reprendre (historique conservé)."
+                                    ),
+                                    "color": "#FF9800",
+                                })
+                            else:
+                                self.msg_queue.put({
+                                    "sender": "⚠️ Système (Quota)",
+                                    "text": (
+                                        f"⚡ Quota épuisé ({exhausted_model or 'modèle inconnu'}) "
+                                        f"mais aucun agent ne l'utilisait directement.\n"
+                                        f"Le fallback automatique d'AutoGen a dû prendre le relais.\n"
+                                        f"Tapez un message pour reprendre."
+                                    ),
+                                    "color": "#FF9800",
+                                })
+                        else:
                             self.msg_queue.put({
-                                "sender": "⚠️ Système (Auto-Fallback)",
+                                "sender": "⚠️ Système (Quota total)",
                                 "text": (
-                                    f"⚡ Quota Gemini Pro épuisé pour aujourd'hui.\n"
-                                    f"✅ Basculement automatique vers gemini-2.5-flash pour : {', '.join(switched)}.\n"
-                                    f"Les modèles ont été mis à jour dans campaign_state.json.\n"
-                                    f"Tapez un nouveau message pour reprendre (l'historique est conservé)."
+                                    f"❌ Tous les modèles de la chaîne de fallback sont épuisés.\n"
+                                    f"Dernier modèle tenté : {exhausted_model or 'inconnu'}\n"
+                                    f"💡 Attendez la réinitialisation des quotas ou ajoutez "
+                                    f"une clé API supplémentaire dans .env."
                                 ),
-                                "color": "#FF9800"
+                                "color": "#F44336",
                             })
+
                     except Exception as switch_err:
-                        print(f"[Auto-Fallback] Erreur lors du basculement : {switch_err}")
+                        print(f"[Auto-Fallback] Erreur basculement : {switch_err}")
                         self.msg_queue.put({
-                            "sender": "⚠️ Système (Crash IA)",
+                            "sender": "⚠️ Système (Auto-Fallback)",
                             "text": (
-                                "❌ Quota Gemini Pro épuisé ET échec du basculement automatique.\n"
+                                f"❌ Quota épuisé ET échec du basculement automatique.\n"
                                 f"Détail : {err_msg}\n\n"
-                                "💡 Changez manuellement 'gemini-2.5-pro' → 'gemini-2.5-flash' dans campaign_state.json\n"
-                                "puis relancez l'application."
+                                f"Erreur interne : {switch_err}\n"
+                                f"💡 Modifiez manuellement le modèle dans app_config.json."
                             ),
-                            "color": "#F44336"
+                            "color": "#F44336",
                         })
                 else:
                     # Autre type d'erreur — message générique

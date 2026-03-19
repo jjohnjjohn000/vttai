@@ -1123,6 +1123,22 @@ class PanelsMixin:
 
     # --- JOURNAL DE QUÊTES ---
 
+    def open_inventory_panel(self):
+        """Ouvre (ou ramène au premier plan) le panneau d'inventaire du groupe."""
+        if getattr(self, "_inventory_win", None):
+            try:
+                self._inventory_win.win.deiconify()
+                self._inventory_win.win.lift()
+                return
+            except Exception:
+                self._inventory_win = None
+        from inventory_panel import InventoryPanel
+        self._inventory_win = InventoryPanel(self.root)
+        try:
+            self._track_window("inventory", self._inventory_win.win)
+        except Exception:
+            pass
+
     def open_quest_journal(self):
         """Fenêtre de gestion du journal de quêtes."""
         win = tk.Toplevel(self.root)

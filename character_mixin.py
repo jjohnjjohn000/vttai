@@ -182,9 +182,34 @@ class CharacterMixin:
         hdr.pack(fill=tk.X)
         tk.Label(hdr, text=char_name, bg=color, fg="#0d0d0d",
                  font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=14)
-        llm_short = data.get("llm", "?").replace("gemini-", "G:").replace("groq/", "Q:")
-        tk.Label(hdr, text=llm_short, bg=color, fg="#333333",
-                 font=("Consolas", 8)).pack(side=tk.RIGHT, padx=10)
+        def _get_actual_llm() -> str:
+            """Retourne le modèle réellement utilisé par le moteur.
+            Priorité identique à autogen_engine.py :
+              1. campaign_state (characters.<nom>.llm)  ← source de vérité
+              2. app_config (agents.<nom>.model)         ← fallback
+            """
+            try:
+                from state_manager import load_state as _ls
+                cs_model = _ls().get("characters", {}).get(char_name, {}).get("llm", "")
+                if cs_model:
+                    return cs_model
+            except Exception:
+                pass
+            try:
+                from app_config import get_agent_config
+                ac_model = get_agent_config(char_name).get("model", "")
+                if ac_model:
+                    return ac_model
+            except Exception:
+                pass
+            return data.get("llm", "?")
+
+        def _fmt_llm(model: str) -> str:
+            return model.replace("gemini-", "G:").replace("groq/", "Q:").replace("openrouter/", "OR:")
+
+        llm_label = tk.Label(hdr, text=_fmt_llm(_get_actual_llm()), bg=color, fg="#333333",
+                             font=("Consolas", 8))
+        llm_label.pack(side=tk.RIGHT, padx=10)
 
         # ── Barre d'onglets ───────────────────────────────────────────────────
         tabs_bar = tk.Frame(win, bg="#12121e")
@@ -420,6 +445,10 @@ class CharacterMixin:
                 hd_lbl.config(text=str(avail))
                 ac_lbl.config(text=str(d2.get("ac", ac)))
                 _rebuild_slots()
+                # ── Mise à jour du label LLM si le modèle a changé (ex: fallback quota) ──
+                current_short = _fmt_llm(_get_actual_llm())
+                if llm_label.cget("text") != current_short:
+                    llm_label.config(text=current_short)
             except Exception:
                 pass
 

@@ -140,6 +140,9 @@ class UISetupMixin:
         action_frame = tk.Frame(bottom_container, bg="#252526")
         action_frame.pack(fill=tk.X, pady=6, padx=10)
 
+        tk.Button(action_frame, text="[Sac] Inventaire du Groupe", bg="#2a1e0a", fg="#f0c040",
+                  font=("Arial", 10, "bold"), command=self.open_inventory_panel).pack(fill=tk.X, pady=3)
+
         tk.Button(action_frame, text="📜 Journal de Quêtes", bg="#1a3a5c", fg="#64b5f6",
                   font=("Arial", 10, "bold"), command=self.open_quest_journal).pack(fill=tk.X, pady=3)
 

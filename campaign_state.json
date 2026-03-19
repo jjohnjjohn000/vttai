@@ -1,9 +1,9 @@
 {
-    "session_summary": "### Chroniques de la Barovie : L’Éclipse de la Réalité\n\n**La Consolidation sous la Menace**\nAu sein d'Argynvostholt, le groupe s’est attelé à une tâche titanesque : la reconstruction structurelle sous la direction de **Gil** et de son apprenti **Mart**. Alors que **Kaelen** assurait une veille martiale inébranlable dans le Grand Hall, **Elara** et **Thorne** confrontaient les « cicatrices arcaniques » du manoir avec un pragmatisme froid, tandis que **Lyra** tentait d'apporter un soutien spirituel aux réfugiés terrifiés par l'instabilité croissante. Le diagnostic de Gil est sans appel : les dommages structurels, notamment aux étages supérieurs, nécessiteraient des années de labeur. Cette perspective a exacerbé les tensions internes, Elara insistant sur l'urgence d'une intervention arcanique directe plutôt que sur les méthodes traditionnelles de maçonnerie.\n\n**La Rupture du Monde**\nAu matin, un événement cataclysmique a frappé la Barovie : un silence absolu a paralysé la terre, suivi d'une altération brutale de la réalité. Un froid spirituel a balayé le bastion tandis que le ciel se déchirait, révélant des teintes putrides et une colonne d'obscurité verticale vers l'est. Le Fanal d'Argynvost, réagissant à ce changement de paradigme, a muté en une lumière dorée pure, témoignant d'une réponse sacrée à cette intrusion. Plus inquiétant encore, un mur opaque d'obsidienne liquide a surgi à l'emplacement de l'ancien campement Vistani, scindant la vallée en deux. \n\n**État de la Situation**\nArgynvostholt n'est plus seulement un refuge contre Strahd, mais une sentinelle sur la ligne de front d'une faille cosmique. Le groupe est désormais confronté à un péril dépassant la simple tyrannie vampirique : la structure même du monde se désagrège. Alors qu'Elara tente de quantifier les signatures énergétiques de cette rupture, la priorité du groupe glisse vers la survie face à une menace dont la nature exacte reste à définir.\n\n**Progression des Quêtes :**\n*   🗺️ **[Secondaire] Défendre Argynvostholt** : **Statu quo critique**. La fortification physique est entravée par l'instabilité environnementale. L'urgence est désormais de sécuriser le bastion face à la brèche.\n*   🗺️ **[Secondaire] Trouver le vieux maçon à Krezk** : **Accomplie**. Gil et Mart sont à pied d'œuvre, bien que leur mission soit remise en question par la dégradation rapide de la réalité.\n*   🗺️ **[Secondaire] Les sorcières du vieux moulin** : **En attente**. La priorité a basculé vers la survie face aux anomalies planaires.\n\n**Objets Majeurs Trouvés :**\n*   **Échantillon de liane cristalline** : En phase d'analyse par Elara pour comprendre la corrélation entre la croissance végétale et la corruption arcanique.\n\n*Note du Chroniqueur : Le monde tel que connu en Barovie a basculé. Le silence qui a précédé la rupture laisse présager que les forces à l'œuvre ne répondent plus aux lois naturelles. Le \"Fanal d'Or\" est désormais la seule ancre visible dans une réalité qui se délite.*",
+    "session_summary": "### Chroniques de la Barovie : L'Enclume et le Maçon\n\n**La Consolidation sous la Menace**\nAu sein d'Argynvostholt, le groupe s'est attelé à une tâche titanesque : la reconstruction structurelle sous la direction de **Gil** et de son apprenti **Mart**, recrutés à grand-peine depuis Krezk. Alors que **Kaelen** assurait une veille martiale inébranlable dans le Grand Hall pour protéger **Ireena** et les réfugiés, **Elara** et **Thorne** confrontaient les « cicatrices arcaniques » du manoir avec un pragmatisme froid, tandis que **Lyra** apportait un soutien spirituel aux survivants éprouvés. Le diagnostic de Gil est sans appel : les dommages structurels, notamment aux étages supérieurs, nécessiteraient des années de labeur conventionnel. Cette perspective a exacerbé les tensions internes, Elara insistant sur l'urgence d'une intervention arcanique directe plutôt que sur les méthodes traditionnelles de maçonnerie.\n\n**État de la Situation**\nArgynvostholt tient. Le phare d'Argynvost projette sa lumière purificatrice sur la vallée, repoussant les créatures de la nuit et maintenant le moral des réfugiés. Gil et Mart sont à l'œuvre, s'attaquant aux failles les plus critiques. La fortification progresse, lentement mais sûrement. Le groupe vient de terminer un long repos bien mérité entre les murs du bastion.\n\nLes priorités restent claires : retrouver les restes profanés d'Argynvost pour libérer la pleine puissance du Fanal, neutraliser les guenaudes du vieux moulin dont deux ont pris la fuite, et surveiller les mouvements à Vallaki où Lady Wachter consolide son emprise.\n\n**Progression des Quêtes :**\n*   🗺️ **[Secondaire] Défendre Argynvostholt** : **En cours**. La fortification physique avance grâce à Gil et Mart. Le bastion est opérationnel mais toujours vulnérable sur les flancs.\n*   🗺️ **[Secondaire] Trouver le vieux maçon à Krezk** : **Accomplie**. Gil et Mart sont à pied d'œuvre.\n*   🗺️ **[Secondaire] Les sorcières du vieux moulin** : **En attente**. Deux guenaudes ont fui le combat. Elles constituent une menace pendante.\n\n**Objets Majeurs :**\n*   **Échantillon de liane cristalline** : En phase d'analyse par Elara pour comprendre la corrélation entre la croissance végétale et la corruption arcanique résiduelle de Strahd.",
     "defense_argynvostholt": 10,
     "characters": {
         "Kaelen": {
-            "llm": "gemini-2.5-flash",
+            "llm": "openrouter/arcee-ai/trinity-large-preview:free",
             "hp": 140,
             "max_hp": 140,
             "spell_slots": {
@@ -218,7 +218,7 @@
             ]
         },
         "Thorne": {
-            "llm": "groq/llama-4-scout-17b-16e-instruct",
+            "llm": "gemini-2.5-flash",
             "hp": 105,
             "max_hp": 105,
             "spell_slots": {},
@@ -429,11 +429,11 @@
                 },
                 {
                     "text": "Escorter Ireena hors de Barovia",
-                    "done": false
+                    "done": true
                 },
                 {
                     "text": "Atteindre Vallaki sains et saufs",
-                    "done": false
+                    "done": true
                 }
             ],
             "notes": "Strahd convoitait Ireena, il est mort."
@@ -526,17 +526,21 @@
         {
             "id": "6a04aa9c",
             "title": "Trouver le vieux maçon à Krezk",
-            "status": "active",
+            "status": "completed",
             "category": "Secondaire",
             "description": "Argynvostholt a besoin de maçons et de charpentiers. Il faut recruter à Krezk. Un villageois (Gustav) à Argynvostholt connais un vieux maçon qui, si il est en vie, pourrait peut-être venir à Argynvostholt.",
             "objectives": [
                 {
                     "text": "Recruter le vieux maçon",
-                    "done": false
+                    "done": true
                 },
                 {
                     "text": "Recruter d'autres maçons, charpentiers",
                     "done": false
+                },
+                {
+                    "text": "Recruter Mart, l'apprenti et ingénieur",
+                    "done": true
                 }
             ],
             "notes": ""
@@ -849,7 +853,7 @@
         {
             "session": 24,
             "date": "2026-03-16 22:01",
-            "resume": "### Chroniques de la Barovie : L’Éclipse de la Réalité\n\n**La Consolidation sous la Menace**\nAu sein d'Argynvostholt, le groupe s’est attelé à une tâche titanesque : la reconstruction structurelle sous la direction de **Gil** et de son apprenti **Mart**. Alors que **Kaelen** assurait une veille martiale inébranlable dans le Grand Hall, **Elara** et **Thorne** confrontaient les « cicatrices arcaniques » du manoir avec un pragmatisme froid, tandis que **Lyra** tentait d'apporter un soutien spirituel aux réfugiés terrifiés par l'instabilité croissante. Le diagnostic de Gil est sans appel : les dommages structurels, notamment aux étages supérieurs, nécessiteraient des années de labeur. Cette perspective a exacerbé les tensions internes, Elara insistant sur l'urgence d'une intervention arcanique directe plutôt que sur les méthodes traditionnelles de maçonnerie.\n\n**La Rupture du Monde**\nAu matin, un événement cataclysmique a frappé la Barovie : un silence absolu a paralysé la terre, suivi d'une altération brutale de la réalité. Un froid spirituel a balayé le bastion tandis que le ciel se déchirait, révélant des teintes putrides et une colonne d'obscurité verticale vers l'est. Le Fanal d'Argynvost, réagissant à ce changement de paradigme, a muté en une lumière dorée pure, témoignant d'une réponse sacrée à cette intrusion. Plus inquiétant encore, un mur opaque d'obsidienne liquide a surgi à l'emplacement de l'ancien campement Vistani, scindant la vallée en deux. \n\n**État de la Situation**\nArgynvostholt n'est plus seulement un refuge contre Strahd, mais une sentinelle sur la ligne de front d'une faille cosmique. Le groupe est désormais confronté à un péril dépassant la simple tyrannie vampirique : la structure même du monde se désagrège. Alors qu'Elara tente de quantifier les signatures énergétiques de cette rupture, la priorité du groupe glisse vers la survie face à une menace dont la nature exacte reste à définir.\n\n**Progression des Quêtes :**\n*   🗺️ **[Secondaire] Défendre Argynvostholt** : **Statu quo critique**. La fortification physique est entravée par l'instabilité environnementale. L'urgence est désormais de sécuriser le bastion face à la brèche.\n*   🗺️ **[Secondaire] Trouver le vieux maçon à Krezk** : **Accomplie**. Gil et Mart sont à pied d'œuvre, bien que leur mission soit remise en question par la dégradation rapide de la réalité.\n*   🗺️ **[Secondaire] Les sorcières du vieux moulin** : **En attente**. La priorité a basculé vers la survie face aux anomalies planaires.\n\n**Objets Majeurs Trouvés :**\n*   **Échantillon de liane cristalline** : En phase d'analyse par Elara pour comprendre la corrélation entre la croissance végétale et la corruption arcanique.\n\n*Note du Chroniqueur : Le monde tel que connu en Barovie a basculé. Le silence qui a précédé la rupture laisse présager que les forces à l'œuvre ne répondent plus aux lois naturelles. Le \"Fanal d'Or\" est désormais la seule ancre visible dans une réalité qui se délite.*"
+            "resume": "### Chroniques de la Barovie : L'Enclume et le Maçon\n\n**La Consolidation sous la Menace**\nAu sein d'Argynvostholt, le groupe s'est attelé à une tâche titanesque : la reconstruction structurelle sous la direction de **Gil** et de son apprenti **Mart**, recrutés à grand-peine depuis Krezk. Alors que **Kaelen** assurait une veille martiale inébranlable dans le Grand Hall pour protéger **Ireena** et les réfugiés, **Elara** et **Thorne** confrontaient les « cicatrices arcaniques » du manoir avec un pragmatisme froid, tandis que **Lyra** apportait un soutien spirituel aux survivants éprouvés. Le diagnostic de Gil est sans appel : les dommages structurels, notamment aux étages supérieurs, nécessiteraient des années de labeur conventionnel. Cette perspective a exacerbé les tensions internes, Elara insistant sur l'urgence d'une intervention arcanique directe plutôt que sur les méthodes traditionnelles de maçonnerie.\n\n**État de la Situation**\nArgynvostholt tient. Le phare d'Argynvost projette sa lumière purificatrice sur la vallée, repoussant les créatures de la nuit et maintenant le moral des réfugiés. Gil et Mart sont à l'œuvre, s'attaquant aux failles les plus critiques. La fortification progresse, lentement mais sûrement. Le groupe vient de terminer un long repos bien mérité entre les murs du bastion.\n\nLes priorités restent claires : retrouver les restes profanés d'Argynvost pour libérer la pleine puissance du Fanal, neutraliser les guenaudes du vieux moulin dont deux ont pris la fuite, et surveiller les mouvements à Vallaki où Lady Wachter consolide son emprise.\n\n**Progression des Quêtes :**\n*   🗺️ **[Secondaire] Défendre Argynvostholt** : **En cours**. La fortification physique avance grâce à Gil et Mart. Le bastion est opérationnel mais toujours vulnérable sur les flancs.\n*   🗺️ **[Secondaire] Trouver le vieux maçon à Krezk** : **Accomplie**. Gil et Mart sont à pied d'œuvre.\n*   🗺️ **[Secondaire] Les sorcières du vieux moulin** : **En attente**. Deux guenaudes ont fui le combat. Elles constituent une menace pendante.\n\n**Objets Majeurs :**\n*   **Échantillon de liane cristalline** : En phase d'analyse par Elara pour comprendre la corrélation entre la croissance végétale et la corruption arcanique résiduelle de Strahd."
         }
     ],
     "combat_tracker": {
@@ -864,6 +868,7 @@
                 "is_pc": false,
                 "max_hp": 58,
                 "hp": 58,
+                "temp_hp": 0,
                 "ac": 17,
                 "initiative": 16,
                 "dex_bonus": 1,
@@ -882,7 +887,8 @@
                 "name": "Elara",
                 "is_pc": true,
                 "max_hp": 95,
-                "hp": 70,
+                "hp": 95,
+                "temp_hp": 0,
                 "ac": 16,
                 "initiative": 14,
                 "dex_bonus": 3,
@@ -902,6 +908,7 @@
                 "is_pc": false,
                 "max_hp": 11,
                 "hp": 11,
+                "temp_hp": 0,
                 "ac": 16,
                 "initiative": 10,
                 "dex_bonus": 1,
@@ -920,7 +927,8 @@
                 "name": "Thorne",
                 "is_pc": true,
                 "max_hp": 105,
-                "hp": 98,
+                "hp": 105,
+                "temp_hp": 0,
                 "ac": 16,
                 "initiative": 9,
                 "dex_bonus": 6,
@@ -940,6 +948,7 @@
                 "is_pc": true,
                 "max_hp": 110,
                 "hp": 110,
+                "temp_hp": 0,
                 "ac": 16,
                 "initiative": 7,
                 "dex_bonus": 1,
@@ -959,6 +968,7 @@
                 "is_pc": false,
                 "max_hp": 11,
                 "hp": 11,
+                "temp_hp": 0,
                 "ac": 16,
                 "initiative": 4,
                 "dex_bonus": 1,
@@ -972,6 +982,29 @@
                 "action_used": false,
                 "bonus_used": false,
                 "reaction_used": false
+            }
+        ]
+    },
+    "group_inventory": {
+        "currency": {
+            "platinum": 0,
+            "gold": 0,
+            "electrum": 0,
+            "silver": 0,
+            "copper": 0
+        },
+        "items": [
+            {
+                "id": "e2458abc",
+                "name": "Échantillon de liane cristalline",
+                "quantity": 1,
+                "category": "objet_magique",
+                "rarity": "rare",
+                "weight": 0.1,
+                "description": "Fragment de liane cristalline et mousse luminescente prélevé par Elara après la téléportation arcanique vers Argynvostholt. Réaction directe de la terre barovienne aux forces arcaniques déployées. Lié à la corruption résiduelle de Strahd.",
+                "attuned": false,
+                "attunement_by": "",
+                "notes": "En cours d'analyse par Elara. Corrélation suspectée entre la croissance cristalline et les cicatrices arcaniques du manoir. Scellé dans un récipient pour prévenir toute interaction magique non contrôlée."
             }
         ]
     }
