@@ -1,4 +1,4 @@
-# 🎲 Moteur de l'Aube Brisée
+# 🎲 Moteur de l'Aube Brisée, v9
 
 > **Un moteur de campagne D&D 5e propulsé par l'IA** — quatre agents joueurs incarnés par des LLMs, un MJ humain, et une table virtuelle complète avec combat, voix, cartes et mémoire narrative.
 
