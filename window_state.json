@@ -2,12 +2,12 @@
   "main": {
     "w": 1283,
     "h": 1016,
-    "x": 2256,
+    "x": 2252,
     "y": 1099
   },
   "char_Kaelen": {
-    "w": 280,
-    "h": 460,
+    "w": 300,
+    "h": 520,
     "x": 0,
     "y": 0
   },
@@ -24,14 +24,12 @@
     "y": 1106
   },
   "char_Lyra": {
-    "w": 280,
-    "h": 460,
+    "w": 300,
+    "h": 520,
     "x": 3559,
     "y": 1605
   },
-  "_open_char_Kaelen": true,
   "_open_char_Thorne": true,
-  "_open_char_Lyra": true,
   "modal_skill_check": {
     "w": 560,
     "h": 660,
@@ -41,8 +39,8 @@
   "modal_scene_editor": {
     "w": 681,
     "h": 886,
-    "x": 0,
-    "y": 0
+    "x": 2413,
+    "y": 1229
   },
   "modal_quest_journal": {
     "w": 820,
@@ -2630,5 +2628,7 @@
     "h": 640,
     "x": 0,
     "y": 0
-  }
+  },
+  "_open_char_Lyra": true,
+  "_open_char_Kaelen": true
 }

@@ -176,24 +176,43 @@ class AutogenEngineMixin:
             "\nTon seul rôle : narrer en 1-2 phrases comment ton personnage encaisse le coup."
             "\nPas de chiffres — décris la douleur, le choc, ta posture. Reste dans l'action.\n"
             "\n▶ PNJ"
-            "\nTu n'inventes JAMAIS les paroles d'un PNJ. Si tu t'adresses à un PNJ, ARRÊTE "
-            "immédiatement après. Le MJ est la seule voix des PNJ."
+            "\n▶ PNJ — RÈGLE ABSOLUE EN DEUX PARTIES"
+            "\n1. Tu ne DÉCRIS JAMAIS les actions, expressions ou réactions d'un PNJ"
+            " (il soupire, il répond, il échange un regard…) — seul le MJ décrit les PNJ."
+            "\n2. Tu ne INVENTES JAMAIS leurs paroles. Si tu t'adresses à un PNJ"
+            " (ex: 'Gil, de combien de temps aurais-tu besoin ?'), tu ARRÊTES"
+            " IMMÉDIATEMENT après la question. Une seule phrase d'adresse maximum."
+            " Tu n'élabores PAS, tu n'anticipes PAS leur réponse, tu n'imagines PAS"
+            " leurs besoins. Tu poses la question et tu te tais — c'est au MJ de répondre."
             "\n\n▶ MONDE & UNICITÉ — RÈGLE ABSOLUE"
             "\nTu n'existes QUE dans ta tête et ton corps. Le monde extérieur appartient au MJ."
             "\nN'invente JAMAIS : un objet, une texture, une odeur, un mécanisme, un passage,"
             "\nune inscription, une créature, une réaction de PNJ — rien de ce qui existe hors"
             "\nde toi. Si ton jet de dés réussit, dis ce que TON CORPS ressent (une anomalie,"
             "\nun doute, une intuition) — PAS ce que tu trouves. Attends qu'Alexis décrive."
-            "\nNe répète jamais une question ou idée déjà exprimée — apporte un angle nouveau"
-            "\nou reste silencieux."
+            "\nNe répète jamais une question ou idée déjà exprimée — apporte un angle nouveau."
             "\n\n▶ INTERDICTION DE COPIE — RÈGLE ABSOLUE"
             "\nNe reproduis JAMAIS, même partiellement, le contenu du message précédent."
             "\nSi un autre personnage vient de dire ou faire quelque chose, tu ne le répètes pas,"
             "\nne le paraphrases pas, ne le reformules pas. Chaque personnage a sa propre voix,"
-            "\nses propres actes. Si tu n'as rien d'original à apporter : dis [SILENCE]."
-            "\n\n▶ ÉLOCUTION (SYNTHÈSE VOCALE)"
-            "\nRépliques : 1-2 phrases MAX, courtes et percutantes. Ponctuation forte (?, !). "
-            "Zéro tirade. Parle comme en pleine action."
+            "\nses propres actes."
+            "\n\n▶ [SILENCE] — USAGE TRÈS RESTREINT"
+            "\n[SILENCE] n'est autorisé QUE si tu es physiquement incapable de parler"
+            "\n(inconscient, bâillonné) ou si parler trahirait immédiatement ta position tactique."
+            "\nDans TOUS les autres cas, contribue quelque chose — même une seule phrase :"
+            "\n  une pensée interne, une réaction émotionnelle, un doute, une question au MJ."
+            "\nL'hésitation EST du jeu. [SILENCE] ne l'est presque jamais."
+            "\n\n▶ FORMAT & LONGUEUR — RÈGLE ABSOLUE"
+            "\nChaque message = 1 réplique dialoguée (1-2 phrases MAX) + 1 bloc [ACTION] si nécessaire."
+            "\nINTERDIT ABSOLU :"
+            "\n  • Pas de blocs de mise en scène entre parenthèses (Lyra s'approche..., Kaelen observe...)."
+            "\n    Tes gestes et postures peuvent figurer dans ta réplique, pas en paragraphe séparé."
+            "\n  • Pas de plusieurs questions dans un même message. UNE seule question si tu en poses."
+            "\n  • Pas de tirade, pas de monologue, pas de discours en plusieurs paragraphes."
+            "\n  • Pas de résumé de ce qu'un autre vient de dire avant de répondre."
+            "\nSi tu veux décrire ton attitude : glisse-la dans ta réplique en une incise courte."
+            "\nExemple INTERDIT : (Kaelen se tourne lentement.) « Question ? »"
+            "\nExemple CORRECT  : « Question ? » — sa voix porte dans le hall."
             "\n═══════════════════════════════════════════\n"
         )
 
@@ -222,10 +241,19 @@ class AutogenEngineMixin:
                 "              Attaque 2 : corps-à-corps +11, 2d6+8\n"
                 "  Cible     : [la cible]\n"
                 "Ne déclare PAS le smite comme Action Bonus séparé — il doit toujours être dans le même bloc que l'attaque.\n"
-                "RÈGLES : 1. Alexis est MJ. "
-                "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste. "
-                "3. Ne décide pas si tu touches ou tues. N'invente pas d'environnement. "
-                "4. Tu ne connais pas la vallée de Barovie, tout est nouveau ici pour toi."
+                "RÈGLES ABSOLUES :\n"
+                "0. LONGUEUR STRICTE : 1 réplique (1-2 phrases) maximum par message hors combat. "
+                "Pas de paragraphes entre parenthèses. Pas de plusieurs questions. Une seule idée, dite une seule fois.\n"
+                "1. Alexis est le seul Maître du Jeu. Il a l'autorité exclusive sur le monde, les PNJs et l'environnement.\n"
+                "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste.\n"
+                "3. Ne décide pas si tu touches ou si tu tues — c'est Alexis qui valide.\n"
+                "4. INTERDIT ABSOLU : ne parle JAMAIS à la place d'un PNJ (Gil, Mart, Ireena, Ismark, ou tout autre personnage non joueur). "
+                "Ne décris JAMAIS leurs gestes, leurs réactions, leurs émotions ni leurs paroles. "
+                "Tu ne peux décrire QUE ce que Kaelen fait, dit ou ressent. "
+                "Si tu veux qu'un PNJ réagisse, tu lui adresses la parole — et c'est Alexis qui joue sa réponse.\n"
+                "5. N'invente pas l'environnement : ne décris pas ce qui se passe dans le monde, les changements de décor, "
+                "la météo, les bruits ambiants ou tout élément non établi par Alexis.\n"
+                "6. Tu ne connais pas la vallée de Barovie, tout est nouveau ici pour toi."
                 + get_scene_prompt()
                 + get_active_quests_prompt()
                 + get_memories_prompt_compact(importance_min=get_memories_config().get("compact_importance_min", 2))
@@ -255,10 +283,19 @@ class AutogenEngineMixin:
                 "à concentration simultanément.\n"
                 "  • ARCANE RECOVERY (1/repos long) : récupère des emplacements de sort après un repos court.\n"
                 "  • Si aucun sort utile : Attaque magique de contact ou Esquive.\n"
-                "RÈGLES : 1. Alexis est MJ. "
-                "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste. "
-                "3. Ne décide pas du résultat. N'invente pas d'environnement. "
-                "4. Tu ne connais pas la vallée de Barovie, tout est nouveau ici pour toi."
+                "RÈGLES ABSOLUES :\n"
+                "0. LONGUEUR STRICTE : 1 réplique (1-2 phrases) maximum par message hors combat. "
+                "Pas de paragraphes entre parenthèses. Pas de plusieurs questions. Une seule idée, dite une seule fois.\n"
+                "1. Alexis est le seul Maître du Jeu. Il a l'autorité exclusive sur le monde, les PNJs et l'environnement.\n"
+                "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste.\n"
+                "3. Ne décide pas du résultat de tes actions — c'est Alexis qui valide.\n"
+                "4. INTERDIT ABSOLU : ne parle JAMAIS à la place d'un PNJ (tout personnage non joueur). "
+                "Ne décris JAMAIS leurs gestes, leurs réactions, leurs émotions ni leurs paroles. "
+                "Tu ne peux décrire QUE ce qu'Elara fait, dit ou ressent. "
+                "Si tu veux qu'un PNJ réagisse, tu lui adresses la parole — et c'est Alexis qui joue sa réponse.\n"
+                "5. N'invente pas l'environnement : ne décris pas ce qui se passe dans le monde, les changements de décor, "
+                "la météo, les bruits ambiants ou tout élément non établi par Alexis.\n"
+                "6. Tu ne connais pas la vallée de Barovie, tout est nouveau ici pour toi."
                 + get_scene_prompt()
                 + get_active_quests_prompt()
                 + get_memories_prompt_compact(importance_min=get_memories_config().get("compact_importance_min", 2))
@@ -291,10 +328,19 @@ class AutogenEngineMixin:
                 "  • UNCANNY DODGE (réaction) : réduit de moitié les dégâts d'une attaque qui te touche.\n"
                 "  • EVASION (passif) : DD sauvegarde DEX : succès = 0 dégâts, échec = moitié.\n"
                 "  • Priorité tactique : te positionner pour le Sneak Attack, puis Hide ou Disengage en Bonus.\n"
-                "RÈGLES : 1. Alexis est ton MJ. "
-                "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste. "
-                "3. Ne décide jamais si tu réussis. N'invente pas d'environnement. "
-                "4. Tu connais la légende de la vallée de Barovie, les grands mots, mais tu n'y crois pas."
+                "RÈGLES ABSOLUES :\n"
+                "0. LONGUEUR STRICTE : 1 réplique (1-2 phrases) maximum par message hors combat. "
+                "Pas de paragraphes entre parenthèses. Pas de plusieurs questions. Une seule idée, dite une seule fois.\n"
+                "1. Alexis est le seul Maître du Jeu. Il a l'autorité exclusive sur le monde, les PNJs et l'environnement.\n"
+                "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste.\n"
+                "3. Ne décide jamais si tu réussis — c'est Alexis qui valide.\n"
+                "4. INTERDIT ABSOLU : ne parle JAMAIS à la place d'un PNJ (tout personnage non joueur). "
+                "Ne décris JAMAIS leurs gestes, leurs réactions, leurs émotions ni leurs paroles. "
+                "Tu ne peux décrire QUE ce que Thorne fait, dit ou ressent. "
+                "Si tu veux qu'un PNJ réagisse, tu lui adresses la parole — et c'est Alexis qui joue sa réponse.\n"
+                "5. N'invente pas l'environnement : ne décris pas ce qui se passe dans le monde, les changements de décor, "
+                "la météo, les bruits ambiants ou tout élément non établi par Alexis.\n"
+                "6. Tu connais la légende de la vallée de Barovie, les grands mots, mais tu n'y crois pas."
                 + get_scene_prompt()
                 + get_active_quests_prompt()
                 + get_memories_prompt_compact(importance_min=get_memories_config().get("compact_importance_min", 2))
@@ -324,10 +370,19 @@ class AutogenEngineMixin:
                 "  • DISCIPLE OF LIFE (passif) : sorts de soin récupèrent 2 + niveau du sort PV supplémentaires.\n"
                 "  • Priorité : maintenir la concentration sur un sort actif ; soigner si un allié est < 25% PV.\n"
                 "  • Si aucune action prioritaire : Mot de Mort sur l'ennemi le plus faible ou Esquive.\n"
-                "RÈGLES : 1. Alexis est ton MJ. "
-                "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste. "
-                "3. Ne décide pas du résultat. N'invente pas d'environnement. "
-                "4. Tu ne connais pas la vallée de Barovie, tout est nouveau ici pour toi."
+                "RÈGLES ABSOLUES :\n"
+                "0. LONGUEUR STRICTE : 1 réplique (1-2 phrases) maximum par message hors combat. "
+                "Pas de paragraphes entre parenthèses. Pas de plusieurs questions. Une seule idée, dite une seule fois.\n"
+                "1. Alexis est le seul Maître du Jeu. Il a l'autorité exclusive sur le monde, les PNJs et l'environnement.\n"
+                "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste.\n"
+                "3. Ne décide pas du résultat de tes actions — c'est Alexis qui valide.\n"
+                "4. INTERDIT ABSOLU : ne parle JAMAIS à la place d'un PNJ (tout personnage non joueur). "
+                "Ne décris JAMAIS leurs gestes, leurs réactions, leurs émotions ni leurs paroles. "
+                "Tu ne peux décrire QUE ce que Lyra fait, dit ou ressent. "
+                "Si tu veux qu'un PNJ réagisse, tu lui adresses la parole — et c'est Alexis qui joue sa réponse.\n"
+                "5. N'invente pas l'environnement : ne décris pas ce qui se passe dans le monde, les changements de décor, "
+                "la météo, les bruits ambiants ou tout élément non établi par Alexis.\n"
+                "6. Tu ne connais pas la vallée de Barovie, tout est nouveau ici pour toi."
                 + get_scene_prompt()
                 + get_active_quests_prompt()
                 + get_memories_prompt_compact(importance_min=get_memories_config().get("compact_importance_min", 2))
@@ -765,6 +820,55 @@ class AutogenEngineMixin:
 
                 content_low = last_mj_content.lower()
 
+                # ── Détection réponse PNJ → re-router vers le dernier PJ questionneur ──
+                # Quand le MJ fait parler un PNJ (ex: "Gil : des fissures ya que ça !"),
+                # le sélecteur doit rendre la parole au PJ qui avait initié l'échange,
+                # plutôt que de retourner silencieusement au MJ.
+                # Condition : message MJ commence par "NomPNJ :" ou "NomPNJ —"
+                # ET ce PJ n'a pas encore répondu depuis ce message MJ.
+                # _PNJ_NAMES_SEL : utilise PNJ_NAMES (dynamique) s'il est déjà
+                # disponible dans le scope englobant, sinon fallback statique.
+                # PNJ_NAMES est défini APRÈS run_autogen() → combat_speaker_selector
+                # est une closure capturée AVANT que PNJ_NAMES soit construit.
+                # On utilise donc nonlocal via une référence de liste mutable.
+                _PNJ_NAMES_SEL = [
+                    "Ismark", "Ireena", "Strahd", "Madam Eva", "Rahadin",
+                    "Viktor", "Morgantha", "Gil", "Mart", "Tavernier",
+                    "Garde", "Maire", "Gustav", "Donavich",
+                ]
+                try:
+                    # Si load_state est accessible ici (import au niveau module) on enrichit
+                    _sel_state = load_state()
+                    _sel_extra = (
+                        [n["name"] for n in _sel_state.get("npcs", []) if n.get("name")]
+                        + [n["name"] for n in _sel_state.get("group_npcs", []) if n.get("name")]
+                    )
+                    _PNJ_NAMES_SEL = list({*_PNJ_NAMES_SEL, *_sel_extra})
+                except Exception:
+                    pass
+                _pnj_reply_re = _re.compile(
+                    r'(?:^|\n)\s*(?:' + '|'.join(_re.escape(n) for n in _PNJ_NAMES_SEL) + r')\s*(?::|—|-)',
+                    _re.IGNORECASE
+                )
+                if _pnj_reply_re.search(last_mj_content):
+                    _already_resp_pnj = _responded_since(last_mj_idx)
+                    # Chercher le dernier PJ ayant parlé AVANT ce message MJ
+                    _last_pc_before_mj = None
+                    for _rmsg in reversed(groupchat.messages[:last_mj_idx]):
+                        if _rmsg.get("name") in _ALL_PLAYERS:
+                            _last_pc_before_mj = _rmsg.get("name")
+                            break
+                    if (_last_pc_before_mj
+                            and _last_pc_before_mj in eligible_names
+                            and _last_pc_before_mj not in _already_resp_pnj):
+                        return next(
+                            (a for a in eligible if a.name == _last_pc_before_mj),
+                            mj_agent_ref or eligible[0]
+                        )
+                    # PJ déjà répondu ou introuvable → MJ reprend
+                    if mj_agent_ref:
+                        return mj_agent_ref
+
                 # Cas 1 — noms explicites dans le message du MJ
                 mentioned = [
                     name for name in _ALL_PLAYERS
@@ -853,15 +957,119 @@ class AutogenEngineMixin:
         # Raison : types.MethodType() sur une instance crée un objet Python temporaire
         # que les threads C natifs de gRPC peuvent accéder sans tenir le GIL → SEGFAULT.
         # Remplacer __class__ fait résoudre receive() via la MRO de façon atomique.
-        # Noms des PNJ connus — à compléter au fil de la campagne
-        PNJ_NAMES = ["Ismark", "Strahd", "Ireena", "Madam Eva", "Rahadin", "Viktor", "Morgantha"]
+        # Noms des PNJ — chargés dynamiquement depuis campaign_state (npcs + group_npcs)
+        # + socle statique de secours pour les PNJ sans fiche campaign_state.
+        _PNJ_BASE = ["Ismark", "Strahd", "Ireena", "Madam Eva", "Rahadin",
+                     "Viktor", "Morgantha", "Gil", "Mart", "Donavich", "Dori",
+                     "Gustav", "Tavernier", "Garde", "Maire"]
+        try:
+            _state_pnj = load_state()
+            _dynamic_pnj = (
+                [n["name"] for n in _state_pnj.get("npcs", []) if n.get("name")]
+                + [n["name"] for n in _state_pnj.get("group_npcs", []) if n.get("name")]
+            )
+            PNJ_NAMES = list({*_PNJ_BASE, *_dynamic_pnj})
+        except Exception:
+            PNJ_NAMES = _PNJ_BASE
+
+        # Mise à jour de _PNJ_NAMES_SEL utilisé par le sélecteur de speaker
+        # (défini plus haut dans combat_speaker_selector — on synchronise ici)
+
         PLAYER_NAMES = ["Kaelen", "Elara", "Thorne", "Lyra"]
-        SPELL_CASTERS = ["Kaelen", "Elara", "Lyra"]  # Thorne n'a pas de sorts
+        # SPELL_CASTERS : dérivé dynamiquement depuis campaign_state.
+        # Tout PJ ayant un dict spell_slots non vide est considéré lanceur de sorts.
+        # Couvre les cas de multiclasse ou d'objet conférant des sorts à Thorne.
+        try:
+            _sc_state = load_state()
+            SPELL_CASTERS = [
+                name for name in PLAYER_NAMES
+                if _sc_state.get("characters", {}).get(name, {}).get("spell_slots")
+            ]
+            if not SPELL_CASTERS:   # sécurité si campaign_state vide ou corrompu
+                SPELL_CASTERS = ["Kaelen", "Elara", "Lyra"]
+        except Exception:
+            SPELL_CASTERS = ["Kaelen", "Elara", "Lyra"]
         import re as _re
-        _pnj_pattern = _re.compile(
-            r'(?:^|\n)\s*(?:' + '|'.join(_re.escape(n) for n in PNJ_NAMES) + r')\s*:',
+
+        # _pnj_pattern : détecte DEUX formes de violation :
+        #   1. Dialogue inventé   : "NomPNJ : ..."  (guillemets ou non)
+        #   2. Description narrative du PNJ : "NomPNJ soupire / répond / échange..."
+        #      → un PJ ne peut pas décrire les actions/expressions d'un PNJ
+        _pnj_dialogue_re = _re.compile(
+            r'(?:^|\n)\s*(?:' + '|'.join(_re.escape(n) for n in PNJ_NAMES) + r')\s*(?::|«|\u201c)',
             _re.IGNORECASE | _re.MULTILINE
         )
+        # Forme directe : NomPNJ + verbe  (ex: "Gil soupire", "Mart frotte ses yeux")
+        _pnj_narrative_re = _re.compile(
+            r'\b(?:' + '|'.join(_re.escape(n) for n in PNJ_NAMES) + r')\b'
+            r"\s+(?:dit|r[eé]pond|soupire|murmure|ajoute|s.exclame|lance|"
+            r"explique|observe|regarde|se tourne|.change|hoche|fronce|esquisse|"
+            r"croise|saisit|tend|pose|s.essui|sourit|grimace|cligne|l[eè]ve|"
+            r"baisse|s.approche|recule|marche|court|s.arr[eê]te|"
+            r"frotte|jette|[eé]tire|acquiesce|examine|[eé]change|tourne|"
+            r"plisse|tressaille|chancelle|d[eé]glutit|grommelle|ricane|"
+            r"renifle|pouffe|[eé]met|pousse|l[aâ]che|interrompt|reprend|"
+            r"conclut|insiste|h[eé]site|bafouille|semble|para[iî]t|"
+            r"se r[ae]id|se d[eé]tend|se penche|se redresse|se l[eè]ve|"
+            r"se tait|se retourne|se fige|s.immobilise|se lev)",
+            _re.IGNORECASE
+        )
+        # Forme inversée française : verbe + NomPNJ  (ex: "répond Gil", "dit Mart")
+        # Courant après les guillemets : « ... » répond Gil
+        _pnj_narrative_inv_re = _re.compile(
+            r'(?:dit|r[eé]pond|soupire|murmure|ajoute|s.exclame|lance|explique|'
+            r'observe|grommelle|reprend|conclut|insiste|h[eé]site|ricane|'
+            r'poursuit|glisse|l[aâ]che|tranche|conc[eè]de|admet|reconna[iî]t|'
+            r'bafouille|interrompt|s.exclame|s.esclaffe)\s+'
+            r'(?:' + '|'.join(_re.escape(n) for n in PNJ_NAMES) + r')\b',
+            _re.IGNORECASE
+        )
+
+        # Regex vocatif : détecte "NomPNJ, ..." ou "NomPNJ !" quand suivi d'une
+        # continuation (le PJ pose une question aux PNJ puis élabore au lieu de s'arrêter).
+        # Pattern : NomPNJ en début de guillemet ou après virgule, suivi de >=40 chars.
+        _pnj_vocative_re = _re.compile(
+            r'(?:,\s*|«\s*)(?:' + '|'.join(_re.escape(n) for n in PNJ_NAMES) + r')\s*,',
+            _re.IGNORECASE
+        )
+
+        def _pnj_pattern_search(text: str) -> bool:
+            """Retourne True si le texte contient une violation de type PNJ :
+            1. Dialogue inventé (NomPNJ : ...)
+            2. Description narrative (NomPNJ soupire/répond/...)
+
+            NOTE : l'adresse vocative simple ("Gil, Mart, avez-vous...?") n'est
+            PAS une violation — le PJ a le droit d'interpeller un PNJ.
+            Seule la fabrication de répliques ou d'actions de PNJ est interdite.
+            """
+            if _pnj_dialogue_re.search(text) or _pnj_narrative_re.search(text) or _pnj_narrative_inv_re.search(text):
+                return True
+            # Vocatif : violation SEULEMENT si le texte après le dernier ? contient
+            # une description d'action ou de dialogue PNJ (fabrication de réaction).
+            if _pnj_vocative_re.search(text):
+                import re as _re_voc
+                # Trouver la position du dernier ? dans le texte
+                last_q = max((m.end() for m in _re_voc.finditer(r'[?]', text)), default=-1)
+                if last_q == -1:
+                    # Pas de ? du tout → l'agent fait une déclaration sans question = OK
+                    return False
+                # Texte substantiel APRÈS le dernier ?
+                after_q = _re_voc.sub(r"^[\s\u00bb\u00ab\"\']+", "", text[last_q:].strip())
+                if len(after_q) > 30:
+                    # Violation SEULEMENT si la continuation décrit des PNJs
+                    # (actions, paroles, réactions) — PAS si c'est le PJ qui exprime
+                    # ses propres pensées, impressions ou observations personnelles.
+                    if (_pnj_narrative_re.search(after_q)
+                            or _pnj_narrative_inv_re.search(after_q)
+                            or _pnj_dialogue_re.search(after_q)):
+                        return True
+            return False
+
+        # Compatibilité avec l'ancien usage _pnj_pattern.search(...)
+        class _PnjPatternCompat:
+            def search(self, text):
+                return _pnj_pattern_search(text) or None  # truthy/falsy
+        _pnj_pattern = _PnjPatternCompat()
         # Détecte [SORT: NomDuSort | Niveau: X | Cible: Y]
         _sort_pattern = _re.compile(
             r'\[SORT\s*:\s*(?P<nom>[^|\]]+?)\s*\|\s*Niveau\s*:\s*(?P<niveau>\d)\s*(?:\|\s*Cible\s*:\s*(?P<cible>[^\]]*?))?\s*\]',
@@ -1058,6 +1266,11 @@ class AutogenEngineMixin:
         # AUCUNE ressource hors-tour (ni parole, ni réaction).
         _pending_damage_narrators: set = set()
 
+        # Set des PJ qui viennent de recevoir un [RÉSULTAT SYSTÈME] de jet de compétence.
+        # Leur prochaine réponse doit être de l'effort physique/mental UNIQUEMENT —
+        # pas de découvertes, pas de description de l'environnement.
+        _pending_skill_narrators: set = set()
+
         # ── Parseur LLM de directives MJ ─────────────────────────────────────
         # Pré-filtre léger : on n'appelle le LLM que si le message du MJ contient
         # des indicateurs de directive mécanique (chiffres, mots-clés).
@@ -1110,8 +1323,9 @@ class AutogenEngineMixin:
                 return []
 
             # ── Passe 1 : regex sans LLM ─────────────────────────────────────
-            _PLAYER_SET = {"kaelen", "elara", "thorne", "lyra"}
-            _NAME_CANON = {"kaelen":"Kaelen","elara":"Elara","thorne":"Thorne","lyra":"Lyra"}
+            # _PLAYER_SET et _NAME_CANON générés depuis PLAYER_NAMES (pas hardcodés)
+            _PLAYER_SET = {n.lower() for n in PLAYER_NAMES}
+            _NAME_CANON = {n.lower(): n for n in PLAYER_NAMES}
             _CARAC_MAP  = {
                 "force":"force","str":"force",
                 "dextérité":"dextérité","dex":"dextérité",
@@ -1662,10 +1876,17 @@ class AutogenEngineMixin:
                 else:
                     results.append(f"  → MJ annoncera la DC et l effet.")
 
+                _pending_skill_narrators.add(char_name)
                 narrative_hint = (
                     f"Le système a lancé le jet. "
-                    f"Narre en 1 phrase la tentative de {char_name} : {intention}. "
-                    f"Ne répète pas les chiffres. Attends que le MJ décrive l effet si DC inconnue."
+                    f"RÈGLE ABSOLUE : narre UNIQUEMENT l'effort physique ou mental de {char_name} "
+                    f"(la tension de ses muscles, sa concentration, le geste accompli). "
+                    f"TU NE DÉCRIS JAMAIS ce que tu trouves, découvres, perçois ou constates — "
+                    f"même si le résultat est élevé. La qualité des matériaux, l'état de la structure, "
+                    f"les propriétés magiques, les informations trouvées : TOUT cela appartient au MJ. "
+                    f"Exemple interdit : 'la pierre est de qualité' / 'je détecte une anomalie magique'. "
+                    f"Exemple correct : 'Mes doigts parcourent la surface. Quelque chose cloche ici.' "
+                    f"Attends que le MJ décrive le résultat."
                 )
 
             # ── SORT ─────────────────────────────────────────────────────────
@@ -2060,6 +2281,9 @@ class AutogenEngineMixin:
 
         # Dict partagé par patched_receive pour la détection de copie inter-agents
         _last_player_messages: dict[str, str] = {}
+        _copy_strikes: dict[str, int] = {}         # nb de copies consécutives par agent
+        _tool_refusal_strikes: dict[str, int] = {} # nb d'appels outil non-autorisés consécutifs
+        _silence_strikes: dict[str, int] = {}      # nb de [SILENCE] consécutifs par agent
 
         def patched_receive(self_mgr, message, sender, request_reply=None, silent=False):
 
@@ -2150,51 +2374,149 @@ class AutogenEngineMixin:
             is_system = False
             if isinstance(message, dict) and message.get("role") == "tool":
                 is_system = True
-            if content and str(content).startswith("[RÉSULTAT SYSTÈME]"):
-                is_system = True
+            if content and str(content).startswith("[RÉSULTAT SYSTÈME"):
+                # Ne marquer is_system=True QUE si l'émetteur est le MJ ou le système.
+                # Si un agent joueur préfixe son message avec [RÉSULTAT SYSTÈME], c'est
+                # une tentative de bypass des filtres → bloquer comme violation.
+                if name not in PLAYER_NAMES:
+                    is_system = True
+                else:
+                    # Violation : un PJ a usurpé le préfixe système
+                    _app.msg_queue.put({
+                        "sender": "⚠️ Règle",
+                        "text": (
+                            f"[VIOLATION SYSTÈME — {name}]\n"
+                            f"{name} a utilisé le préfixe [RÉSULTAT SYSTÈME] réservé au MJ. "
+                            f"Message masqué.\n\n"
+                            f"RAPPEL : Seul Alexis (MJ) produit des [RÉSULTAT SYSTÈME]. "
+                            f"Après un résultat, tu narres UNIQUEMENT ce que ton personnage "
+                            f"ressent physiquement ou mentalement — jamais ce qui existe dans le monde."
+                        ),
+                        "color": "#F44336",
+                    })
+                    _original_receive(
+                        self_mgr,
+                        {
+                            "role": "user",
+                            "content": (
+                                f"[DIRECTIVE SYSTÈME — VIOLATION]\n"
+                                f"{name} : ton dernier message a été masqué car tu as utilisé "
+                                f"le préfixe [RÉSULTAT SYSTÈME] qui appartient exclusivement au MJ.\n\n"
+                                f"RÈGLE : Après qu'Alexis t'a donné un résultat, tu décris UNIQUEMENT "
+                                f"ce que {name} ressent dans son corps ou son esprit (tension, douleur, "
+                                f"intuition, doute). Tu ne décris PAS ce que tu trouves, vois ou perçois "
+                                f"dans le monde. Reformule en une phrase de ressenti personnel."
+                            ),
+                            "name": "Alexis_Le_MJ",
+                        },
+                        sender, request_reply=False, silent=True,
+                    )
+                    return
 
-            # ── GARDE-FOU ANTI-COPIE : détecte si un agent répète le message précédent ──
-            # Cible principalement les petits modèles (Groq/llama) qui ont tendance à
-            # copier le dernier message du contexte quand ils n'ont rien à ajouter.
-            # Seuil : >60% de mots communs entre le message de l'agent et le dernier
-            # message d'un autre joueur → on rejette et on injecte [SILENCE].
+            # ── GARDE-FOU ANTI-COPIE : détecte si un agent répète un message récent ──
+            # Cible les modèles faibles qui copient n'importe quel message du contexte.
+            # Fenêtre : 5 derniers messages par joueur (pas seulement le précédent).
+            # Seuil : >60% de mots communs (mots ≥4 chars).
             if (not is_system
                     and name in PLAYER_NAMES
                     and content
                     and str(content).strip() not in ("[SILENCE]", "")):
-                _prev_msg = _last_player_messages.get("_last_other_" + name, "")
-                if _prev_msg:
-                    import re as _re_copy
-                    def _word_set(t):
-                        return set(_re_copy.findall(r"[a-zA-ZÀ-ÿ]{4,}", t.lower()))
-                    _cur_words  = _word_set(str(content))
-                    _prev_words = _word_set(_prev_msg)
-                    if _cur_words and _prev_words:
-                        _common = len(_cur_words & _prev_words)
-                        _ratio  = _common / max(len(_prev_words), 1)
-                        if _ratio > 0.60:
-                            _app.msg_queue.put({
-                                "sender": "⚠️ Règle",
-                                "text": (
-                                    f"[COPIE DÉTECTÉE] {name} a reproduit ~{int(_ratio*100)}% "
-                                    f"du message précédent. Message ignoré → [SILENCE] injecté."
-                                ),
-                                "color": "#e67e22",
-                            })
-                            # On injecte un SILENCE à la place dans le contexte autogen
-                            _original_receive(
-                                self_mgr,
-                                {"role": "assistant", "content": "[SILENCE]", "name": name},
-                                sender, request_reply=False, silent=True,
-                            )
-                            return
+                import re as _re_copy
+                def _word_set(t):
+                    return set(_re_copy.findall(r"[a-zA-ZÀ-ÿ]{4,}", t.lower()))
+                _cur_words = _word_set(str(content))
+                _copy_detected = False
+                _copy_ratio    = 0.0
+                if _cur_words:
+                    for _pn in PLAYER_NAMES:
+                        if _pn == name:
+                            continue
+                        for _slot in range(5):
+                            _prev = _last_player_messages.get(f"_hist_{_pn}_{_slot}", "")
+                            if not _prev:
+                                continue
+                            _prev_words = _word_set(_prev)
+                            if not _prev_words:
+                                continue
+                            _ratio = len(_cur_words & _prev_words) / max(len(_prev_words), 1)
+                            if _ratio > 0.60:
+                                _copy_detected = True
+                                _copy_ratio    = _ratio
+                                break
+                        if _copy_detected:
+                            break
 
-                # Mémorise ce message pour la vérification du prochain agent
-                _last_player_messages["_last_other_" + name] = str(content)
-                # Màj aussi pour tous les autres joueurs (ils voient le msg de `name`)
+                if _copy_detected:
+                    _copy_strikes[name] = _copy_strikes.get(name, 0) + 1
+                    _strike_n = _copy_strikes[name]
+                    _app.msg_queue.put({
+                        "sender": "⚠️ Règle",
+                        "text": (
+                            f"[COPIE DÉTECTÉE] {name} a reproduit ~{int(_copy_ratio*100)}% "
+                            f"d'un message récent (strike {_strike_n}). [SILENCE] injecté."
+                        ),
+                        "color": "#e67e22",
+                    })
+                    _original_receive(
+                        self_mgr,
+                        {"role": "assistant", "content": "[SILENCE]", "name": name},
+                        sender, request_reply=False, silent=True,
+                    )
+                    if _strike_n == 1:
+                        _correction = (
+                            f"[AUTO-CORRECTION — {name}] Tu viens de répéter un message "
+                            f"existant mot pour mot. Réponds avec ta propre pensée originale "
+                            f"en une seule phrase, ou écris [SILENCE] si tu n'as rien à ajouter."
+                        )
+                        _original_receive(
+                            self_mgr,
+                            {"role": "user", "content": _correction, "name": "Alexis_Le_MJ"},
+                            sender, request_reply=False, silent=True,
+                        )
+                    if _strike_n >= 2:
+                        _copy_strikes[name] = 0
+                    return
+                else:
+                    _copy_strikes[name] = 0
+
+                # ── Mémoriser dans la fenêtre glissante (5 slots FIFO) ──────────
+                for _slot in range(4, 0, -1):
+                    _last_player_messages[f"_hist_{name}_{_slot}"] = \
+                        _last_player_messages.get(f"_hist_{name}_{_slot-1}", "")
+                _last_player_messages[f"_hist_{name}_0"] = str(content)
+                # Rétro-compat : garder _last_other_X pour les autres modules éventuels
                 for _pn in PLAYER_NAMES:
                     if _pn != name:
                         _last_player_messages["_last_other_" + _pn] = str(content)
+
+
+            # ── GARDE-FOU ANTI-SILENCE : nudge dès le 1er [SILENCE] consécutif ──
+            # Les modèles faibles (flash-lite, arcee) abandonnent trop facilement.
+            # Dès le 1er [SILENCE], on injecte un nudge court et autoritaire.
+            # Après 3 [SILENCE] consécutifs → reset, le MJ reprend la main.
+            if (not is_system
+                    and name in PLAYER_NAMES
+                    and str(content or "").strip() == "[SILENCE]"):
+                _silence_strikes[name] = _silence_strikes.get(name, 0) + 1
+                _sil_n = _silence_strikes[name]
+                if _sil_n == 1:
+                    _nudge = (
+                        f"[NUDGE SYSTÈME — {name}] [SILENCE] refusé dans ce contexte. "
+                        f"Tu dois contribuer une phrase — une pensée, une réaction émotionnelle, "
+                        f"un doute, une question au MJ. [SILENCE] n'est autorisé que si tu es "
+                        f"physiquement incapable de parler. Réponds maintenant en une phrase."
+                    )
+                    _original_receive(
+                        self_mgr,
+                        {"role": "user", "content": _nudge, "name": "Alexis_Le_MJ"},
+                        sender, request_reply=False, silent=True,
+                    )
+                elif _sil_n >= 3:
+                    # 3 silences de suite malgré les nudges → reset, on abandonne
+                    _silence_strikes[name] = 0
+            elif not is_system and name in PLAYER_NAMES and str(content or "").strip():
+                # Message non-silence → reset du compteur
+                _silence_strikes[name] = 0
 
             # ── FILTRE INACTIF : agent désactivé en cours de session ───────
             # Si le personnage n'est plus dans la scène, on ignore son message
@@ -2218,12 +2540,48 @@ class AutogenEngineMixin:
 
             def _has_recent_directive(agent_name: str) -> bool:
                 """Retourne True si une [DIRECTIVE SYSTÈME] récente dans l'historique
-                cible cet agent. Fenêtre : 10 derniers messages."""
+                cible cet agent, OU si le MJ vient de demander un jet de façon naturelle.
+
+                Formes reconnues (MJ = Alexis_Le_MJ) :
+                  • [DIRECTIVE SYSTÈME — JET/DÉGÂTS/SOIN/…] … NomAgent …
+                  • "Elara fait un jet de …"
+                  • "Elara, lance un jet de …"
+                  • "X effectue un jet d'attaque/investigation/…"
+                  • "X, roll …" / "X doit faire un jet …"
+                Fenêtre : 10 derniers messages.
+                """
+                import re as _re_dir
+                _natural_jet_re = _re_dir.compile(
+                    r'\b' + _re_dir.escape(agent_name) + r'\b'
+                    r'.*?(?:fait|fais|faites|faire|lance|lances|lancer|effectue|effectues|effectuer'
+                    r'|doit faire|tente|tentes|tenter|r[eé]alise|proc[eè]de [àa]|roule|roules|rouler)'
+                    r'\s+(?:un\s+)?jet',
+                    _re_dir.IGNORECASE | _re_dir.DOTALL,
+                )
+                # Forme impérative sans nom : "Fais un jet de…" quand le MJ
+                # s'adresse directement à l'agent sélectionné (message le ciblant)
+                _natural_jet_direct_re = _re_dir.compile(
+                    r'^(?:fais|faites|lance|effectue|roule|tente)\s+(?:un\s+)?jet',
+                    _re_dir.IGNORECASE,
+                )
+                _natural_roll_re = _re_dir.compile(
+                    r'\b' + _re_dir.escape(agent_name) + r'\b'
+                    r'.*?(?:roll|jet\s+d[e\']|tirage)',
+                    _re_dir.IGNORECASE | _re_dir.DOTALL,
+                )
                 try:
                     for _msg in reversed((self.groupchat.messages if self.groupchat else [])[-10:]):
-                        _mc = str(_msg.get("content", ""))
+                        _mc  = str(_msg.get("content", ""))
+                        _who = str(_msg.get("name", ""))
+                        # Forme explicite : balise [DIRECTIVE SYSTÈME]
                         if "[DIRECTIVE SYSTÈME" in _mc and agent_name in _mc:
                             return True
+                        # Forme naturelle : message du MJ contenant NomAgent + jet
+                        if _who in ("Alexis_Le_MJ", "Alexis Le MJ"):
+                            if (_natural_jet_re.search(_mc)
+                                    or _natural_roll_re.search(_mc)
+                                    or _natural_jet_direct_re.search(_mc)):
+                                return True
                 except Exception:
                     pass
                 return False
@@ -2276,15 +2634,13 @@ class AutogenEngineMixin:
 
                     # ── Guard 2 : appel sans directive MJ préalable → parasite ──────
                     if name in PLAYER_NAMES and not _has_recent_directive(name):
+                        _tool_refusal_strikes[name] = _tool_refusal_strikes.get(name, 0) + 1
+                        _strike_n = _tool_refusal_strikes[name]
+                        # Message court et direct (les messages longs confondent les petits modèles)
                         _parasite_msg = (
-                            f"[SYSTÈME — APPEL OUTIL REFUSÉ]\n"
-                            f"{name} a appelé {_fn_name} sans [DIRECTIVE SYSTÈME] du MJ.\n\n"
-                            f"RÈGLE ABSOLUE (point 4) :\n"
-                            f"  Tu ne peux PAS appeler {_fn_name} de ta propre initiative.\n"
-                            f"  Cet outil n'est autorisé QUE sur instruction explicite du MJ\n"
-                            f"  via [DIRECTIVE SYSTÈME — DÉGÂTS], [DIRECTIVE SYSTÈME — JET], etc.\n\n"
-                            f"Action requise : rédige une réponse narrative (roleplay) ou\n"
-                            f"déclare une action via un bloc [ACTION] si c'est ton tour."
+                            f"[REFUS OUTIL — strike {_strike_n}] {name} : "
+                            f"NE PAS appeler {_fn_name} sans [DIRECTIVE SYSTÈME] du MJ. "
+                            f"Écris uniquement du roleplay ou un bloc [ACTION]."
                         )
                         _app.msg_queue.put({
                             "sender": "⚠️ Système",
@@ -2296,10 +2652,19 @@ class AutogenEngineMixin:
                             {"role": "user", "content": _parasite_msg, "name": "Alexis_Le_MJ"},
                             sender, request_reply=False, silent=True,
                         )
-                        return   # bloquer le message entier
+                        # Strike 2+ : court-circuiter avec SILENCE forcé + reset
+                        if _strike_n >= 2:
+                            _original_receive(
+                                self_mgr,
+                                {"role": "assistant", "content": "[SILENCE]", "name": name},
+                                sender, request_reply=False, silent=True,
+                            )
+                            _tool_refusal_strikes[name] = 0
+                        return
 
                     # ── Appel légitime ────────────────────────────────────────────────
                     is_mj_roll_response = True
+                    _tool_refusal_strikes[name] = 0   # reset — appel valide
                     # Sync tracker après add_temp_hp
                     if _fn_name == "add_temp_hp":
                         try:
@@ -3258,6 +3623,95 @@ class AutogenEngineMixin:
             # Appel normal
             _original_receive(self_mgr, message, sender, request_reply, silent)
 
+            # ── GARDE-FOU INTENTION MÉCANIQUE SANS [ACTION] ──────────────────
+            # Détecte quand un agent déclare une intention mécanique en langage
+            # naturel (analyse, investigation, sort, soin…) sans la formaliser
+            # en bloc [ACTION]. Le MJ ne peut pas valider ce qui n'est pas déclaré.
+            _MECH_INTENT_RE = _re.compile(
+                r"(?:je dois|je vais|je tente de|je m.appr.te\s*..|"
+                r"je commence\s*..|je souhaite|je cherche\s*..|je d.cide\s*de|"
+                r"j.essaie\s*de|je proc.de\s*..|je veux)\s+"
+                r"(?:analys|isol|inspect|examin|.tudi|d.tect|"
+                r"identifi|lanc|invoqu|utilis|appliqu|"
+                r"test\w|sond|mesur|dissip|contrer|enqu.t|investig|"
+                r"purifi|sanctifi|soign|gu.ri|consacr|compar|"
+                r"moduli|stabilis|calibr|amplifi)",
+                _re.IGNORECASE
+            )
+            if (not is_system
+                    and name in PLAYER_NAMES
+                    and content
+                    and str(content).strip() not in ("[SILENCE]", "")
+                    and not _action_pattern.search(str(content))
+                    and _MECH_INTENT_RE.search(str(content))):
+                _mech_hint = (
+                    f"[DIRECTIVE SYSTÈME — FORMAT REQUIS]\n"
+                    f"{name} a déclaré une intention mécanique sans bloc [ACTION].\n\n"
+                    f"Toute action qui consomme une ressource ou interagit avec le monde\n"
+                    f"(sort, compétence, investigation, analyse, soin, mouvement tactique…)\n"
+                    f"DOIT être formalisée en [ACTION] pour que le MJ puisse la valider :\n\n"
+                    f"  [ACTION]\n"
+                    f"  Type      : Action / Action Bonus / Réaction\n"
+                    f"  Intention : <ce que {name} fait exactement>\n"
+                    f"  Règle 5e  : <sort + niveau OU jet de compétence + bonus OU autre mécanique>\n"
+                    f"  Cible     : <objet / créature / zone / soi-même>\n\n"
+                    f"Sans bloc [ACTION], aucune mécanique ne peut être exécutée ni validée par le MJ.\n"
+                    f"Complète ton message avec ce bloc."
+                )
+                _original_receive(
+                    self_mgr,
+                    {"role": "user", "content": _mech_hint, "name": "Alexis_Le_MJ"},
+                    sender, request_reply=False, silent=True,
+                )
+
+            # ── GARDE-FOU POST-JET : agent décrit l'environnement après un résultat système ──
+            # Après un jet de compétence/investigation/perception, l'agent doit narrer
+            # UNIQUEMENT son effort physique. S'il décrit des propriétés du monde
+            # (qualité des matériaux, état de la structure, propriétés magiques…),
+            # c'est une violation — seul le MJ peut révéler ces informations.
+            _ENV_DISCOVERY_RE = _re.compile(
+                r'\b(?:pierre|bois|m[eé]tal|structure|fondations?|sol\b|mur\b|plafond|d[eé]bris|ruines?|surface|ma[cç]onnerie)\b'
+                r'.{0,40}'
+                r'\b(?:qualit[eé]|bonne facture|solide|fragile|corrompu|comprom|intact|fissu|d[eé]grad|pourri|stables?|instables?|sain\b|magique|enchant[eé]|hant[eé]|r[eé]sistan|renforc)',
+                _re.IGNORECASE | _re.DOTALL
+            )
+            if (not is_system
+                    and name in PLAYER_NAMES
+                    and name in _pending_skill_narrators
+                    and content
+                    and str(content).strip() not in ("[SILENCE]", "")
+                    and _ENV_DISCOVERY_RE.search(str(content))):
+                _pending_skill_narrators.discard(name)
+                _env_viol_msg = (
+                    f"[DIRECTIVE SYSTÈME — VIOLATION RÈGLE 3]\n"
+                    f"{name} a décrit des propriétés de l'environnement après un jet de dés.\n\n"
+                    f"RÈGLE ABSOLUE (point 3) : après un [RÉSULTAT SYSTÈME], tu narres UNIQUEMENT\n"
+                    f"l'effort physique ou mental de ton personnage.\n"
+                    f"TU NE DÉCRIS JAMAIS ce que tu trouves, découvres ou perçois.\n"
+                    f"La qualité des matériaux, l'état de la structure, les propriétés magiques :\n"
+                    f"tout cela appartient au MJ — même si ton jet est élevé.\n\n"
+                    f"Exemple interdit : 'la pierre est de qualité / de bonne facture'\n"
+                    f"Exemple correct  : 'Mes doigts s'arrêtent. Quelque chose cloche ici.'\n\n"
+                    f"Reformule en narrant uniquement la sensation physique de {name}."
+                )
+                _app.msg_queue.put({
+                    "sender": "⚠️ Règle",
+                    "text": (
+                        f"[VIOLATION RÈGLE 3] {name} a décrit des propriétés de l'environnement "
+                        f"après un jet de dés. Message masqué — le MJ révèle les découvertes."
+                    ),
+                    "color": "#F44336"
+                })
+                _original_receive(
+                    self_mgr,
+                    {"role": "user", "content": _env_viol_msg, "name": "Alexis_Le_MJ"},
+                    sender, request_reply=False, silent=True,
+                )
+                return
+            elif name in _pending_skill_narrators:
+                # Message OK (effort uniquement) → on retire le flag
+                _pending_skill_narrators.discard(name)
+
             # ── JOURNAL NARRATIF ──────────────────────────────────────────────
             if not is_system and content and str(content).strip() not in ("[SILENCE]", ""):
                 _chat_log.log_message(name, str(content))
@@ -3270,14 +3724,38 @@ class AutogenEngineMixin:
 
             # ── FILTRE PNJ : détection de paroles inventées ──────────────────────
             if not is_system and name in PLAYER_NAMES and content and _pnj_pattern.search(str(content)):
+                # Déterminer la nature exacte de la violation pour le feedback
+                _viol_type = "paroles inventées"
+                if _pnj_narrative_re.search(str(content)) or _pnj_narrative_inv_re.search(str(content)):
+                    _viol_type = "description des actions/expressions d'un PNJ"
                 _app.msg_queue.put({
                     "sender": "⚠️ Règle",
                     "text": (
-                        f"[VIOLATION] {name} a tenté d'incarner un PNJ. "
-                        f"Ce passage a été masqué. Alexis, c'est à vous de donner la réplique du PNJ."
+                        f"[VIOLATION PNJ — {_viol_type}]\n"
+                        f"{name} a outrepassé la règle PNJ. Message masqué.\n\n"
+                        f"RAPPEL : Si tu t'adresses à un PNJ, UNE seule phrase d'adresse maximum. "
+                        f"Tu ne décris pas leurs expressions, tu n'anticipes pas leurs réponses, "
+                        f"tu n'imagines pas leurs besoins. Pose la question et arrête-toi.\n"
+                        f"Alexis, c'est à vous de donner la réplique du PNJ."
                     ),
                     "color": "#F44336"
                 })
+                # Injecter un rappel dans le contexte autogen pour que l'agent corrige
+                _pnj_reminder = (
+                    f"[DIRECTIVE SYSTÈME — VIOLATION PNJ]\n"
+                    f"{name} : ton dernier message a été masqué car tu as "
+                    f"outrepassé la règle PNJ ({_viol_type}).\n\n"
+                    f"RÈGLE : Si tu t'adresses à un PNJ, UNE seule phrase maximum. "
+                    f"Tu t'arrêtes immédiatement après. "
+                    f"Ne décris pas leurs réactions, n'élabore pas leurs besoins, "
+                    f"n'anticipe pas leur réponse.\n"
+                    f"Reformule en une seule phrase d'adresse si nécessaire, puis attends le MJ."
+                )
+                _original_receive(
+                    self_mgr,
+                    {"role": "user", "content": _pnj_reminder, "name": "Alexis_Le_MJ"},
+                    sender, request_reply=False, silent=True,
+                )
                 return
 
             # ── SUIVI COMBAT : marque la ressource hors-tour consommée ──────────

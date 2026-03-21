@@ -1147,6 +1147,7 @@ class PanelsMixin:
         win.configure(bg="#0d1117")
         win.grab_set()
         self._track_window("modal_quest_journal", win)
+        self._quest_journal_win = win   # référence pour QuestTrackerMixin
 
         quests = get_quests()
 
@@ -1174,6 +1175,21 @@ class PanelsMixin:
         tk.Button(header, text="＋ Nouvelle quête", bg="#1a3a5c", fg="#64b5f6",
                   font=("Arial", 10, "bold"), relief="flat",
                   command=lambda: open_quest_editor(None)).pack(side=tk.RIGHT, padx=12, pady=8)
+
+        def _launch_quest_ai():
+            win.grab_release()   # libère le grab pour que le chat reste lisible
+            self.process_quests_with_llm()
+
+        tk.Button(
+            header,
+            text="Analyse IA",
+            bg="#2a1a4a",
+            fg="#c8b8ff",
+            font=("Arial", 10, "bold"),
+            relief="flat",
+            cursor="hand2",
+            command=_launch_quest_ai,
+        ).pack(side=tk.RIGHT, padx=4, pady=8)
 
         # ── Filtre par statut ─────────────────────────────────────
         filter_frame = tk.Frame(win, bg="#0d1117")

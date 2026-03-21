@@ -63,6 +63,7 @@ from image_broadcast_mixin import ImageBroadcastMixin    # _broadcast_location_i
 from llm_control_mixin     import LLMControlMixin        # stop_llms, send_text, vote, skill check
 from autogen_engine        import AutogenEngineMixin     # run_autogen — moteur principal
 from campaign_log_mixin    import CampaignLogMixin       # journal long terme + archivage
+from quest_tracker_mixin   import QuestTrackerMixin      # analyse IA des quêtes
 
 # ── Imports des modules métier ─────────────────────────────────────────────────
 from state_manager import (
@@ -114,6 +115,7 @@ class DnDApp(
     LLMControlMixin,        # llm_control_mixin.py   — contrôle LLM + MJ commands
     AutogenEngineMixin,     # autogen_engine.py       — moteur AutoGen complet
     CampaignLogMixin,       # campaign_log_mixin.py   — journal long terme
+    QuestTrackerMixin,      # quest_tracker_mixin.py  — analyse IA des quêtes
 ):
     """Moteur de l'Aube Brisée — Interface du Maître de Jeu."""
 

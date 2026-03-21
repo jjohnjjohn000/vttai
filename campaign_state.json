@@ -1,5 +1,5 @@
 {
-    "session_summary": "### Chroniques de la Barovie : L'Enclume et le Maçon\n\n**La Consolidation sous la Menace**\nAu sein d'Argynvostholt, le groupe s'est attelé à une tâche titanesque : la reconstruction structurelle sous la direction de **Gil** et de son apprenti **Mart**, recrutés à grand-peine depuis Krezk. Alors que **Kaelen** assurait une veille martiale inébranlable dans le Grand Hall pour protéger **Ireena** et les réfugiés, **Elara** et **Thorne** confrontaient les « cicatrices arcaniques » du manoir avec un pragmatisme froid, tandis que **Lyra** apportait un soutien spirituel aux survivants éprouvés. Le diagnostic de Gil est sans appel : les dommages structurels, notamment aux étages supérieurs, nécessiteraient des années de labeur conventionnel. Cette perspective a exacerbé les tensions internes, Elara insistant sur l'urgence d'une intervention arcanique directe plutôt que sur les méthodes traditionnelles de maçonnerie.\n\n**État de la Situation**\nArgynvostholt tient. Le phare d'Argynvost projette sa lumière purificatrice sur la vallée, repoussant les créatures de la nuit et maintenant le moral des réfugiés. Gil et Mart sont à l'œuvre, s'attaquant aux failles les plus critiques. La fortification progresse, lentement mais sûrement. Le groupe vient de terminer un long repos bien mérité entre les murs du bastion.\n\nLes priorités restent claires : retrouver les restes profanés d'Argynvost pour libérer la pleine puissance du Fanal, neutraliser les guenaudes du vieux moulin dont deux ont pris la fuite, et surveiller les mouvements à Vallaki où Lady Wachter consolide son emprise.\n\n**Progression des Quêtes :**\n*   🗺️ **[Secondaire] Défendre Argynvostholt** : **En cours**. La fortification physique avance grâce à Gil et Mart. Le bastion est opérationnel mais toujours vulnérable sur les flancs.\n*   🗺️ **[Secondaire] Trouver le vieux maçon à Krezk** : **Accomplie**. Gil et Mart sont à pied d'œuvre.\n*   🗺️ **[Secondaire] Les sorcières du vieux moulin** : **En attente**. Deux guenaudes ont fui le combat. Elles constituent une menace pendante.\n\n**Objets Majeurs :**\n*   **Échantillon de liane cristalline** : En phase d'analyse par Elara pour comprendre la corrélation entre la croissance végétale et la corruption arcanique résiduelle de Strahd.",
+    "session_summary": "### Chroniques de la Barovie : L'Aube sur Argynvostholt\n\n**L'Aube au Bastion**\nUne nuit de repos — rare et précieuse en Barovie — vient de s'achever à Argynvostholt. Le groupe se réveille dans le manoir de l'Ordre du Dragon d'Argent, bercé par la lumière froide et rassurante du phare sommital, dont la lueur purificatrice repousse encore les lambeaux de brume nocturne. Ireena et Ismark veillent déjà sur les enfants réfugiés dans les salles du rez-de-chaussée, désormais barricadées et relativement sûres. L'odeur de pierre fraîchement taillée trahit la présence de **Gil** et de son apprenti **Mart**, recrutés la veille à Krezk et ramenés ici par la téléportation risquée d'Elara — une intervention qui a laissé dans son sillage d'étranges lianes cristallines sur le sol du manoir.\n\n**Le Bilan du Travail Accompli**\nEn regardant autour d'eux, les compagnons peuvent mesurer le chemin parcouru. Le rez-de-chaussée est sécurisé : portes barricadées, patrouilles établies, couloirs purifiés. Le phare, clé de voûte spirituelle du bastion, irradie une lumière draconique qui stabilise l'atmosphère et dissout la compulsion des revenants. Le premier étage a été purgé de ses spectres les plus agressifs grâce aux efforts conjugués d'Elara et de Thorne. Et désormais, deux artisans qualifiés dorment sous ce même toit — la fondation concrète de la restauration à venir.\n\n**La Montagne de Travail à Venir**\nMais le regard honnête doit aussi se porter vers ce qui reste à faire. Le second étage demeure une zone d'instabilité magique, traversé d'échos arcaniques et de pièges spectraux non dissipés. Le cimetière n'a pas encore été consacré — Lyra le rappelle avec une conviction tranquille : sans la bénédiction du lieu de repos, Argynvostholt reste spirituellement vulnérable. Et au cœur de tout, la prophétie de la statue de dragon résonne : *« Quand le dragon rêvera dans son tombeau légitime, la lumière d'Argynvost chassera les ténèbres. »* Les restes profanés d'Argynvost sont toujours introuvables. La pleine puissance du phare dort, en suspens.\n\n**Score de défense actuel : 10/100.** Le bastion tient. Il ne suffit pas encore.\n\n**Progression des Quêtes :**\n*   🗺️ **[Secondaire] Défendre Argynvostholt** : En cours. Les artisans Gil et Mart sont arrivés. Les réparations structurelles peuvent commencer.\n*   🗺️ **[Secondaire] Les sorcières du vieux moulin** : En attente. Deux guenaudes sont encore en liberté.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Non résolue. Condition nécessaire pour libérer la pleine puissance du phare.\n\n**Objets Majeurs :**\n*   **Échantillon de liane cristalline** : Entre les mains d'Elara — relique des cicatrices arcaniques provoquées par la téléportation.\n*   **Contenu des poches du prêtre Donavich** : En possession de Thorne, toujours non inventorié.\n*   **Lettre cachetée** : Origine et destinataire inconnus.\n\n---\n*Note du Chroniqueur : Ce matin pourrait être le calme avant la prochaine tempête. Le groupe a le choix de ses priorités — consolider le bastion, chercher les restes du dragon, ou partir en exploration. Le phare veille. La Barovie, elle, attend.*",
     "defense_argynvostholt": 10,
     "characters": {
         "Kaelen": {
@@ -89,7 +89,7 @@
             "hp": 95,
             "max_hp": 95,
             "spell_slots": {
-                "1": 2,
+                "1": 1,
                 "2": 3,
                 "3": 3,
                 "4": 3,
@@ -418,143 +418,233 @@
     "quests": [
         {
             "id": "q1",
-            "title": "Escorter Ireena et trouver Ezmerelda",
-            "status": "failed",
+            "title": "Escorter Ireena en sécurité",
+            "status": "completed",
             "category": "Principale",
-            "description": "Ismark a demandé au groupe de protéger sa sœur Ireena Kolyana et de l'accompagner pour trouver son ami Ezmerelda.",
+            "description": "Ismark a demandé au groupe de protéger sa sœur Ireena Kolyana, convoitée par Strahd.",
             "objectives": [
                 {
                     "text": "Parler à Ismark à la taverne du Sang de la Vigne",
                     "done": true
                 },
                 {
-                    "text": "Escorter Ireena hors de Barovia",
+                    "text": "Escorter Ireena hors du village de Barovia",
                     "done": true
                 },
                 {
-                    "text": "Atteindre Vallaki sains et saufs",
+                    "text": "Trouver un refuge sûr pour Ireena",
+                    "done": true
+                },
+                {
+                    "text": "Neutraliser la menace de Strahd",
                     "done": true
                 }
             ],
-            "notes": "Strahd convoitait Ireena, il est mort."
-        },
-        {
-            "id": "q2",
-            "title": "Défendre Argynvostholt",
-            "status": "active",
-            "category": "Secondaire",
-            "description": "Le manoir des Revenants doit être tenu contre les forces de Strahd. La défense actuelle est insuffisante.",
-            "objectives": [
-                {
-                    "text": "Évaluer les défenses du manoir",
-                    "done": true
-                },
-                {
-                    "text": "Recruter ou préparer des renforts",
-                    "done": false
-                },
-                {
-                    "text": "Retrouver Ezmerelda",
-                    "done": false
-                }
-            ],
-            "notes": ""
+            "notes": "Strahd est mort. Ireena est en sécurité à Argynvostholt sous la garde d'Ismark. Son conflit intérieur avec l'âme de Tatyana reste non résolu."
         },
         {
             "id": "76ba1ef8",
-            "title": "Tué Dori, le mort-vivant.",
+            "title": "Tué Dori, le mort-vivant",
             "status": "completed",
             "category": "Secondaire",
-            "description": "Tué Dori le fils du pretre Donavich",
-            "objectives": [],
-            "notes": ""
-        },
-        {
-            "id": "a994bdb1",
-            "title": "Les sorcieres du vieux moulin",
-            "status": "active",
-            "category": "Secondaire",
-            "description": "Des hags en lien avec des disparitions d'enfants habiteraient le vieux moulin. Vous avez combattu les hags mais 2 se sont sauvées. Peut-être y reviendrez vous plus tard.",
-            "objectives": [
-                {
-                    "text": "Investiguer le moulin",
-                    "done": true
-                },
-                {
-                    "text": "Détruire la menace des sorcières",
-                    "done": false
-                }
-            ],
-            "notes": "Les Héros de l'Aube Brisée les considèrent comme puissantes."
-        },
-        {
-            "id": "8fabf918",
-            "title": "Passer les portes de Vallaki",
-            "status": "failed",
-            "category": "Secondaire",
-            "description": "Vallaki est fermée aux visiteurs, les portes restent closes.",
-            "objectives": [],
-            "notes": ""
-        },
-        {
-            "id": "0617785d",
-            "title": "Découvrir le secret de la mare de Krezk",
-            "status": "failed",
-            "category": "Personnelle",
-            "description": "L'eau de la mare est toujours limpide et fraiche au toucher, elle emane aussi une magie faible d'abjuration.",
+            "description": "Dori, fils du prêtre Donavich, avait été transformé en mort-vivant et retenu dans la cave de l'église.",
             "objectives": [],
             "notes": ""
         },
         {
             "id": "4550b97f",
-            "title": "Escorter les enfants pour les laisser en sécurité",
+            "title": "Escorter les enfants du moulin en sécurité",
             "status": "completed",
             "category": "Secondaire",
-            "description": "Les 2 enfants que vous avez sauvé au moulin des sorcieres ont besoin d'être ramenés en sécurité. Les ramenés à leur famille est hors de question, leurs parents les revendrons surement aux hags.",
+            "description": "Les deux enfants sauvés du moulin des sorcières ont été ramenés à Argynvostholt.",
             "objectives": [
                 {
                     "text": "Trouver un refuge sécuritaire pour les enfants",
                     "done": true
                 },
                 {
-                    "text": "Sécuriser Argynvostholt, en faire un refuge pour les enfants et Ireena, Ismark et les villageois.",
+                    "text": "Sécuriser Argynvostholt comme refuge",
                     "done": true
                 }
             ],
-            "notes": "Quoique sécuriser, l'endroit est dangereux, mais Ismark a fait l'exploration du manoir avec vous et le commandement est entre ses mains."
+            "notes": "Ireena supervise leur sécurité. L'endroit reste dangereux mais défendable."
         },
         {
             "id": "6a04aa9c",
-            "title": "Trouver le vieux maçon à Krezk",
+            "title": "Recruter des artisans à Krezk",
             "status": "completed",
             "category": "Secondaire",
-            "description": "Argynvostholt a besoin de maçons et de charpentiers. Il faut recruter à Krezk. Un villageois (Gustav) à Argynvostholt connais un vieux maçon qui, si il est en vie, pourrait peut-être venir à Argynvostholt.",
+            "description": "Argynvostholt avait besoin de maçons et charpentiers pour les réparations structurelles.",
             "objectives": [
                 {
-                    "text": "Recruter le vieux maçon",
+                    "text": "Recruter Gil, le vieux maçon",
                     "done": true
                 },
                 {
-                    "text": "Recruter d'autres maçons, charpentiers",
+                    "text": "Recruter Mart, l'apprenti ingénieur",
+                    "done": true
+                },
+                {
+                    "text": "Recruter d'autres artisans",
+                    "done": false
+                }
+            ],
+            "notes": "Gil a prévenu que les dommages sont si profonds que les réparations pourraient prendre des années. Des matériaux de qualité manquent cruellement en Barovie."
+        },
+        {
+            "id": "q2",
+            "title": "Défendre et restaurer Argynvostholt",
+            "status": "active",
+            "category": "Principale",
+            "description": "Le manoir de l'Ordre du Dragon d'Argent est le bastion de la résistance barovienne. Il doit être fortifié, purifié et restauré.",
+            "objectives": [
+                {
+                    "text": "Évaluer les défenses du manoir",
+                    "done": true
+                },
+                {
+                    "text": "Sécuriser le rez-de-chaussée et installer les réfugiés",
+                    "done": true
+                },
+                {
+                    "text": "Purger les étages supérieurs des spectres et anomalies magiques",
                     "done": false
                 },
                 {
-                    "text": "Recruter Mart, l'apprenti et ingénieur",
+                    "text": "Recruter des artisans qualifiés",
                     "done": true
+                },
+                {
+                    "text": "Lancer les réparations structurelles avec Gil et Mart",
+                    "done": false
+                },
+                {
+                    "text": "Consacrer le cimetière du manoir",
+                    "done": false
+                },
+                {
+                    "text": "Atteindre un score de défense suffisant (objectif : 50/100)",
+                    "done": false
+                }
+            ],
+            "notes": "Score actuel : 10/100. Le phare est actif et purifie l'atmosphère. Les réparations sont bloquées par le manque de matériaux de qualité introuvables en Barovie."
+        },
+        {
+            "id": "q_argynvost_restes",
+            "title": "Retrouver les restes profanés d'Argynvost",
+            "status": "active",
+            "category": "Spirituelle",
+            "description": "La statue du dragon a délivré une prophétie : 'Quand le dragon rêvera dans son tombeau légitime, la lumière d'Argynvost chassera les ténèbres.' Les restes du dragon ont été profanés et déplacés — sans eux, le phare ne peut déployer sa pleine puissance.",
+            "objectives": [
+                {
+                    "text": "Identifier l'emplacement des restes d'Argynvost",
+                    "done": false
+                },
+                {
+                    "text": "Récupérer les restes profanés",
+                    "done": false
+                },
+                {
+                    "text": "Ramener les restes au mausolée légitime d'Argynvostholt",
+                    "done": false
+                },
+                {
+                    "text": "Accomplir le rite de consécration du mausolée",
+                    "done": false
+                }
+            ],
+            "notes": "Condition sine qua non pour libérer la pleine puissance du phare. Lyra porte cette quête avec une conviction profonde."
+        },
+        {
+            "id": "q_ezmerelda",
+            "title": "Retrouver Ezmerelda d'Avenir",
+            "status": "active",
+            "category": "Secondaire",
+            "description": "Ezmerelda est une chasseuse de monstres réputée, amie d'Ireena. Sa localisation est inconnue. Son expertise serait précieuse pour la coalition.",
+            "objectives": [
+                {
+                    "text": "Obtenir des informations sur sa dernière position connue",
+                    "done": false
+                },
+                {
+                    "text": "Localiser Ezmerelda",
+                    "done": false
+                },
+                {
+                    "text": "La convaincre de rejoindre la coalition d'Argynvostholt",
+                    "done": false
+                }
+            ],
+            "notes": "Ireena et Ismark la connaissent personnellement. Son recrutement renforcerait considérablement les capacités de défense et d'exploration du groupe."
+        },
+        {
+            "id": "a994bdb1",
+            "title": "Les sorcières du vieux moulin",
+            "status": "active",
+            "category": "Secondaire",
+            "description": "Deux guenaudes ont survécu à l'affrontement au moulin et pris la fuite. Elles restent une menace active et un risque pour les enfants réfugiés.",
+            "objectives": [
+                {
+                    "text": "Investiguer le moulin",
+                    "done": true
+                },
+                {
+                    "text": "Localiser les deux guenaudes survivantes",
+                    "done": false
+                },
+                {
+                    "text": "Neutraliser définitivement la menace",
+                    "done": false
                 }
             ],
             "notes": ""
+        },
+        {
+            "id": "8fabf918",
+            "title": "Passer les portes de Vallaki",
+            "status": "failed",
+            "category": "Secondaire",
+            "description": "Vallaki est désormais gouvernée par Lady Fiona Wachter. Le groupe s'est vu refuser l'entrée.",
+            "objectives": [],
+            "notes": "Ireena et Ismark ont réussi à entrer séparément. Les relations avec Vallaki restent tendues."
+        },
+        {
+            "id": "0617785d",
+            "title": "Découvrir le secret de la mare de Krezk",
+            "status": "failed",
+            "category": "Personnelle",
+            "description": "La mare de Krezk émane une faible magie d'abjuration. Kaelen soupçonne un serment brisé en ce lieu.",
+            "objectives": [],
+            "notes": "Ireena a refusé de s'y rendre. La piste reste ouverte mais non prioritaire."
         }
     ],
     "scene_context": {
         "lieu": "Argynvostholt",
-        "heure": "Soir",
-        "meteo": "La lumiere du phare",
-        "ambiance": "",
-        "npcs_presents": [],
-        "objets_notables": [],
+        "heure": "Aube",
+        "meteo": "Brume barovienne habituelle, refoulée par la lueur du phare",
+        "ambiance": "Silence relatif, odeur de pierre fraîche et de cire de bougie. Le phare projette une lumière dorée et froide par les hautes fenêtres. Les artisans Gil et Mart s'éveillent. Les enfants réfugiés dorment encore.",
+        "npcs_presents": [
+            "Ireena",
+            "Ismark",
+            "Gil",
+            "Mart",
+            "Garçon rescapé",
+            "Fillette rescapée",
+            "Garde 1",
+            "Garde 2",
+            "Garde 3",
+            "Villageois 1",
+            "Villageois 2",
+            "Villageois 3",
+            "Villageois 4",
+            "Villageois 5",
+            "Villageois 6"
+        ],
+        "objets_notables": [
+            "Échantillon de liane cristalline (Elara)"
+        ],
         "menaces": "",
-        "notes_mj": "",
+        "notes_mj": "Le groupe se réveille ensemble pour la première fois depuis longtemps. Bonne occasion pour un moment de roleplay : bilan, tensions internes, projets.",
         "location_image": ""
     },
     "memories": [
@@ -839,23 +929,7 @@
         "notes": {}
     },
     "group_npcs": [],
-    "session_logs": [
-        {
-            "session": 22,
-            "date": "2026-03-16 20:48",
-            "resume": "### Chroniques de la Barovie : L’Espoir au-delà du Voile\n\nLe phare d’Argynvostholt continue de projeter son éclat protecteur sur la contrée, un rempart de lumière contre les ténèbres persistantes. Cependant, la sérénité du manoir demeure fragile, menacée par une instabilité magique profonde — une \"faille\" cosmique au sein même de la structure — et par une dégradation physique qui exige une action immédiate. Convaincus que la restauration du bastion est indissociable de sa survie, le groupe a entrepris une expédition cruciale vers **Krezk**.\n\n**L'Arrivée à Krezk et la Négociation**\nAprès un voyage marqué par des phénomènes surnaturels apaisants au niveau du pont de la Rivière Corbeau, Kaelen, Thorne, Elara et Lyra ont atteint les portes de Krezk. Sans s'encombrer de protocoles diplomatiques, le groupe a rapidement obtenu une audience avec le **Maire Krezkov**. Les échanges furent pragmatiques : les compagnons ont fermement exposé leur besoin en artisans qualifiés pour Argynvostholt. Le Maire a confirmé la présence de **Gil**, un vieux maçon renommé, bien que son état de santé et son grand âge posent question sur sa capacité à travailler. Guidé par les indications du Maire, le groupe se dirige désormais vers la demeure de l'artisan (Col 16, Lig 20) pour évaluer ses compétences et tenter de le recruter, malgré le scepticisme de Thorne quant à sa robustesse physique.\n\n**Progression des Quêtes :**\n*   🗺️ **[Secondaire] Défendre Argynvostholt** : **Statu quo / Urgence accrue**. La fortification progresse, mais la \"faille\" cosmique au sein du manoir reste une menace prioritaire.\n*   🗺️ **[Secondaire] Trouver le vieux maçon à Krezk** : **Progression majeure**. Après avoir convaincu le Maire Krezkov, le groupe a localisé le domicile de Gil. L'étape de recrutement est imminente.\n*   🗺️ **[Secondaire] Les sorcieres du vieux moulin** : Pas de progression.\n\n**Objets Majeurs Trouvés :**\n*   Aucun nouvel objet tangible.\n\n*Note du Chroniqueur : Le groupe oscille entre la détermination froide de Kaelen et d'Elara, focalisés sur l'efficacité, et l'humanisme de Lyra, prête à accorder sa confiance à l'expérience du vieux Gil. La réussite de cette mission de recrutement est devenue le pivot central de la pérennité de leur bastion.*"
-        },
-        {
-            "session": 23,
-            "date": "2026-03-16 21:39",
-            "resume": "### Chroniques de la Barovie : L’Espoir au-delà du Voile\n\n**L'Arrivée à Krezk et la Négociation**\nAprès avoir atteint les portes de Krezk, le groupe a rapidement obtenu une audience avec le **Maire Krezkov**. Malgré le scepticisme de Thorne quant à l'utilité d'un vieil artisan, la détermination de Kaelen et la ferveur de Lyra ont permis de convaincre **Gil**, un maçon renommé, de s'engager dans la restauration d'Argynvostholt. Accompagné de son jeune apprenti, **Mart**, le duo a accepté de mettre son savoir au service du bastion, malgré les contraintes physiques de l'artisan et l'état délabré de ses outils.\n\n**La Téléportation vers le Bastion**\nFace à l'urgence de la situation et aux difficultés logistiques du voyage, Elara a pris l'initiative d'une téléportation arcanique de haute précision pour transporter le groupe et les deux maçons jusqu'aux portes d'Argynvostholt. L'arrivée fut marquée par un phénomène étrange : une prolifération immédiate de lianes de cristal et de mousse luminescente, réaction directe de la terre aux forces arcaniques déployées. \n\n**État de la Situation**\nLe groupe est de retour à Argynvostholt, désormais renforcé par l'arrivée de Gil et Mart, qui prennent immédiatement leurs fonctions sous la supervision protectrice de Kaelen. Si la lumière du phare continue de progresser et d'insuffler un espoir tangible aux réfugiés, les anomalies magiques (exprimées par la croissance cristalline) soulignent la fragilité de la réalité locale. Ismark, présent sur place, a accueilli ce renfort avec soulagement, bien que la nature exacte de ces « cicatrices arcaniques » demeure un sujet d'étude préoccupant pour Elara.\n\n**Progression des Quêtes :**\n*   🗺️ **[Secondaire] Défendre Argynvostholt** : **Progression**. L'arrivée des maçons permet de lancer concrètement la phase de reconstruction structurelle.\n*   🗺️ **[Secondaire] Trouver le vieux maçon à Krezk** : **Accomplie**. Gil et son apprenti Mart sont arrivés à Argynvostholt.\n*   🗺️ **[Secondaire] Les sorcières du vieux moulin** : **Statu quo**.\n\n**Objets Majeurs Trouvés :**\n*   **Échantillon de liane cristalline** : Fragment prélevé par Elara après le sort de téléportation, actuellement scellé pour analyse.\n\n*Note du Chroniqueur : Le bastion se structure, mais l'usage répété de la haute magie semble avoir des conséquences imprévisibles sur l'environnement. Le groupe doit désormais équilibrer ses ambitions architecturales avec la nécessité de comprendre la réaction violente de la terre barovienne.*"
-        },
-        {
-            "session": 24,
-            "date": "2026-03-16 22:01",
-            "resume": "### Chroniques de la Barovie : L'Enclume et le Maçon\n\n**La Consolidation sous la Menace**\nAu sein d'Argynvostholt, le groupe s'est attelé à une tâche titanesque : la reconstruction structurelle sous la direction de **Gil** et de son apprenti **Mart**, recrutés à grand-peine depuis Krezk. Alors que **Kaelen** assurait une veille martiale inébranlable dans le Grand Hall pour protéger **Ireena** et les réfugiés, **Elara** et **Thorne** confrontaient les « cicatrices arcaniques » du manoir avec un pragmatisme froid, tandis que **Lyra** apportait un soutien spirituel aux survivants éprouvés. Le diagnostic de Gil est sans appel : les dommages structurels, notamment aux étages supérieurs, nécessiteraient des années de labeur conventionnel. Cette perspective a exacerbé les tensions internes, Elara insistant sur l'urgence d'une intervention arcanique directe plutôt que sur les méthodes traditionnelles de maçonnerie.\n\n**État de la Situation**\nArgynvostholt tient. Le phare d'Argynvost projette sa lumière purificatrice sur la vallée, repoussant les créatures de la nuit et maintenant le moral des réfugiés. Gil et Mart sont à l'œuvre, s'attaquant aux failles les plus critiques. La fortification progresse, lentement mais sûrement. Le groupe vient de terminer un long repos bien mérité entre les murs du bastion.\n\nLes priorités restent claires : retrouver les restes profanés d'Argynvost pour libérer la pleine puissance du Fanal, neutraliser les guenaudes du vieux moulin dont deux ont pris la fuite, et surveiller les mouvements à Vallaki où Lady Wachter consolide son emprise.\n\n**Progression des Quêtes :**\n*   🗺️ **[Secondaire] Défendre Argynvostholt** : **En cours**. La fortification physique avance grâce à Gil et Mart. Le bastion est opérationnel mais toujours vulnérable sur les flancs.\n*   🗺️ **[Secondaire] Trouver le vieux maçon à Krezk** : **Accomplie**. Gil et Mart sont à pied d'œuvre.\n*   🗺️ **[Secondaire] Les sorcières du vieux moulin** : **En attente**. Deux guenaudes ont fui le combat. Elles constituent une menace pendante.\n\n**Objets Majeurs :**\n*   **Échantillon de liane cristalline** : En phase d'analyse par Elara pour comprendre la corrélation entre la croissance végétale et la corruption arcanique résiduelle de Strahd."
-        }
-    ],
+    "session_logs": [],
     "combat_tracker": {
         "active": false,
         "round_num": 0,
@@ -864,17 +938,17 @@
         "speech_used": [],
         "combatants": [
             {
-                "name": "Ismark Kolyano",
-                "is_pc": false,
-                "max_hp": 58,
-                "hp": 58,
+                "name": "Kaelen",
+                "is_pc": true,
+                "max_hp": 140,
+                "hp": 140,
                 "temp_hp": 0,
-                "ac": 17,
-                "initiative": 16,
-                "dex_bonus": 1,
-                "color": "#ff99bb",
+                "ac": 16,
+                "initiative": 0,
+                "dex_bonus": 2,
+                "color": "#a0c4ff",
                 "concentration": false,
-                "bestiary_name": "Ismark Kolyanovich",
+                "bestiary_name": "",
                 "conditions": [],
                 "notes": "",
                 "death_saves_success": 0,
@@ -890,31 +964,11 @@
                 "hp": 95,
                 "temp_hp": 0,
                 "ac": 16,
-                "initiative": 14,
+                "initiative": 0,
                 "dex_bonus": 3,
                 "color": "#c8b8ff",
                 "concentration": false,
                 "bestiary_name": "",
-                "conditions": [],
-                "notes": "",
-                "death_saves_success": 0,
-                "death_saves_fail": 0,
-                "action_used": false,
-                "bonus_used": false,
-                "reaction_used": false
-            },
-            {
-                "name": "Guard",
-                "is_pc": false,
-                "max_hp": 11,
-                "hp": 11,
-                "temp_hp": 0,
-                "ac": 16,
-                "initiative": 10,
-                "dex_bonus": 1,
-                "color": "#ddbbff",
-                "concentration": false,
-                "bestiary_name": "Guard",
                 "conditions": [],
                 "notes": "",
                 "death_saves_success": 0,
@@ -930,7 +984,7 @@
                 "hp": 105,
                 "temp_hp": 0,
                 "ac": 16,
-                "initiative": 9,
+                "initiative": 0,
                 "dex_bonus": 6,
                 "color": "#ff9999",
                 "concentration": false,
@@ -950,29 +1004,9 @@
                 "hp": 110,
                 "temp_hp": 0,
                 "ac": 16,
-                "initiative": 7,
+                "initiative": 0,
                 "dex_bonus": 1,
                 "color": "#a8f0a8",
-                "concentration": false,
-                "bestiary_name": "",
-                "conditions": [],
-                "notes": "",
-                "death_saves_success": 0,
-                "death_saves_fail": 0,
-                "action_used": false,
-                "bonus_used": false,
-                "reaction_used": false
-            },
-            {
-                "name": "Guard",
-                "is_pc": false,
-                "max_hp": 11,
-                "hp": 11,
-                "temp_hp": 0,
-                "ac": 16,
-                "initiative": 4,
-                "dex_bonus": 1,
-                "color": "#aaffaa",
                 "concentration": false,
                 "bestiary_name": "",
                 "conditions": [],

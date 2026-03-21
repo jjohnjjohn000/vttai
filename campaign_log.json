@@ -47,10 +47,10 @@
       "importance": 3,
       "auto_archived": false,
       "agent_reads": {
-        "Kaelen": "2026-03-16T21:27:19",
-        "Elara": "2026-03-16T21:27:19",
-        "Thorne": "2026-03-16T21:27:19",
-        "Lyra": "2026-03-16T21:27:19"
+        "Kaelen": "2026-03-20T18:30:37",
+        "Elara": "2026-03-20T18:30:37",
+        "Thorne": "2026-03-20T18:30:37",
+        "Lyra": "2026-03-20T18:30:37"
       }
     },
     {
@@ -99,10 +99,10 @@
       "importance": 2,
       "auto_archived": true,
       "agent_reads": {
-        "Kaelen": "2026-03-19T09:56:21",
-        "Elara": "2026-03-19T09:56:21",
-        "Thorne": "2026-03-19T09:56:21",
-        "Lyra": "2026-03-19T09:56:21"
+        "Kaelen": "2026-03-19T21:05:05",
+        "Elara": "2026-03-19T21:05:05",
+        "Thorne": "2026-03-19T21:05:05",
+        "Lyra": "2026-03-19T21:05:05"
       }
     },
     {
@@ -151,10 +151,10 @@
       "importance": 2,
       "auto_archived": true,
       "agent_reads": {
-        "Kaelen": "2026-03-19T09:56:21",
-        "Elara": "2026-03-19T09:56:21",
-        "Thorne": "2026-03-19T09:56:21",
-        "Lyra": "2026-03-19T09:56:21"
+        "Kaelen": "2026-03-21T10:55:33",
+        "Elara": "2026-03-21T10:55:33",
+        "Thorne": "2026-03-21T10:55:33",
+        "Lyra": "2026-03-21T10:55:33"
       }
     },
     {
@@ -203,10 +203,62 @@
       "importance": 2,
       "auto_archived": true,
       "agent_reads": {
-        "Kaelen": "2026-03-16T21:44:50",
-        "Elara": "2026-03-16T21:44:50",
-        "Thorne": "2026-03-16T21:44:50",
-        "Lyra": "2026-03-16T21:44:50"
+        "Kaelen": "2026-03-21T10:55:33",
+        "Elara": "2026-03-21T10:55:33",
+        "Thorne": "2026-03-21T10:55:33",
+        "Lyra": "2026-03-21T10:55:33"
+      }
+    },
+    {
+      "id": "clog_005",
+      "label": "Sessions 22–24",
+      "session_range": [
+        22,
+        24
+      ],
+      "date_archived": "2026-03-19T20:57:14",
+      "summary": "### Archives de la Campagne : La Restauration du Bastion et les Cicatrices du Réel (Sessions 22–24)\n\n**Synthèse Historique**\n\nLa pérennité d'Argynvostholt, sanctuaire de l'Ordre du Dragon d'Argent, est devenue la priorité absolue du groupe face à une menace multidimensionnelle. Tandis que le phare d'Argynvost projette sa lumière purificatrice sur la contrée, le manoir lui-même subit une dégradation physique alarmante, couplée à une instabilité magique profonde — une faille cosmique dont la nature demeure mystérieuse. Pour contrer cet effritement, **Kaelen, Thorne, Elara et Lyra** ont entrepris une expédition cruciale vers **Krezk**.\n\n**La Quête des Artisans**\nLe pragmatisme de Kaelen et d'Elara, soutenu par la ferveur humaniste de Lyra, a permis au groupe de naviguer les protocoles diplomatiques de Krezk. Malgré le scepticisme initial de Thorne quant à la robustesse physique des anciens artisans locaux, le groupe a obtenu l'audience du **Maire Krezkov**. Leur persévérance a porté ses fruits : **Gil**, un maçon renommé, accompagné de son jeune apprenti **Mart**, a accepté de prêter main-forte à la restauration du bastion. Ce recrutement, pivot de la stratégie de défense, marque une étape décisive dans la pérennisation du sanctuaire.\n\n**La Téléportation et ses Répercussions**\nFace à l'urgence de la situation, Elara a pris l'initiative d'une téléportation arcanique de haute précision pour rapatrier les artisans à Argynvostholt. Cette intervention a provoqué une réaction inattendue du sol barovien : une prolifération soudaine de lianes de cristal et de mousse luminescente. Ce phénomène, baptisé « cicatrices arcaniques » par Elara, suggère que l'utilisation de la haute magie dans ce royaume corrompu par Strahd génère des conséquences environnementales imprévisibles. Un échantillon de cette matière cristalline a été prélevé pour analyse, afin de percer le lien entre la corruption résiduelle de la terre et les manipulations arcaniques du groupe.\n\n**État de la Situation et Menaces Latentes**\nLe groupe est désormais réuni dans un Argynvostholt en pleine mutation. Si la présence de Gil et Mart permet une avancée concrète sur les réparations structurelles — sous la surveillance constante de Kaelen protégeant **Ireena** et les réfugiés — le diagnostic de l'artisan est sombre : les dommages sont si profonds qu'ils pourraient nécessiter des années de travail. Cette perspective a généré des tensions, Elara privilégiant des solutions arcaniques directes là où les autres misent sur le labeur traditionnel.\n\nLes priorités stratégiques demeurent claires :\n*   **Défense d'Argynvostholt** : La fortification physique progresse sous la direction de Gil, mais le bastion reste vulnérable.\n*   **Menaces Extérieures** : Les deux guenaudes ayant survécu à la confrontation au moulin demeurent en liberté, constituant une menace active. Parallèlement, l'influence de **Lady Wachter** à Vallaki continue de s'étendre, menaçant la stabilité politique de la région.\n*   **Quêtes Spirituelles** : La recherche des restes profanés d'Argynvost pour libérer la pleine puissance du Fanal demeure l'objectif ultime, condition indispensable à la victoire finale sur les ténèbres.\n\n*Archivé par le Chroniqueur IA le 2026-03-16.*",
+      "keywords": [
+        "Elara",
+        "Kaelen",
+        "Bastion",
+        "Artisans",
+        "groupe",
+        "quête",
+        "sanctuaire",
+        "Krezk",
+        "Ireena",
+        "ténèbres",
+        "Lyra",
+        "Krezkov",
+        "Thorne",
+        "Vallaki",
+        "magie",
+        "Argynvostholt",
+        "Strahd",
+        "Manoir",
+        "lumière",
+        "Moulin",
+        "Phare",
+        "cosmique",
+        "physique",
+        "arcaniques",
+        "Campagne"
+      ],
+      "characters": [
+        "Kaelen",
+        "Elara",
+        "Thorne",
+        "Lyra"
+      ],
+      "locations": [],
+      "importance": 2,
+      "auto_archived": true,
+      "agent_reads": {
+        "Kaelen": "2026-03-19T20:58:26",
+        "Elara": "2026-03-19T20:58:26",
+        "Thorne": "2026-03-19T20:58:26",
+        "Lyra": "2026-03-19T20:58:26"
       }
     }
   ],
