@@ -22,7 +22,7 @@ from tkinter import scrolledtext, filedialog
 from window_state import _save_window_state, _get_win_geometry
 from state_manager import (
     load_state, save_state, get_scene, save_scene,
-    get_npcs, save_npcs, AVAILABLE_VOICES,
+    get_npcs, save_npcs, AVAILABLE_VOICES, get_available_voices,
     get_quests, save_quests, get_active_quests_prompt, QUEST_STATUSES,
     get_calendar, save_calendar, advance_day, get_calendar_prompt,
     lunar_phase, BAROVIAN_MONTHS, DAYS_PER_MONTH,
@@ -979,146 +979,577 @@ class PanelsMixin:
         )
 
     def open_npc_manager(self):
-        """Ouvre la fenêtre de gestion des PNJs (ajout / édition / suppression)."""
-        win = tk.Toplevel(self.root)
-        win.title("⚙️ Gestionnaire de PNJs")
-        win.geometry("680x520")
-        win.configure(bg="#1e1e1e")
-        win.grab_set()
-        self._track_window("modal_npc_manager", win)
+        """
+        Gestionnaire unifié des PNJs — TTS + Bestiary + Image + Fiche.
 
-        npcs = get_npcs()
+        Chaque PNJ dispose de :
+          • Nom, Couleur, Voix TTS, Vitesse TTS
+          • Sélecteur de monstre du bestiary (autocomplétion)
+          • PV actuels (initialisés depuis le bestiary)
+          • Bouton Fiche → MonsterSheetWindow
+          • Bouton Parler → génération LLM in-character
+          • Bouton Image → sélecteur fichier + envoi aux agents Gemini
 
-        # --- En-tête ---
-        tk.Label(win, text="🎭 Personnages Non-Joueurs", bg="#1e1e1e", fg="#c77dff",
-                 font=("Arial", 13, "bold")).pack(pady=(12, 4))
-        tk.Label(win, text="Définissez les PNJs que le MJ peut incarner avec leur voix TTS.",
-                 bg="#1e1e1e", fg="#888888", font=("Arial", 9)).pack(pady=(0, 8))
-
-        # --- Liste scrollable ---
-        list_frame = tk.Frame(win, bg="#1e1e1e")
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=14)
-
-        canvas = tk.Canvas(list_frame, bg="#1e1e1e", highlightthickness=0)
-        scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
-        self._npc_scroll_frame = tk.Frame(canvas, bg="#1e1e1e")
-
-        self._npc_scroll_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        Sauvegarde synchronisée :
+          • save_npcs()       — config voix/TTS (pour la dropdown MJ)
+        """
+        from npc_bestiary_panel import (
+            search_monsters, get_monster, MonsterSheetWindow,
+            speak_as_npc, save_npc_image_bytes, load_npc_image_bytes,
+            _fmt_cr, _fmt_type,
         )
-        canvas.create_window((0, 0), window=self._npc_scroll_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        from state_manager import get_group_npcs, save_group_npcs
 
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # ── Fusion des deux sources de données ────────────────────────────────
+        # On fusionne npcs (TTS) et group_npcs (bestiary) sur la clé "name"
+        tts_list   = get_npcs()
+        group_list = get_group_npcs()
+        group_by_name = {n["name"]: n for n in group_list}
 
-        # Header colonnes
-        header = tk.Frame(self._npc_scroll_frame, bg="#2a2a2a")
-        header.pack(fill=tk.X, pady=(0, 4))
-        for text, w in [("Nom", 12), ("Voix Edge-TTS", 22), ("Vitesse", 7), ("Couleur", 8), ("", 8)]:
-            tk.Label(header, text=text, bg="#2a2a2a", fg="#ffcc00",
-                     font=("Arial", 9, "bold"), width=w, anchor="w").pack(side=tk.LEFT, padx=3)
+        # Voix par défaut adaptée au backend actuel
+        _default_voice = get_available_voices()[0]
 
-        # Lignes de PNJs
-        self._npc_rows = []  # liste de dicts {name_var, voice_var, speed_var, color_var}
-
-        def build_rows():
-            for widget in self._npc_scroll_frame.winfo_children():
-                if isinstance(widget, tk.Frame) and widget != header:
-                    widget.destroy()
-            self._npc_rows.clear()
-            for i, npc in enumerate(npcs):
-                row_bg = "#252526" if i % 2 == 0 else "#2d2d2d"
-                row = tk.Frame(self._npc_scroll_frame, bg=row_bg)
-                row.pack(fill=tk.X, pady=1)
-
-                name_var  = tk.StringVar(value=npc.get("name", ""))
-                voice_var = tk.StringVar(value=npc.get("voice", "fr-FR-HenriNeural"))
-                speed_var = tk.StringVar(value=npc.get("speed", "+0%"))
-                color_var = tk.StringVar(value=npc.get("color", "#c77dff"))
-
-                tk.Entry(row, textvariable=name_var, width=12, bg="#3d3d3d", fg="white",
-                         font=("Consolas", 10), insertbackground="white").pack(side=tk.LEFT, padx=3, ipady=3)
-
-                voice_menu = tk.OptionMenu(row, voice_var, *AVAILABLE_VOICES)
-                voice_menu.config(bg="#3d2d4d", fg="white", font=("Consolas", 9),
-                                  width=20, relief="flat", highlightthickness=0)
-                voice_menu["menu"].config(bg="#3d2d4d", fg="white", font=("Consolas", 9))
-                voice_menu.pack(side=tk.LEFT, padx=3)
-
-                tk.Entry(row, textvariable=speed_var, width=7, bg="#3d3d3d", fg="white",
-                         font=("Consolas", 10), insertbackground="white").pack(side=tk.LEFT, padx=3, ipady=3)
-
-                color_entry = tk.Entry(row, textvariable=color_var, width=8, bg="#3d3d3d",
-                                       font=("Consolas", 10), insertbackground="white")
-                color_entry.pack(side=tk.LEFT, padx=3, ipady=3)
-                # Aperçu couleur live
-                def _update_color(var=color_var, entry=color_entry, *args):
-                    try:
-                        c = var.get()
-                        entry.config(fg=c)
-                    except Exception:
-                        entry.config(fg="white")
-                color_var.trace_add("write", _update_color)
-                _update_color()
-
-                def remove_row(idx=i):
-                    npcs.pop(idx)
-                    build_rows()
-
-                tk.Button(row, text="✕", bg="#5a1a1a", fg="#ff6b6b",
-                          font=("Arial", 9, "bold"), width=3,
-                          command=remove_row).pack(side=tk.LEFT, padx=4)
-
-                self._npc_rows.append({
-                    "name": name_var, "voice": voice_var,
-                    "speed": speed_var, "color": color_var
+        # Liste de travail unifiée
+        merged: list[dict] = []
+        seen_names = set()
+        for npc in tts_list:
+            name = npc.get("name", "")
+            if not name or name in seen_names:
+                continue
+            seen_names.add(name)
+            group_data = group_by_name.get(name, {})
+            merged.append({
+                "name":          name,
+                "color":         npc.get("color", group_data.get("color", "#c77dff")),
+                "voice":         npc.get("voice", _default_voice),
+                "speed":         npc.get("speed", "+0%"),
+                "bestiary_name": npc.get("bestiary_name") or group_data.get("bestiary_name") or "",
+                "hp_current":    npc.get("hp_current") if npc.get("hp_current") is not None else group_data.get("hp_current"),
+                "notes":         npc.get("notes", "") or group_data.get("notes", ""),
+            })
+        # PNJs présents dans group_npcs mais absents de npcs
+        for name, gn in group_by_name.items():
+            if name not in seen_names:
+                merged.append({
+                    "name":          name,
+                    "color":         gn.get("color", "#c77dff"),
+                    "voice":         _default_voice,
+                    "speed":         "+0%",
+                    "bestiary_name": gn.get("bestiary_name", ""),
+                    "hp_current":    gn.get("hp_current"),
+                    "notes":         gn.get("notes", ""),
                 })
 
-        build_rows()
+        # ── Fenêtre principale ────────────────────────────────────────────────
+        BG  = "#12121a"
+        BG2 = "#1a1a2a"
+        BG3 = "#22223a"
+        FG  = "#e0e0e0"
+        FG_DIM = "#555566"
+        GOLD   = "#ffd54f"
+        GREEN  = "#81c784"
+        PURPLE = "#ce93d8"
+        RED    = "#e57373"
 
-        # --- Barre du bas : Ajouter + Sauvegarder ---
-        bottom = tk.Frame(win, bg="#1e1e1e")
-        bottom.pack(fill=tk.X, padx=14, pady=10)
+        win = tk.Toplevel(self.root)
+        win.title("Gestionnaire de PNJs")
+        win.geometry("1020x600")
+        win.configure(bg=BG)
+        win.minsize(860, 400)
+        # Pas de grab_set : on veut pouvoir ouvrir MonsterSheetWindow en parallèle
+        self._track_window("modal_npc_manager", win)
 
-        def add_npc():
-            npcs.append({
-                "name": "Nouveau PNJ",
-                "voice": "fr-FR-HenriNeural",
-                "speed": "+0%",
-                "color": "#c77dff"
-            })
-            build_rows()
+        # ── En-tête ───────────────────────────────────────────────────────────
+        hdr = tk.Frame(win, bg=BG2, pady=8)
+        hdr.pack(fill=tk.X)
+        tk.Label(hdr, text="Gestionnaire de PNJs", bg=BG2, fg=PURPLE,
+                 font=("Arial", 13, "bold")).pack(side=tk.LEFT, padx=14)
+        tk.Label(hdr, text="TTS  •  Bestiary  •  Image  •  Fiche  •  Parler en tant que",
+                 bg=BG2, fg=FG_DIM, font=("Arial", 9)).pack(side=tk.LEFT, padx=8)
 
-        def save_and_close():
-            # Lit toutes les lignes du formulaire
-            updated = []
-            for row_vars in self._npc_rows:
-                name = row_vars["name"].get().strip()
-                if name:
-                    updated.append({
-                        "name":  name,
-                        "voice": row_vars["voice"].get(),
-                        "speed": row_vars["speed"].get(),
-                        "color": row_vars["color"].get(),
+        # ── En-têtes colonnes ─────────────────────────────────────────────────
+        col_hdr = tk.Frame(win, bg=BG3, pady=4)
+        col_hdr.pack(fill=tk.X, padx=0)
+        for txt, w in [("Nom",    13), ("Couleur",  8), ("Voix TTS",   20),
+                       ("Vitesse", 7), ("Monstre",  18), ("PV",         6),
+                       ("Actions", 24)]:
+            tk.Label(col_hdr, text=txt, bg=BG3, fg=GOLD,
+                     font=("Arial", 8, "bold"), width=w, anchor="w"
+                     ).pack(side=tk.LEFT, padx=4)
+
+        # ── Zone scrollable ───────────────────────────────────────────────────
+        list_outer = tk.Frame(win, bg=BG)
+        list_outer.pack(fill=tk.BOTH, expand=True, padx=0)
+
+        canvas   = tk.Canvas(list_outer, bg=BG, highlightthickness=0)
+        vsb      = tk.Scrollbar(list_outer, orient="vertical", command=canvas.yview)
+        scroll_f = tk.Frame(canvas, bg=BG)
+        scroll_f.bind("<Configure>",
+                      lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scroll_f, anchor="nw")
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        for w2 in (canvas, scroll_f):
+            w2.bind("<MouseWheel>",
+                    lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        # ── Données de ligne (vars Tk) ────────────────────────────────────────
+        # Chaque entrée : {name_var, color_var, voice_var, speed_var,
+        #                  bestiary_var, hp_var, notes_var}
+        self._npc_rows = []
+        _open_sheets: dict[str, MonsterSheetWindow] = {}
+
+        def _build_rows():
+            for w2 in scroll_f.winfo_children():
+                w2.destroy()
+            self._npc_rows.clear()
+
+            for i, npc in enumerate(merged):
+                row_bg = BG2 if i % 2 == 0 else BG3
+                row    = tk.Frame(scroll_f, bg=row_bg)
+                row.pack(fill=tk.X, pady=1, padx=2)
+
+                name_var     = tk.StringVar(value=npc.get("name", ""))
+                color_var    = tk.StringVar(value=npc.get("color", "#c77dff"))
+                voice_var    = tk.StringVar(value=npc.get("voice", get_available_voices()[0]))
+                speed_var    = tk.StringVar(value=npc.get("speed", "+0%"))
+                bestiary_var = tk.StringVar(value=npc.get("bestiary_name", "") or "")
+                hp_var       = tk.StringVar(value=str(npc.get("hp_current") or ""))
+                notes_var    = tk.StringVar(value=npc.get("notes", ""))
+
+                # Nom
+                tk.Entry(row, textvariable=name_var, width=13, bg="#252535",
+                         fg=FG, font=("Consolas", 10),
+                         insertbackground=FG, relief="flat"
+                         ).pack(side=tk.LEFT, padx=3, ipady=4)
+
+                # Couleur + aperçu
+                color_e = tk.Entry(row, textvariable=color_var, width=8,
+                                   bg="#252535", font=("Consolas", 10),
+                                   insertbackground=FG, relief="flat")
+                color_e.pack(side=tk.LEFT, padx=3, ipady=4)
+
+                def _upd_col(var=color_var, e=color_e, *_a):
+                    try:    e.config(fg=var.get())
+                    except: e.config(fg=FG)
+                color_var.trace_add("write", _upd_col)
+                _upd_col()
+
+                # Voix TTS — liste dynamique selon le backend configuré (piper ou edge-tts)
+                _voices = get_available_voices()
+                vm = tk.OptionMenu(row, voice_var, *_voices)
+                vm.config(bg="#2a1a3a", fg=PURPLE, font=("Consolas", 8),
+                          width=18, relief="flat", highlightthickness=0,
+                          activebackground="#3a2a4a", activeforeground=PURPLE)
+                vm["menu"].config(bg="#2a1a3a", fg=PURPLE, font=("Consolas", 8))
+                vm.pack(side=tk.LEFT, padx=3)
+
+                # Vitesse
+                tk.Entry(row, textvariable=speed_var, width=7, bg="#252535",
+                         fg=FG, font=("Consolas", 10),
+                         insertbackground=FG, relief="flat"
+                         ).pack(side=tk.LEFT, padx=3, ipady=4)
+
+                # ── Sélecteur Monstre ─────────────────────────────────────────
+                mon_frame = tk.Frame(row, bg=row_bg)
+                mon_frame.pack(side=tk.LEFT, padx=2)
+
+                mon_e = tk.Entry(mon_frame, textvariable=bestiary_var,
+                                 width=16, bg="#1a0808", fg=RED,
+                                 font=("Consolas", 9),
+                                 insertbackground=RED, relief="flat")
+                mon_e.pack(side=tk.LEFT, ipady=4)
+
+                # Dropdown suggestion bestiary
+                _sug_lb: list[tk.Listbox] = []
+
+                def _hide_sug(lb_ref=_sug_lb):
+                    if lb_ref:
+                        try: lb_ref[0].destroy()
+                        except: pass
+                        lb_ref.clear()
+
+                def _on_mon_key(event, ev=bestiary_var, row_w=row,
+                                lb_ref=_sug_lb, entry=mon_e):
+                    _hide_sug(lb_ref)
+                    q = ev.get().strip()
+                    if len(q) < 2:
+                        return
+                    sugs = search_monsters(q, 8)
+                    if not sugs:
+                        return
+                    lb = tk.Listbox(win, bg="#1a0808", fg=RED,
+                                    font=("Consolas", 9),
+                                    height=min(len(sugs), 8),
+                                    relief="flat", selectbackground="#3a1818",
+                                    borderwidth=1)
+                    for s in sugs:
+                        lb.insert(tk.END, s)
+                    # Positionne sous l'entry
+                    entry.update_idletasks()
+                    x = entry.winfo_rootx() - win.winfo_rootx()
+                    y = entry.winfo_rooty() - win.winfo_rooty() + entry.winfo_height()
+                    lb.place(x=x, y=y, width=180)
+                    lb.lift()
+                    lb_ref.append(lb)
+
+                    def _pick(e2, lb2=lb, ev2=ev, lb_r=lb_ref):
+                        sel = lb2.curselection()
+                        if sel:
+                            ev2.set(lb2.get(sel[0]))
+                        _hide_sug(lb_r)
+                    lb.bind("<<ListboxSelect>>", _pick)
+                    lb.bind("<FocusOut>", lambda e2, r=lb_ref: _hide_sug(r))
+
+                def _on_mon_confirm(event=None, ev=bestiary_var, hp_v=hp_var,
+                                    lb_ref=_sug_lb):
+                    _hide_sug(lb_ref)
+                    name_b = ev.get().strip()
+                    if not name_b:
+                        return
+                    m = get_monster(name_b)
+                    if not m:
+                        sugs = search_monsters(name_b, 1)
+                        if sugs:
+                            ev.set(sugs[0])
+                            m = get_monster(sugs[0])
+                    # Propose les PV par défaut si champ vide
+                    if m and not hp_v.get().strip():
+                        avg = m.get("hp", {}).get("average")
+                        if avg:
+                            hp_v.set(str(avg))
+
+                mon_e.bind("<KeyRelease>", _on_mon_key)
+                mon_e.bind("<Return>",     _on_mon_confirm)
+                mon_e.bind("<FocusOut>",   _on_mon_confirm)
+
+                # ── PV ────────────────────────────────────────────────────────
+                tk.Entry(row, textvariable=hp_var, width=6, bg="#1a100a",
+                         fg="#ffb74d", font=("Consolas", 10),
+                         insertbackground="#ffb74d", relief="flat"
+                         ).pack(side=tk.LEFT, padx=3, ipady=4)
+
+                # ── Boutons actions ───────────────────────────────────────────
+                btn_f = tk.Frame(row, bg=row_bg)
+                btn_f.pack(side=tk.LEFT, padx=4)
+
+                def _btn(parent, txt, bg, fg, cmd):
+                    return tk.Button(parent, text=txt, bg=bg, fg=fg,
+                                     font=("Arial", 8, "bold"), relief="flat",
+                                     padx=5, pady=2, cursor="hand2",
+                                     command=cmd)
+
+                # Bouton Fiche
+                def _open_sheet(nv=name_var, bv=bestiary_var, cv=color_var,
+                                hv=hp_var):   # hv capturé ICI par valeur, pas par la closure de boucle
+                    npc_n    = nv.get().strip()
+                    bestiary = bv.get().strip()
+                    color    = cv.get().strip()
+                    if not npc_n:
+                        return
+                    ex = _open_sheets.get(npc_n)
+                    if ex:
+                        try:
+                            ex.win.deiconify()
+                            ex.win.lift()
+                            return
+                        except Exception:
+                            pass
+
+                    def _on_sel(new_b, bv2=bv, hv2=hv):
+                        bv2.set(new_b)
+                        m = get_monster(new_b)
+                        if m and not hv2.get().strip():
+                            avg = m.get("hp", {}).get("average")
+                            if avg:
+                                hv2.set(str(avg))
+
+                    sheet = MonsterSheetWindow(
+                        self.root, npc_n, bestiary or None,
+                        on_select_callback=_on_sel,
+                        win_state=self._win_state,
+                        track_fn=self._track_window,
+                        chat_queue=self.msg_queue,
+                        audio_queue=getattr(self, "audio_queue", None),
+                        npc_color=color,
+                        get_scene_fn=lambda: __import__('state_manager').get_scene_prompt(),
+                    )
+                    _open_sheets[npc_n] = sheet
+
+                    def _on_close(n=npc_n):
+                        _open_sheets.pop(n, None)
+                        try: sheet.win.destroy()
+                        except: pass
+                    sheet.win.protocol("WM_DELETE_WINDOW", _on_close)
+
+                _btn(btn_f, "Fiche", "#1a0808", RED, _open_sheet
+                     ).pack(side=tk.LEFT, padx=2)
+
+                # Bouton Parler
+                def _speak(nv=name_var, bv=bestiary_var, cv=color_var):
+                    npc_n    = nv.get().strip()
+                    bestiary = bv.get().strip()
+                    color    = cv.get().strip()
+                    if not npc_n:
+                        return
+                    monster = get_monster(bestiary) if bestiary else None
+                    scene   = ""
+                    try:
+                        scene = __import__('state_manager').get_scene_prompt()
+                    except Exception:
+                        pass
+                    self.msg_queue.put({
+                        "sender": "Systeme",
+                        "text":   f"{npc_n} prend la parole...",
+                        "color":  "#555566",
                     })
-            save_npcs(updated)
-            # Mise à jour du VOICE_MAPPING dynamique pour les PNJs
-            from voice_interface import VOICE_MAPPING, SPEED_MAPPING
-            for npc in updated:
-                key = f"__npc__{npc['name']}"
-                VOICE_MAPPING[key]  = npc["voice"]
-                SPEED_MAPPING[key]  = npc["speed"]
+                    speak_as_npc(
+                        npc_n, monster, "",
+                        self.msg_queue,
+                        getattr(self, "audio_queue", None),
+                        color=color, scene_context=scene,
+                    )
+
+                _btn(btn_f, "Parler", "#0e1a10", GREEN, _speak
+                     ).pack(side=tk.LEFT, padx=2)
+
+                # Bouton Image
+                def _set_image(nv=name_var):
+                    from tkinter import filedialog as _fd, messagebox as _mb
+                    npc_n = nv.get().strip()
+                    if not npc_n:
+                        return
+                    path = _fd.askopenfilename(
+                        parent=win,
+                        title=f"Image pour {npc_n}",
+                        filetypes=[("Images", "*.png *.jpg *.jpeg *.webp"),
+                                   ("Tous",   "*.*")],
+                    )
+                    if not path:
+                        return
+                    try:
+                        from PIL import Image
+                        import io
+                        img = Image.open(path).convert("RGBA")
+                        img.thumbnail((512, 512))
+                        buf = io.BytesIO()
+                        img.save(buf, format="PNG")
+                        save_npc_image_bytes(npc_n, buf.getvalue())
+                        self.msg_queue.put({
+                            "sender": "Image NPC",
+                            "text":   f"Image de {npc_n} enregistree.",
+                            "color":  GREEN,
+                        })
+                    except Exception as e:
+                        _mb.showerror("Image", f"Erreur : {e}", parent=win)
+
+                _btn(btn_f, "Image", "#101820", "#64b5f6", _set_image
+                     ).pack(side=tk.LEFT, padx=2)
+
+                # Bouton Groupe — ajoute/retire ce PNJ du GroupNPCPanel
+                def _make_groupe_btn(parent, nv=name_var, bv=bestiary_var,
+                                     cv=color_var, hv=hp_var, row_bg_=row_bg):
+                    """Crée un bouton [+Grp]/[−Grp] qui reflète l'état actuel."""
+                    btn_holder = tk.Frame(parent, bg=row_bg_)
+                    btn_holder.pack(side=tk.LEFT, padx=2)
+
+                    def _in_group(npc_name: str) -> bool:
+                        from state_manager import get_group_npcs
+                        return any(n.get("name") == npc_name
+                                   for n in get_group_npcs())
+
+                    def _refresh_btn(btn, npc_name: str):
+                        if _in_group(npc_name):
+                            btn.config(text="−Grp", bg="#2a1a00", fg="#ff9800")
+                        else:
+                            btn.config(text="+Grp", bg="#0a2010", fg="#81c784")
+
+                    def _toggle(btn_ref):
+                        from state_manager import get_group_npcs, save_group_npcs
+                        npc_name = nv.get().strip()
+                        if not npc_name:
+                            return
+                        npcs = get_group_npcs()
+                        if _in_group(npc_name):
+                            # Retirer du groupe
+                            npcs = [n for n in npcs if n.get("name") != npc_name]
+                            save_group_npcs(npcs)
+                        else:
+                            # Ajouter au groupe
+                            bestiary = bv.get().strip() or None
+                            hp_raw   = hv.get().strip()
+                            try:    hp = int(hp_raw)
+                            except: hp = None
+                            # PV par défaut depuis le bestiary si non renseigné
+                            if hp is None and bestiary:
+                                m = get_monster(bestiary)
+                                if m:
+                                    hp = m.get("hp", {}).get("average")
+                            npcs.append({
+                                "name":          npc_name,
+                                "color":         cv.get().strip() or "#c77dff",
+                                "bestiary_name": bestiary,
+                                "hp_current":    hp,
+                                "notes":         "",
+                            })
+                            save_group_npcs(npcs)
+                        _refresh_btn(btn_ref, npc_name)
+                        # Rafraîchit le GroupNPCPanel s'il est ouvert
+                        panel = getattr(self, "_group_npc_panel", None)
+                        if panel:
+                            try: panel._refresh()
+                            except Exception: pass
+
+                    # Créer le bouton, puis initialiser son état
+                    btn = tk.Button(btn_holder, text="+Grp",
+                                    bg="#0a2010", fg="#81c784",
+                                    font=("Arial", 7, "bold"), relief="flat",
+                                    padx=4, pady=2, cursor="hand2")
+                    btn.config(command=lambda b=btn: _toggle(b))
+                    btn.pack()
+                    _refresh_btn(btn, nv.get().strip())
+                    return btn_holder
+
+                _make_groupe_btn(btn_f)
+
+                # Bouton supprimer
+                def _remove(idx=i):
+                    merged.pop(idx)
+                    _build_rows()
+
+                _btn(btn_f, "X", "#2a0808", "#ff6b6b", _remove
+                     ).pack(side=tk.LEFT, padx=2)
+
+                self._npc_rows.append({
+                    "name":     name_var,
+                    "color":    color_var,
+                    "voice":    voice_var,
+                    "speed":    speed_var,
+                    "bestiary": bestiary_var,
+                    "hp":       hp_var,
+                    "notes":    notes_var,
+                })
+
+        _build_rows()
+
+        # ── Barre du bas ──────────────────────────────────────────────────────
+        bottom = tk.Frame(win, bg=BG2, pady=8)
+        bottom.pack(fill=tk.X, padx=10)
+
+        def _add_npc():
+            merged.append({
+                "name": "Nouveau PNJ", "color": "#c77dff",
+                "voice": get_available_voices()[0], "speed": "+0%",
+                "bestiary_name": "", "hp_current": None, "notes": "",
+            })
+            _build_rows()
+
+        def _save_and_close():
+            """Écrit dans npcs (TTS) et met à jour bestiary/PV/notes
+            pour les PNJs déjà présents dans le groupe (sans en ajouter)."""
+            tts_updated   = []
+
+            for rv in self._npc_rows:
+                name     = rv["name"].get().strip()
+                if not name:
+                    continue
+                color    = rv["color"].get().strip()   or "#c77dff"
+                voice    = rv["voice"].get()
+                speed    = rv["speed"].get()            or "+0%"
+                bestiary = rv["bestiary"].get().strip()
+                hp_raw   = rv["hp"].get().strip()
+                notes    = rv["notes"].get().strip()
+
+                try:    hp = int(hp_raw)
+                except: hp = None
+
+                tts_updated.append({
+                    "name":          name,
+                    "color":         color,
+                    "voice":         voice,
+                    "speed":         speed,
+                    "bestiary_name": bestiary or None,
+                    "hp_current":    hp,
+                    "notes":         notes,
+                })
+
+            # Sauvegarde TTS
+            save_npcs(tts_updated)
+
+            # Mise à jour bestiary/PV/notes pour les PNJs déjà dans le groupe
+            # — ne crée pas de nouveaux membres, met à jour les existants seulement
+            try:
+                existing = get_group_npcs()
+                existing_by_name = {n["name"]: n for n in existing}
+                changed = False
+                for rv in self._npc_rows:
+                    name = rv["name"].get().strip()
+                    if name not in existing_by_name:
+                        continue   # pas dans le groupe → on ne l'ajoute pas
+                    bestiary = rv["bestiary"].get().strip()
+                    hp_raw   = rv["hp"].get().strip()
+                    notes    = rv["notes"].get().strip()
+                    try:    hp = int(hp_raw)
+                    except: hp = None
+                    entry = existing_by_name[name]
+                    if (entry.get("bestiary_name") != (bestiary or None)
+                            or entry.get("hp_current") != hp
+                            or entry.get("notes", "") != notes
+                            or entry.get("color") != (rv["color"].get().strip() or "#c77dff")):
+                        entry["bestiary_name"] = bestiary or None
+                        entry["hp_current"]    = hp
+                        entry["notes"]         = notes
+                        entry["color"]         = rv["color"].get().strip() or "#c77dff"
+                        changed = True
+                if changed:
+                    save_group_npcs(existing)
+            except Exception as _e:
+                print(f"[NPC Manager] Erreur màj group_npcs : {_e}")
+
+            # Mise à jour VOICE_MAPPING dynamique
+            try:
+                from voice_interface import VOICE_MAPPING, SPEED_MAPPING
+                for npc in tts_updated:
+                    bare_key = npc["name"]
+                    npc_key  = f"__npc__{bare_key}"
+                    # Stocke sous les DEUX clés :
+                    #   __npc__<nom>  → lecture via _get_piper_voice_id (piper)
+                    #   <nom>         → lecture directe via VOICE_MAPPING (edge-tts + piper)
+                    VOICE_MAPPING[npc_key]  = npc["voice"]
+                    VOICE_MAPPING[bare_key] = npc["voice"]
+                    SPEED_MAPPING[npc_key]  = npc["speed"]
+                    SPEED_MAPPING[bare_key] = npc["speed"]
+            except Exception:
+                pass
+
+            # Rafraîchit le menu NPC dans l'UI principale
             self._refresh_npc_dropdown()
+
+            # Rafraîchit le GroupNPCPanel s'il existe
+            panel = getattr(self, "_group_npc_panel", None)
+            if panel:
+                try:
+                    panel._refresh()
+                except Exception:
+                    pass
+
             win.destroy()
 
-        tk.Button(bottom, text="＋ Ajouter un PNJ", bg="#2d4a2d", fg="#4CAF50",
-                  font=("Arial", 10, "bold"), command=add_npc).pack(side=tk.LEFT)
-        tk.Button(bottom, text="✅ Sauvegarder", bg="#4CAF50", fg="white",
-                  font=("Arial", 10, "bold"), command=save_and_close).pack(side=tk.RIGHT)
-        tk.Button(bottom, text="Annuler", bg="#3d3d3d", fg="white",
-                  font=("Arial", 10), command=win.destroy).pack(side=tk.RIGHT, padx=8)
+        tk.Button(bottom, text="+ Ajouter un PNJ", bg="#1a2a1a", fg=GREEN,
+                  font=("Arial", 10, "bold"), relief="flat", padx=10,
+                  command=_add_npc).pack(side=tk.LEFT)
+
+        tk.Label(bottom, text="Fermer la fiche pour valider le monstre selectionne",
+                 bg=BG2, fg=FG_DIM, font=("Arial", 8)).pack(side=tk.LEFT, padx=14)
+
+        tk.Button(bottom, text="Annuler", bg="#2a2a3a", fg="#888",
+                  font=("Arial", 10), relief="flat", padx=8,
+                  command=win.destroy).pack(side=tk.RIGHT, padx=6)
+
+        tk.Button(bottom, text="Sauvegarder", bg="#4CAF50", fg="white",
+                  font=("Arial", 10, "bold"), relief="flat", padx=12,
+                  command=_save_and_close).pack(side=tk.RIGHT)
 
 
     # --- JOURNAL DE QUÊTES ---
@@ -1494,214 +1925,6 @@ class PanelsMixin:
 
     def open_dice_roller(self):
         """Fenêtre flottante de lancer de dés rapide.
-        Option pour envoyer le résultat dans le chat ou l'afficher uniquement dans la fenêtre.
-        """
-        if getattr(self, "_dice_roller_win", None):
-            try:
-                self._dice_roller_win.deiconify()
-                self._dice_roller_win.lift()
-                return
-            except Exception:
-                self._dice_roller_win = None
-
-        BG      = "#0f0a1a"
-        BG2     = "#1a1030"
-        BG3     = "#231540"
-        FG      = "#e8d8ff"
-        FG_DIM  = "#7a6a9a"
-        ACC     = "#9c5cf5"
-        ACC2    = "#ce93d8"
-        GREEN   = "#81c784"
-        RED     = "#e57373"
-        GOLD    = "#ffd54f"
-        FONT    = ("Consolas", 10)
-        FONT_B  = ("Consolas", 10, "bold")
-        FONT_XL = ("Consolas", 24, "bold")
-
-        win = tk.Toplevel(self.root)
-        win.title("🎲 Lanceur de Dés")
-        win.configure(bg=BG)
-        win.resizable(False, False)
-        self._dice_roller_win = win
-        self._track_window("dice_roller", win)
-
-        # ── Variables d'état ──────────────────────────────────────────────────
-        self._dice_count    = tk.IntVar(value=1)
-        self._dice_bonus    = tk.IntVar(value=0)
-        self._dice_selected = tk.StringVar(value="d20")
-        self._dice_to_chat  = tk.BooleanVar(value=True)
-        self._dice_char     = tk.StringVar(value="MJ")
-        self._dice_history  = []   # liste de strings
-
-        # ── Titre ─────────────────────────────────────────────────────────────
-        hdr = tk.Frame(win, bg=BG, pady=8)
-        hdr.pack(fill=tk.X, padx=12)
-        tk.Label(hdr, text="⚀ LANCEUR DE DÉS", bg=BG, fg=ACC2,
-                 font=("Arial", 12, "bold")).pack()
-
-        # ── Résultat principal ────────────────────────────────────────────────
-        res_frame = tk.Frame(win, bg=BG2, relief="flat", bd=0)
-        res_frame.pack(fill=tk.X, padx=12, pady=(0, 8))
-
-        self._dice_result_var = tk.StringVar(value="—")
-        self._dice_detail_var = tk.StringVar(value="")
-
-        tk.Label(res_frame, textvariable=self._dice_result_var,
-                 bg=BG2, fg=GOLD, font=("Consolas", 36, "bold"),
-                 anchor="center").pack(fill=tk.X, pady=(10, 0))
-        tk.Label(res_frame, textvariable=self._dice_detail_var,
-                 bg=BG2, fg=FG_DIM, font=FONT,
-                 anchor="center").pack(fill=tk.X, pady=(0, 10))
-
-        # ── Sélection du dé ───────────────────────────────────────────────────
-        dice_types = ["d4", "d6", "d8", "d10", "d12", "d20", "d100"]
-        die_icons  = {"d4":"▲","d6":"⬡","d8":"◆","d10":"⬠","d12":"⬟","d20":"⬡","d100":"○"}
-
-        dice_row = tk.Frame(win, bg=BG)
-        dice_row.pack(padx=12, pady=(0, 6))
-
-        self._dice_btns = {}
-        for dt in dice_types:
-            def _pick(t=dt):
-                self._dice_selected.set(t)
-                for d, b in self._dice_btns.items():
-                    b.config(bg=BG3 if d != t else ACC,
-                             fg=FG  if d != t else "#fff",
-                             relief="flat")
-            b = tk.Button(dice_row, text=f"{die_icons.get(dt,'●')}\n{dt}",
-                          bg=ACC if dt == "d20" else BG3,
-                          fg="#fff" if dt == "d20" else FG,
-                          font=("Consolas", 9, "bold"),
-                          width=4, height=2, relief="flat",
-                          activebackground=ACC, activeforeground="#fff",
-                          command=_pick)
-            b.pack(side=tk.LEFT, padx=2)
-            self._dice_btns[dt] = b
-
-        # ── Compteur & Bonus ──────────────────────────────────────────────────
-        opts_row = tk.Frame(win, bg=BG)
-        opts_row.pack(padx=12, pady=(0, 8))
-
-        # Nombre de dés
-        cnt_frame = tk.Frame(opts_row, bg=BG)
-        cnt_frame.pack(side=tk.LEFT, padx=(0, 16))
-        tk.Label(cnt_frame, text="Nombre", bg=BG, fg=FG_DIM, font=FONT).pack()
-        cnt_ctrl = tk.Frame(cnt_frame, bg=BG)
-        cnt_ctrl.pack()
-        tk.Button(cnt_ctrl, text="−", bg=BG3, fg=ACC2, font=FONT_B, width=2, relief="flat",
-                  command=lambda: self._dice_count.set(max(1, self._dice_count.get()-1))
-                  ).pack(side=tk.LEFT)
-        tk.Label(cnt_ctrl, textvariable=self._dice_count, bg=BG, fg=FG,
-                 font=FONT_B, width=3, anchor="center").pack(side=tk.LEFT)
-        tk.Button(cnt_ctrl, text="+", bg=BG3, fg=ACC2, font=FONT_B, width=2, relief="flat",
-                  command=lambda: self._dice_count.set(min(20, self._dice_count.get()+1))
-                  ).pack(side=tk.LEFT)
-
-        # Bonus
-        bon_frame = tk.Frame(opts_row, bg=BG)
-        bon_frame.pack(side=tk.LEFT, padx=(0, 16))
-        tk.Label(bon_frame, text="Bonus", bg=BG, fg=FG_DIM, font=FONT).pack()
-        bon_ctrl = tk.Frame(bon_frame, bg=BG)
-        bon_ctrl.pack()
-        tk.Button(bon_ctrl, text="−", bg=BG3, fg=RED, font=FONT_B, width=2, relief="flat",
-                  command=lambda: self._dice_bonus.set(self._dice_bonus.get()-1)
-                  ).pack(side=tk.LEFT)
-        tk.Label(bon_ctrl, textvariable=self._dice_bonus, bg=BG, fg=FG,
-                 font=FONT_B, width=4, anchor="center").pack(side=tk.LEFT)
-        tk.Button(bon_ctrl, text="+", bg=BG3, fg=GREEN, font=FONT_B, width=2, relief="flat",
-                  command=lambda: self._dice_bonus.set(self._dice_bonus.get()+1)
-                  ).pack(side=tk.LEFT)
-
-        # Personnage
-        char_frame = tk.Frame(opts_row, bg=BG)
-        char_frame.pack(side=tk.LEFT)
-        tk.Label(char_frame, text="Personnage", bg=BG, fg=FG_DIM, font=FONT).pack()
-        tk.Entry(char_frame, textvariable=self._dice_char,
-                 bg=BG3, fg=FG, font=FONT, width=9,
-                 insertbackground=ACC2, relief="flat").pack()
-
-        # ── Bouton LANCER ─────────────────────────────────────────────────────
-        def _do_roll():
-            import random
-            dt    = self._dice_selected.get()          # ex "d20"
-            n     = self._dice_count.get()
-            bonus = self._dice_bonus.get()
-            char  = self._dice_char.get().strip() or "MJ"
-            sides = int(dt[1:])
-            rolls = [random.randint(1, sides) for _ in range(n)]
-            total = sum(rolls) + bonus
-
-            # Affichage dans la fenêtre
-            self._dice_result_var.set(str(total))
-            dice_str = f"{n}{dt}"
-            bonus_str = f" + {bonus}" if bonus > 0 else (f" − {abs(bonus)}" if bonus < 0 else "")
-            detail = f"{char} · {dice_str}{bonus_str}   dés: {rolls}"
-            self._dice_detail_var.set(detail)
-
-            # Couleur du résultat (critique / échec critique)
-            if dt == "d20" and n == 1:
-                if rolls[0] == 20:
-                    self._dice_result_var.set("🌟 " + str(total))
-                elif rolls[0] == 1:
-                    self._dice_result_var.set("💀 " + str(total))
-
-            # Historique
-            self._dice_history.insert(0, detail)
-            del self._dice_history[10:]
-            _refresh_history()
-
-            # Envoi dans le chat si activé
-            if self._dice_to_chat.get():
-                result_str = roll_dice(
-                    character_name=char,
-                    dice_type=f"{n}{dt}",
-                    bonus=bonus,
-                )
-                self.msg_queue.put({
-                    "sender": f"🎲 {char}",
-                    "text": result_str,
-                    "color": GOLD,
-                })
-
-        roll_btn = tk.Button(win, text="🎲  LANCER", bg=ACC, fg="#fff",
-                             font=("Arial", 13, "bold"), relief="flat",
-                             activebackground="#b07dff", activeforeground="#fff",
-                             pady=8, command=_do_roll)
-        roll_btn.pack(fill=tk.X, padx=12, pady=(0, 8))
-        # Raccourci clavier
-        win.bind("<Return>", lambda e: _do_roll())
-        win.bind("<space>",  lambda e: _do_roll())
-
-        # ── Option : envoyer dans le chat ─────────────────────────────────────
-        chat_toggle = tk.Checkbutton(
-            win, text="📢 Afficher dans le chat",
-            variable=self._dice_to_chat,
-            bg=BG, fg=FG_DIM, selectcolor=BG3,
-            activebackground=BG, activeforeground=FG,
-            font=FONT, anchor="w", relief="flat",
-        )
-        chat_toggle.pack(fill=tk.X, padx=14, pady=(0, 6))
-
-        # ── Historique ────────────────────────────────────────────────────────
-        sep = tk.Frame(win, bg="#2a1a40", height=1)
-        sep.pack(fill=tk.X, padx=12, pady=(2, 4))
-
-        tk.Label(win, text="HISTORIQUE", bg=BG, fg=FG_DIM,
-                 font=("Consolas", 8, "bold")).pack(anchor="w", padx=14)
-
-        self._dice_hist_frame = tk.Frame(win, bg=BG)
-        self._dice_hist_frame.pack(fill=tk.X, padx=12, pady=(2, 10))
-
-        def _refresh_history():
-            for w in self._dice_hist_frame.winfo_children():
-                w.destroy()
-            for entry in self._dice_history:
-                tk.Label(self._dice_hist_frame, text=entry, bg=BG, fg=FG_DIM,
-                         font=("Consolas", 8), anchor="w",
-                         wraplength=280, justify=tk.LEFT).pack(fill=tk.X)
-
-    def open_dice_roller(self):
-        """Fenêtre flottante de lancer de dés rapide.
         Toggle pour envoyer dans le chat ou afficher uniquement dans la fenêtre.
         """
         if getattr(self, "_dice_roller_win", None):
@@ -1842,11 +2065,7 @@ class PanelsMixin:
 
             # Chat si activé
             if dice_to_chat.get():
-                result_str = roll_dice(
-                    character_name=char,
-                    dice_type=f"{n}{dt}",
-                    bonus=bonus,
-                )
+                result_str = f"[RÉSULTAT SYSTÈME] {char} a lancé {n}{dt} + {bonus}. Dés: {rolls}. Total = {total}"
                 self.msg_queue.put({
                     "sender": f"🎲 {char}",
                     "text": result_str,

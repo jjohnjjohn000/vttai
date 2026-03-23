@@ -52,6 +52,7 @@ AGENT_COLORS = {
 def _provider_color(model: str) -> str:
     if model.startswith("groq/"):       return "\033[95m"
     if model.startswith("openrouter/"): return "\033[96m"
+    if model.startswith("deepseek/"):   return "\033[93m"  # jaune
     return "\033[94m"
 
 # ─── Prompt de test ───────────────────────────────────────────────────────────
@@ -59,9 +60,10 @@ TEST_SYSTEM = "Tu es un assistant de test. Reponds toujours en francais, tres br
 TEST_USER   = "Dis uniquement 'Modele operationnel.' et rien d'autre."
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
-_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
-_GROQ_BASE   = "https://api.groq.com/openai/v1"
-_ROUTER_BASE = "https://openrouter.ai/api/v1"
+_GEMINI_BASE  = "https://generativelanguage.googleapis.com/v1beta/openai/"
+_GROQ_BASE    = "https://api.groq.com/openai/v1"
+_ROUTER_BASE  = "https://openrouter.ai/api/v1"
+_DEEPSEEK_BASE = "https://api.deepseek.com"
 
 def _resolve(model_name: str) -> tuple:
     m = model_name.strip()
@@ -72,11 +74,14 @@ def _resolve(model_name: str) -> tuple:
             "HTTP-Referer": "https://dnd-moteur-aube-brisee",
             "X-Title": "Moteur de l Aube Brisee",
         }
+    if m.startswith("deepseek/"):
+        return _DEEPSEEK_BASE, os.getenv("DEEPSEEK_API_KEY", ""), m[len("deepseek/"):], {}
     return _GEMINI_BASE, os.getenv("GEMINI_API_KEY", ""), m, {}
 
 def _provider(model: str) -> str:
     if model.startswith("groq/"):       return "Groq"
     if model.startswith("openrouter/"): return "OpenRouter"
+    if model.startswith("deepseek/"):   return "DeepSeek"
     return "Gemini"
 
 # ─── Appel API direct ─────────────────────────────────────────────────────────
@@ -92,7 +97,7 @@ def call_model(model_name: str, timeout: int = 25) -> dict:
     if not api_key:
         provider = _provider(model_name)
         key_name = {"Gemini": "GEMINI_API_KEY", "Groq": "GROQ_API_KEY",
-                    "OpenRouter": "OPENROUTER_API_KEY"}[provider]
+                    "OpenRouter": "OPENROUTER_API_KEY", "DeepSeek": "DEEPSEEK_API_KEY"}[provider]
         return {"ok": False, "error": f"Cle manquante ({key_name})",
                 "model": model_name, "response": "", "latency_ms": 0}
 
@@ -179,9 +184,10 @@ def get_all_llm_config_models() -> list:
     Synchronise manuellement avec llm_config.py — a mettre a jour si
     la liste des fallbacks change.
     """
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
-    groq_key   = os.getenv("GROQ_API_KEY", "")
-    router_key = os.getenv("OPENROUTER_API_KEY", "")
+    gemini_key   = os.getenv("GEMINI_API_KEY", "")
+    groq_key     = os.getenv("GROQ_API_KEY", "")
+    router_key   = os.getenv("OPENROUTER_API_KEY", "")
+    deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
 
     models = []
     seen   = set()
@@ -197,6 +203,11 @@ def get_all_llm_config_models() -> list:
         _add("gemini-3.1-pro-preview")
         _add("gemini-3.1-flash-lite-preview")
         _add("gemini-2.5-flash")
+
+    # DeepSeek direct
+    if deepseek_key:
+        _add("deepseek/deepseek-chat")
+        _add("deepseek/deepseek-reasoner")
 
     # Groq
     if groq_key:

@@ -236,13 +236,13 @@ class LLMControlMixin:
         prompt = (
             f"[MESSAGE PRIVÉ DU MJ — POUR {char_name.upper()} UNIQUEMENT — LES AUTRES JOUEURS NE VOIENT PAS CECI]\n"
             f"{message}\n\n"
-            f"Tu dois choisir comment répondre. Deux options EXCLUSIVES :\n\n"
+            f"Tu dois choisir comment réagir à cette information. Deux options EXCLUSIVES :\n\n"
             f"Option A — Répondre DIRECTEMENT AU GROUPE (les autres joueurs entendent) :\n"
             f"  Commence ta réponse par : [GROUPE]\n"
-            f"  Utilise ça si tu veux que ton personnage parle ouvertement, réagit à voix haute, ou partage l'info.\n\n"
+            f"  IMPORTANT : C'est le choix par défaut ! Parle à voix haute à tes alliés pour partager tes déductions, tes découvertes ou l'information que tu viens de recevoir. Le jeu de rôle coopératif exige de communiquer.\n\n"
             f"Option B — Répondre SECRÈTEMENT au MJ seulement :\n"
             f"  Commence ta réponse par : [SECRET]\n"
-            f"  Utilise ça si ton personnage garde l'info pour lui, réfléchit intérieurement, ou veut d'abord en parler en privé.\n\n"
+            f"  Utilise ça UNIQUEMENT si l'information concerne un secret lourd, une trahison, ou tes pensées purement internes que tu refuses absolument de dévoiler aux autres.\n\n"
             f"Reste dans le personnage de {char_name}. Réponse courte, en roleplay pur. "
             f"Ne mentionne jamais les balises [GROUPE] ou [SECRET] dans le corps de ta réponse."
         )
@@ -327,10 +327,7 @@ class LLMControlMixin:
             # L'agent répond en secret ([SECRET] ou pas de balise reconnue)
             clean_text = text_content[len("[SECRET]"):].strip() if text_content.startswith("[SECRET]") else text_content
             self.msg_queue.put({"sender": f"🔒 {char_name} (privé)", "text": clean_text, "color": char_color})
-            _tts_secret = strip_mechanical_blocks(clean_text)
-            if _tts_secret:
-                log_tts_start(char_name, _tts_secret)
-                self.audio_queue.put((_tts_secret, char_name))
+            # Aucune lecture audio TTS pour les messages privés.
             # Garder le bouton relay : le MJ peut décider de partager au groupe
             self.msg_queue.put({"action": "relay_button", "char_name": char_name, "reply_text": clean_text})
 

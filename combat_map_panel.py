@@ -482,7 +482,7 @@ class CombatMapWindow:
             "scroll_x":         scroll_x,
             "scroll_y":         scroll_y,
             "fog_mask_b64":     fog_b64,
-            "tokens":           [{k: v for k, v in t.items() if k != "ids"}
+            "tokens":           [{k: v for k, v in t.items() if k not in ("ids", "_fp")}
                                  for t in self.tokens],
             "map_layers":       [{"name": l["name"], "path": l["path"],
                                   "w": l["w"], "h": l["h"],
@@ -1301,25 +1301,22 @@ class CombatMapWindow:
             except Exception as e:
                 print(f"[CombatMap] calque '{layer.get('name','?')}' : {e}")
 
-        # ── Grille (seulement les lignes qui croisent la tuile) ───────────────
+        # ── Grille (vectorisée — une seule opération numpy) ─────────────────
         if self._show_grid and cp >= 4:
             bg_arr = np.array(bg, dtype=np.float32)
             gc = np.array(_C_GRID[:3], dtype=np.float32)
             ga = _C_GRID[3] / 255.0
-            # Colonnes
-            c0 = tx0 // cp
-            c1 = tx1 // cp + 1
-            for c in range(c0, c1 + 1):
-                x = c * cp - tx0
-                if 0 <= x < TW:
-                    bg_arr[:, x, :3] = ga * gc + (1 - ga) * bg_arr[:, x, :3]
-            # Rangées
-            r0 = ty0 // cp
-            r1 = ty1 // cp + 1
-            for r in range(r0, r1 + 1):
-                y = r * cp - ty0
-                if 0 <= y < TH:
-                    bg_arr[y, :, :3] = ga * gc + (1 - ga) * bg_arr[y, :, :3]
+            inv_ga = 1.0 - ga
+            # Colonnes : positions x de toutes les lignes verticales dans la tuile
+            col_xs = np.arange(tx0 // cp, tx1 // cp + 2) * cp - tx0
+            col_xs = col_xs[(col_xs >= 0) & (col_xs < TW)]
+            if col_xs.size:
+                bg_arr[:, col_xs, :3] = ga * gc + inv_ga * bg_arr[:, col_xs, :3]
+            # Rangées : positions y de toutes les lignes horizontales
+            row_ys = np.arange(ty0 // cp, ty1 // cp + 2) * cp - ty0
+            row_ys = row_ys[(row_ys >= 0) & (row_ys < TH)]
+            if row_ys.size:
+                bg_arr[row_ys, :, :3] = ga * gc + inv_ga * bg_arr[row_ys, :, :3]
             bg_arr[:, :, 3] = 255
             bg = Image.fromarray(bg_arr.astype(np.uint8), "RGBA")
 
@@ -1370,13 +1367,17 @@ class CombatMapWindow:
 
         W, H = self._bg_pil.size
 
-        # Calque obstacles (invalide si _obs_pil est None)
-        if self._obs_pil is None or self._obs_pil.size != (W, H):
-            self._obs_pil = self._build_obstacle_pil(W, H)
+        # Composition : bg → obstacles (si présents) → fog
+        has_obs = bool(self._obstacles)
+        if has_obs:
+            if self._obs_pil is None or self._obs_pil.size != (W, H):
+                self._obs_pil = self._build_obstacle_pil(W, H)
+            bg_with_obs = Image.alpha_composite(self._bg_pil, self._obs_pil)
+        else:
+            self._obs_pil = None
+            bg_with_obs = self._bg_pil
 
-        # Composition : bg → obstacles → fog
-        scene = Image.alpha_composite(self._bg_pil, self._obs_pil)
-        scene = Image.alpha_composite(scene, self._fog_pil)
+        scene = Image.alpha_composite(bg_with_obs, self._fog_pil)
         self._scene_photo = ImageTk.PhotoImage(scene)
 
         W_full, H_full = self._wh
@@ -1392,11 +1393,9 @@ class CombatMapWindow:
         self.canvas.tag_raise("token")
         self.canvas.tag_raise("note")
         self.canvas.tag_raise("door")
-        # Vue joueurs — on passe aussi le calque obstacles composité
+        # Vue joueurs — réutilise bg_with_obs déjà calculé
         if self._player_win is not None:
             try:
-                # Composite bg+obstacles pour la vue joueurs
-                bg_with_obs = Image.alpha_composite(self._bg_pil, self._obs_pil)
                 self._player_win.refresh(bg_with_obs, self._fog_mask, self._cp,
                                          self.cols, self.rows, self.tokens)
             except Exception:
@@ -1444,11 +1443,31 @@ class CombatMapWindow:
 
     # ─── Tokens ───────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _tok_fingerprint(tok: dict, zoom: float, cp: int, sel: set) -> tuple:
+        """Hashable fingerprint of a token's visual state."""
+        return (
+            tok.get("col"), tok.get("row"), tok.get("type"),
+            tok.get("name", ""), tok.get("size", 1),
+            tok.get("hp", -1), tok.get("max_hp", -1),
+            tuple(tok.get("conditions", [])),
+            zoom, cp,
+            id(tok) in sel,
+        )
+
     def _redraw_all_tokens(self):
-        self.canvas.delete("token")
         for tok in self.tokens:
+            fp = self._tok_fingerprint(tok, self.zoom, self._cp,
+                                       self._selected_tokens)
+            old_fp = tok.get("_fp")
+            if old_fp == fp and tok.get("ids"):
+                continue  # unchanged — skip
+            # Dirty — delete old items and redraw
+            for iid in tok.get("ids", ()):
+                self.canvas.delete(iid)
             tok.pop("ids", None)
             self._draw_one_token(tok)
+            tok["_fp"] = fp
 
     def _draw_one_token(self, tok: dict):
         style = TOKEN_STYLES.get(tok["type"], TOKEN_STYLES["hero"])
@@ -4599,20 +4618,17 @@ class PlayerMapView:
             return
 
         W, H = cols * cp, rows * cp
-        # Redimensionner le fog mask à la résolution courante
+        # Redimensionner le fog mask UNE SEULE FOIS (réutilisé pour fog + tokens)
         if fog_mask is not None:
             scaled = fog_mask.resize((W, H), Image.NEAREST)
-            arr    = np.array(scaled, dtype=np.uint8)
+            fog_arr = np.array(scaled, dtype=np.uint8)
         else:
-            arr = np.full((H, W), 255, dtype=np.uint8)
+            fog_arr = np.full((H, W), 255, dtype=np.uint8)
         rgba = np.zeros((H, W, 4), dtype=np.uint8)
-        rgba[arr > 0] = _C_FOG_PLAYER
+        rgba[fog_arr > 0] = _C_FOG_PLAYER
         fog_opaque = Image.fromarray(rgba, "RGBA")
 
         # Ensure bg_pil matches the computed (W, H) before compositing.
-        # A mismatch occurs when the grid dimensions (cols/rows/cp) differ
-        # from the size at which bg_pil was last rendered (e.g. after a
-        # resize that regenerated the fog mask but not the tile cache).
         if bg_pil.size != (W, H):
             bg_pil = bg_pil.resize((W, H), Image.LANCZOS)
 
@@ -4634,9 +4650,6 @@ class PlayerMapView:
         for iid in self._tok_drawn:
             self.canvas.delete(iid)
         self._tok_drawn.clear()
-
-        # Pré-calculer le fog array une seule fois pour la visibilité des tokens
-        fog_arr = np.array(fog_mask.resize((W, H), Image.NEAREST)) if fog_mask is not None else None
 
         for tok in tokens:
             c, r = int(tok["col"]), int(tok["row"])

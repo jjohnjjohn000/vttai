@@ -1037,23 +1037,87 @@ class CombatTracker:
 
     # ── Refresh complet de la liste ───────────────────────────────────────────
     def _refresh_list(self):
-        for w in self._inner.winfo_children():
-            w.destroy()
-        self._rows.clear()
-        self._row_widgets.clear()
+        # 1. Établir les uids toujours présents
+        current_uids = {c.uid for c in self.combatants}
 
+        # 2. Détruire les lignes des combatants retirés
+        for uid, rw in list(self._row_widgets.items()):
+            if uid not in current_uids:
+                rw["row_frame"].destroy()
+                del self._row_widgets[uid]
+
+        # 3. Détacher visuellement toutes les lignes pour les réordonner
+        for rw in self._row_widgets.values():
+            rw["row_frame"].pack_forget()
+
+        self._rows.clear()
+
+        # 4. Construire ou réutiliser et empiler les lignes dans le nouvel ordre
         for idx, c in enumerate(self.combatants):
             is_active = (self.combat_active and idx == self.current_idx)
-            self._build_row(c, idx, is_active)
 
-        # update_idletasks() est nécessaire ici : _refresh_list est le chemin
-        # des rebuilds complets (ajout/retrait de combatant, début/fin de combat,
-        # restauration). Sans lui, bbox("all") renvoie None et la scrollregion
-        # reste vide → seule la première ligne est visible.
-        # Ce n'est plus le chemin chaud (le changement de tour passe par
-        # _update_active_rows qui ne touche pas la scrollregion).
+            if c.uid in self._row_widgets:
+                rw = self._row_widgets[c.uid]
+                rf = rw["row_frame"]
+                rf.pack(fill=tk.X, padx=4, pady=2)
+                
+                # Mise à jour des données potentiellement modifiées par script/trie
+                if "init_var" in rw: rw["init_var"].set(str(c.initiative))
+                if "ac_var" in rw:   rw["ac_var"].set(str(c.ac))
+                if "conc_var" in rw: rw["conc_var"].set(c.concentration)
+                if "hp_lbl" in rw:
+                    temp_suffix = f"  +{c.temp_hp}✦" if c.temp_hp > 0 else ""
+                    rw["hp_lbl"].config(
+                        text=f"{max(0, c.hp)} / {c.max_hp}{temp_suffix}",
+                        fg=c.hp_color()
+                    )
+                    rw["draw_hp_bar"](rw["bar_canvas"], c)
+
+                # Variables d'actions
+                acts = rw.get("action_vars", {})
+                if "action" in acts: acts["action"].set(c.action_used)
+                if "bonus" in acts:  acts["bonus"].set(c.bonus_used)
+                if "react" in acts:  acts["react"].set(c.reaction_used)
+                if "move" in acts:   acts["move"].set(str(c.move_used))
+
+                # Mise à jour visuelle _active_ / _inactive_ (incluant création/suppression bouton réinit)
+                self._update_row_visuals(rw, c, is_active)
+            else:
+                self._build_row(c, idx, is_active)
+
         self._canvas.update_idletasks()
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+
+    def _update_row_visuals(self, rw, cb, is_active):
+        """Met à jour l'apparence de la ligne (couleurs, étoiles) sans tout reconstruire"""
+        rf = rw["row_frame"]
+        new_bg = C["row_active"] if cb.is_pc else _lighten(C["row_active"], 0.15)
+        if not is_active:
+            new_bg = C["row_pc"] if cb.is_pc else C["row_npc"]
+            
+        rf.config(highlightbackground=C["border_hot"] if is_active else C["border"],
+                  highlightthickness=2 if is_active else 1)
+        _set_row_bg_recursive(rf, rf.cget("bg"), new_bg)
+
+        skull = " [X]" if cb.is_dead else (" [~]" if cb.is_down else "")
+        star = " *" if is_active else ""
+        rw["name_lbl"].config(text=cb.name + skull + star,
+                              fg=C["fg_gold"] if is_active else cb.color)
+
+        btn = rw.get("reset_btn")
+        if is_active and not btn:
+            btn = tk.Button(rw["act_inner"], text="↺ Réinit. actions",
+                            bg=_darken(C["gold"], 0.3), fg=C["gold"],
+                            font=("Consolas", 7, "bold"), relief="flat",
+                            padx=4, cursor="hand2",
+                            command=lambda c=cb: (c.reset_turn_resources(),
+                                                  self._refresh_list()))
+            btn.pack(anchor="w", pady=(2, 0))
+            rw["reset_btn"] = btn
+        elif not is_active and btn:
+            try: btn.destroy()
+            except Exception: pass
+            rw["reset_btn"] = None
 
     def _build_row(self, c: Combatant, idx: int, active: bool):
         if c.is_pc:
@@ -1324,7 +1388,7 @@ class CombatTracker:
 
         # ── Col 6 : Actions ───────────────────────────────────────────────
         act_f = _col(162)
-        act_inner = self._build_action_economy(act_f, c, row_bg, active)
+        act_inner, action_vars = self._build_action_economy(act_f, c, row_bg, active)
 
         # Bouton réinit — uniquement sur la ligne active ; géré par _update_active_rows
         if active:
@@ -1349,12 +1413,17 @@ class CombatTracker:
             "reset_btn":   reset_btn,
             "is_pc":       c.is_pc,
             "combatant":   c,
+            "init_var":    init_var,
+            "ac_var":      ac_var,
+            "action_vars": action_vars,  # dict of action vars
         }
 
         # ── Col 7 : Concentration ─────────────────────────────────────────
         conc_f = _col(58)
 
         conc_var = tk.BooleanVar(value=c.concentration)
+        self._row_widgets[c.uid]["conc_var"] = conc_var  # inject it
+
         conc_cb  = tk.Checkbutton(conc_f, variable=conc_var,
                                   text="Conc", bg=row_bg,
                                   fg=C["conc"] if c.concentration else C["fg_dim"],
@@ -1458,12 +1527,12 @@ class CombatTracker:
 
         r1 = tk.Frame(inner, bg=row_bg)
         r1.pack(fill=tk.X)
-        check_row(r1, "✦ Action",       C["gold"],         "action_used")
-        check_row(r1, "◈ Bonus",        "#d06800",         "bonus_used")
+        v_act = check_row(r1, "✦ Action",       C["gold"],         "action_used")
+        v_bon = check_row(r1, "◈ Bonus",        "#d06800",         "bonus_used")
 
         r2 = tk.Frame(inner, bg=row_bg)
         r2.pack(fill=tk.X)
-        check_row(r2, "↺ Réaction",     C["blue_bright"],  "reaction_used")
+        v_rea = check_row(r2, "↺ Réaction",     C["blue_bright"],  "reaction_used")
 
         # Mouvement
         r3 = tk.Frame(inner, bg=row_bg)
@@ -1491,7 +1560,7 @@ class CombatTracker:
 
         # Le bouton "↺ Réinit. actions" est ajouté par _build_row (actif)
         # ou par _update_active_rows (changement de tour) — pas ici.
-        return inner
+        return inner, {"action": v_act, "bonus": v_bon, "react": v_rea, "move": mv_var}
 
     def _mini_death_saves(self, parent, c: Combatant):
         """Affiche les jets de mort compacts sous la barre de vie."""

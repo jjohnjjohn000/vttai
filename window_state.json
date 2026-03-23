@@ -1,35 +1,34 @@
 {
   "main": {
-    "w": 1283,
+    "w": 1274,
     "h": 1016,
-    "x": 2252,
+    "x": 2266,
     "y": 1099
   },
   "char_Kaelen": {
     "w": 300,
     "h": 520,
-    "x": 0,
-    "y": 0
+    "x": 1966,
+    "y": 1099
   },
   "char_Elara": {
-    "w": 400,
-    "h": 520,
-    "x": 1965,
-    "y": 1605
+    "w": 300,
+    "h": 576,
+    "x": 1966,
+    "y": 1539
   },
   "char_Thorne": {
-    "w": 280,
-    "h": 460,
-    "x": 3559,
-    "y": 1106
+    "w": 300,
+    "h": 520,
+    "x": 3540,
+    "y": 1099
   },
   "char_Lyra": {
     "w": 300,
-    "h": 520,
-    "x": 3559,
-    "y": 1605
+    "h": 575,
+    "x": 3540,
+    "y": 1540
   },
-  "_open_char_Thorne": true,
   "modal_skill_check": {
     "w": 560,
     "h": 660,
@@ -57,8 +56,8 @@
   "dice_roller": {
     "w": 444,
     "h": 420,
-    "x": 1943,
-    "y": 575
+    "x": 1429,
+    "y": 1654
   },
   "calendar": {
     "w": 420,
@@ -69,8 +68,8 @@
   "monster_Ismark": {
     "w": 620,
     "h": 780,
-    "x": 2050,
-    "y": 1194
+    "x": 2020,
+    "y": 1221
   },
   "monster_Morgantha": {
     "w": 620,
@@ -79,10 +78,10 @@
     "y": 0
   },
   "modal_npc_manager": {
-    "w": 680,
+    "w": 860,
     "h": 520,
-    "x": 0,
-    "y": 0
+    "x": 2286,
+    "y": 1363
   },
   "modal_config": {
     "w": 893,
@@ -2615,8 +2614,7 @@
       }
     ]
   },
-  "_open_char_Elara": true,
-  "active_map_name": "Argynvostholt",
+  "active_map_name": "Barovie",
   "campaign_log_viewer": {
     "w": 1016,
     "h": 614,
@@ -2626,9 +2624,30 @@
   "inventory": {
     "w": 900,
     "h": 640,
-    "x": 0,
+    "x": 2101,
+    "y": 1202
+  },
+  "_open_char_Kaelen": true,
+  "_open_char_Elara": true,
+  "_open_char_Thorne": true,
+  "_open_char_Lyra": true,
+  "monster_Ireena": {
+    "w": 660,
+    "h": 840,
+    "x": 2131,
+    "y": 1186
+  },
+  "monster_Madam Eva": {
+    "w": 660,
+    "h": 840,
+    "x": 2016,
     "y": 0
   },
-  "_open_char_Lyra": true,
-  "_open_char_Kaelen": true
+  "monster_Ezmerelda": {
+    "w": 660,
+    "h": 840,
+    "x": 2011,
+    "y": 0
+  },
+  "_open_combat_map": true
 }

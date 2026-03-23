@@ -1,19 +1,26 @@
 """
-npc_bestiary_panel.py
-─────────────────────
-Widget qui affiche les PNJs actuellement dans le groupe et permet d'ouvrir
-leur fiche de monstre (tirée du bestiary D&D 5e).
+npc_bestiary_panel.py — Gestionnaire de PNJs et bestiary D&D 5e.
+──────────────────────────────────────────────────────────────────
+Fonctionnalités :
+  • GroupNPCPanel  : liste des PNJs du groupe dans la sidebar
+      - Ajout / suppression / édition PV en ligne
+      - 🎭 Bouton "Parler en tant que" : LLM génère la réplique du PNJ
+      - 📋 Bouton raccourci pour ouvrir la fiche
+  • MonsterSheetWindow : fiche complète du monstre (bestiary 5etools)
+      - Sélecteur de monstre avec autocomplétion
+      - Zone image NPC : charger, afficher, envoyer aux agents multimodaux
+      - Panneau "Parler en tant que" : prompt MJ → LLM → réplique in-character
+      - Jets COMPLETS : 6 stats, 6 sauvegardes (toutes), toutes compétences,
+        initiative, toutes actions/attaques/DD
 
-Structure d'un PNJ du groupe dans campaign_state.json :
+Structure PNJ dans campaign_state.json → group_npcs :
 {
     "name": "Ismark",
-    "voice": "fr-FR-AlainNeural",
-    "speed": "+0%",
     "color": "#a0c4ff",
-    "bestiary_name": "Guard",      ← nom dans le bestiary (optionnel)
-    "bestiary_source": "MM",       ← source (optionnel)
-    "hp_current": 11,              ← PV actuels (optionnel)
-    "notes": "Frère d'Ireena…"     ← notes MJ (optionnel)
+    "bestiary_name": "Guard",
+    "hp_current": 11,
+    "notes": "Frère d'Ireena…",
+    "image_path": "npc_images/Ismark.png"   ← optionnel
 }
 """
 
@@ -21,13 +28,166 @@ import json
 import copy as _copy_module
 import glob
 import os
+import threading
+import base64 as _b64
 import tkinter as tk
-from tkinter import scrolledtext
+from tkinter import scrolledtext, filedialog, messagebox
 import re
 
 # ─── Répertoire du bestiary ───────────────────────────────────────────────────
 _BESTIARY_DIR   = os.path.join(os.path.dirname(__file__), "bestiary")
 _LEGENDARY_FILE = os.path.join(_BESTIARY_DIR, "legendarygroups.json")
+
+# ─── Mapping compétences → caractéristique de base ────────────────────────────
+_SKILL_TO_STAT = {
+    "athletics":      "str",
+    "acrobatics":     "dex", "sleight of hand": "dex", "stealth":      "dex",
+    "arcana":         "int", "history":         "int", "investigation":"int",
+    "nature":         "int", "religion":        "int",
+    "animal handling":"wis", "insight":         "wis", "medicine":     "wis",
+    "perception":     "wis", "survival":        "wis",
+    "deception":      "cha", "intimidation":    "cha", "performance":  "cha",
+    "persuasion":     "cha",
+}
+_SKILL_FR = {
+    "athletics":       "Athlétisme",    "acrobatics":      "Acrobaties",
+    "sleight of hand": "Escamotage",    "stealth":         "Discrétion",
+    "arcana":          "Arcanes",       "history":         "Histoire",
+    "investigation":   "Investigation", "nature":          "Nature",
+    "religion":        "Religion",      "animal handling": "Dressage",
+    "insight":         "Perspicacité",  "medicine":        "Médecine",
+    "perception":      "Perception",    "survival":        "Survie",
+    "deception":       "Tromperie",     "intimidation":    "Intimidation",
+    "performance":     "Représentation","persuasion":      "Persuasion",
+}
+_STAT_COLORS = {
+    "str": "#e57373", "dex": "#81c784", "con": "#ffb74d",
+    "int": "#64b5f6", "wis": "#ce93d8", "cha": "#f06292",
+}
+
+# ─── Utilitaires images NPC ───────────────────────────────────────────────────
+
+def _npc_images_dir() -> str:
+    """Retourne le dossier de stockage des images NPC (créé si absent)."""
+    try:
+        from app_config import get_campaign_name
+        camp = get_campaign_name()
+    except Exception:
+        camp = "campagne"
+    d = os.path.join("campagne", camp, "npc_images")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _npc_image_path(npc_name: str) -> str:
+    """Chemin vers l'image PNG d'un PNJ."""
+    safe = re.sub(r'[^\w\-]', '_', npc_name)
+    return os.path.join(_npc_images_dir(), f"{safe}.png")
+
+
+def load_npc_image_bytes(npc_name: str) -> bytes | None:
+    """Charge les bytes de l'image NPC depuis le disque, ou None."""
+    path = _npc_image_path(npc_name)
+    try:
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                return f.read()
+    except Exception:
+        pass
+    return None
+
+
+def save_npc_image_bytes(npc_name: str, data: bytes):
+    """Sauvegarde les bytes d'image PNG pour un PNJ."""
+    try:
+        with open(_npc_image_path(npc_name), "wb") as f:
+            f.write(data)
+    except Exception as e:
+        print(f"[NPC Image] Erreur sauvegarde : {e}")
+
+
+# ─── LLM : parler en tant que PNJ ────────────────────────────────────────────
+
+def _build_npc_persona(npc_name: str, monster: dict | None) -> str:
+    """Construit le system prompt de persona pour un PNJ."""
+    if monster:
+        m_type   = _fmt_type(monster.get("type", "créature"))
+        size_map = {"T": "Très petit", "S": "Petit", "M": "Moyen",
+                    "L": "Grand",      "H": "Très grand", "G": "Gigantesque"}
+        align_map = {"L": "Loyal", "N": "Neutre", "C": "Chaotique",
+                     "G": "Bon",   "E": "Mauvais", "A": "Quelconque", "U": "Sans alignement"}
+        sizes     = [size_map.get(s, s) for s in monster.get("size", [])]
+        align_raw = monster.get("alignment", [])
+        align_txt = " ".join(align_map.get(a, a) for a in align_raw)
+        langs     = monster.get("languages", [])
+        langs_str = ", ".join(langs) if langs else "inconnu"
+
+        traits_txt = ""
+        for t in monster.get("trait", [])[:3]:
+            traits_txt += f"\n- {t.get('name','?')} : {_fmt_entries(t.get('entries', []))[:120]}"
+
+        cr = _fmt_cr(monster.get("cr", "?"))
+        persona = (
+            f"Tu incarnes {npc_name}, un(e) {' '.join(sizes)} {m_type}, {align_txt} "
+            f"(FP {cr}). Langues : {langs_str}."
+        )
+        if traits_txt:
+            persona += f"\nTraits notables :{traits_txt}"
+    else:
+        persona = f"Tu incarnes {npc_name}, un PNJ de l'univers de la campagne."
+
+    persona += (
+        "\n\nRègles absolues :"
+        "\n• Parle TOUJOURS à la première personne, en français, dans le ton du personnage."
+        "\n• 2-4 phrases maximum. Sois vivant, cohérent avec l'alignement et le type."
+        "\n• N'explique jamais que tu es une IA. Ne casse jamais le 4e mur."
+        "\n• Adapte le registre : un garde parle brièvement, un vampire avec morgue, etc."
+    )
+    return persona
+
+
+def speak_as_npc(npc_name: str, monster: dict | None, prompt: str,
+                 msg_queue, audio_queue=None, color: str = "#a5d6a7",
+                 scene_context: str = ""):
+    """
+    Lance un thread daemon qui appelle le LLM pour générer une réplique du PNJ.
+    Résultat envoyé dans msg_queue + audio_queue (si fourni).
+    """
+    def _run():
+        try:
+            import autogen as _ag
+            from llm_config import build_llm_config, _default_model
+            from app_config import get_chronicler_config
+
+            chron = get_chronicler_config()
+            cfg   = build_llm_config(
+                chron.get("model", _default_model),
+                temperature=chron.get("temperature", 0.75),
+            )
+            client  = _ag.OpenAIWrapper(config_list=cfg["config_list"])
+            persona = _build_npc_persona(npc_name, monster)
+
+            user_msg = prompt.strip()
+            if scene_context.strip():
+                user_msg = f"[Contexte de scène : {scene_context.strip()}]\n\n{user_msg}"
+
+            response = client.create(messages=[
+                {"role": "system", "content": persona},
+                {"role": "user",   "content": user_msg or "Introduis-toi brièvement."},
+            ])
+            text = (response.choices[0].message.content or "").strip()
+            if text:
+                msg_queue.put({"sender": npc_name, "text": text, "color": color})
+                if audio_queue:
+                    audio_queue.put((text, npc_name))
+        except Exception as e:
+            msg_queue.put({
+                "sender": f"⚠ PNJ",
+                "text":   f"Erreur LLM pour {npc_name} : {e}",
+                "color":  "#F44336",
+            })
+
+    threading.Thread(target=_run, daemon=True, name=f"npc-speak-{npc_name}").start()
 
 # ─── Cache des données du bestiary ───────────────────────────────────────────
 _BESTIARY_DATA: dict[str, dict] = {}    # name.lower() → monster dict (résolu)
@@ -448,20 +608,30 @@ class MonsterSheetWindow:
 
     def __init__(self, root, npc_name: str, bestiary_name: str | None = None,
                  on_select_callback=None, win_state: dict = None, track_fn=None,
-                 chat_queue=None):
+                 chat_queue=None, audio_queue=None, npc_color: str = "#e0e0e0",
+                 get_scene_fn=None):
         """
-        root            : fenêtre parente Tk
-        npc_name        : nom du PNJ (pour le titre)
-        bestiary_name   : nom dans le bestiary (si déjà sélectionné)
-        on_select_callback(bestiary_name: str) : appelé quand le MJ sélectionne un monstre
-        win_state       : dict de persistance de géométrie
-        track_fn        : fonction _track_window de DnDApp
-        chat_queue      : queue.Queue — jets de dés envoyés dans le chat
+        root              : fenêtre parente Tk
+        npc_name          : nom du PNJ (pour le titre)
+        bestiary_name     : nom dans le bestiary (si déjà sélectionné)
+        on_select_callback(bestiary_name) : appelé quand le MJ sélectionne un monstre
+        win_state         : dict de persistance de géométrie
+        track_fn          : fonction _track_window de DnDApp
+        chat_queue        : queue.Queue — jets et répliques envoyés dans le chat
+        audio_queue       : queue.Queue — texte TTS (optionnel)
+        npc_color         : couleur hex du PNJ dans le chat
+        get_scene_fn      : callable → str (contexte de scène, optionnel)
         """
         self.root = root
         self.npc_name = npc_name
         self.on_select_callback = on_select_callback
-        self.chat_queue = chat_queue
+        self.chat_queue  = chat_queue
+        self.audio_queue = audio_queue
+        self.npc_color   = npc_color
+        self.get_scene_fn = get_scene_fn
+        self._current_monster: dict | None = None
+        self._img_tk = None       # référence PhotoImage anti-GC
+        self._img_bytes: bytes | None = load_npc_image_bytes(npc_name)
 
         _load_bestiary()
 
@@ -469,19 +639,19 @@ class MonsterSheetWindow:
         win.title(f"📋 {npc_name}" + (f" — {bestiary_name}" if bestiary_name else ""))
         win.configure(bg=self.BG)
         win.resizable(True, True)
-        win.minsize(560, 600)
-        win.geometry("620x780")
+        win.minsize(580, 640)
+        win.geometry("660x840")
         self.win = win
 
         if track_fn:
             track_fn(f"monster_{npc_name}", win)
 
         # ── Layout principal ─────────────────────────────────────────────────
-        # Barre de recherche en haut
+        # 1. Barre de recherche (fixe)
         search_bar = tk.Frame(win, bg=self.BG2, pady=6)
         search_bar.pack(fill=tk.X, padx=0, pady=0)
 
-        tk.Label(search_bar, text="🔍 Monstre :", bg=self.BG2, fg=self.FG_MID,
+        tk.Label(search_bar, text="Monstre :", bg=self.BG2, fg=self.FG_MID,
                  font=("Arial", 9)).pack(side=tk.LEFT, padx=(10, 4))
 
         self._search_var = tk.StringVar(value=bestiary_name or "")
@@ -493,7 +663,7 @@ class MonsterSheetWindow:
         search_entry.bind("<Return>",     self._on_search_confirm)
 
         self._select_btn = tk.Button(
-            search_bar, text="✅ Sélectionner",
+            search_bar, text="Selectionner",
             bg="#1a3a1a", fg=self.GREEN,
             font=("Arial", 9, "bold"), relief="flat", padx=8,
             command=self._confirm_selection
@@ -505,7 +675,15 @@ class MonsterSheetWindow:
         self._suggest_labels: list[tk.Label] = []
         self._suggest_visible = False
 
-        # Corps scrollable de la fiche
+        # 2. Zone fixe : image NPC + parler en tant que
+        self._fixed_top = tk.Frame(win, bg=self.BG2)
+        self._fixed_top.pack(fill=tk.X)
+        self._build_image_panel(self._fixed_top)
+        self._speak_frame = tk.Frame(self._fixed_top, bg="#0e1a10")
+        self._speak_frame.pack(fill=tk.X)
+        self._build_speak_as_content(self._speak_frame, monster=None)
+
+        # 3. Corps scrollable de la fiche
         body_outer = tk.Frame(win, bg=self.BG)
         body_outer.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
 
@@ -521,10 +699,9 @@ class MonsterSheetWindow:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Molette
-        self._canvas.bind("<MouseWheel>",
-                          lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-        self._inner.bind("<MouseWheel>",
-                         lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        for widget in (self._canvas, self._inner):
+            widget.bind("<MouseWheel>",
+                        lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
         # Affiche la fiche si un monstre est déjà connu
         if bestiary_name:
@@ -532,7 +709,240 @@ class MonsterSheetWindow:
         else:
             self._show_empty()
 
+    # ── Panneau image NPC ─────────────────────────────────────────────────────
+
+    def _build_image_panel(self, parent):
+        """Zone image NPC : charger, afficher, envoyer aux agents multimodaux."""
+        frame = tk.Frame(parent, bg=self.BG2, pady=4)
+        frame.pack(fill=tk.X, padx=0)
+
+        # -- Miniature
+        self._img_label = tk.Label(frame, bg=self.BG2, cursor="hand2",
+                                   text="📷 Aucune image",
+                                   fg=self.FG_DIM, font=("Consolas", 8))
+        self._img_label.pack(side=tk.LEFT, padx=8)
+        self._img_label.bind("<Button-1>", lambda e: self._browse_image())
+        self._refresh_image_thumbnail()
+
+        btn_col = tk.Frame(frame, bg=self.BG2)
+        btn_col.pack(side=tk.LEFT, fill=tk.Y, padx=4)
+
+        def _btn(txt, bg, fg, cmd):
+            tk.Button(btn_col, text=txt, bg=bg, fg=fg, relief="flat",
+                      font=("Arial", 8, "bold"), padx=6, pady=2,
+                      command=cmd).pack(fill=tk.X, pady=1)
+
+        _btn("📂 Charger image", "#1a2030", self.BLUE,  self._browse_image)
+        _btn("✕ Supprimer",     "#200a0a", "#e57373",   self._clear_image)
+        _btn("📡 Envoyer aux agents", "#0a2010", self.GREEN, self._send_image_to_agents)
+
+        tk.Frame(parent, bg="#2a2a3a", height=1).pack(fill=tk.X)
+
+    def _refresh_image_thumbnail(self):
+        """Affiche ou met à jour la miniature dans l'image label."""
+        lbl = getattr(self, "_img_label", None)
+        if lbl is None:
+            return
+        data = self._img_bytes
+        if not data:
+            lbl.config(image="", text="📷 Aucune image", fg=self.FG_DIM, width=10)
+            self._img_tk = None
+            return
+        try:
+            from PIL import Image, ImageTk
+            import io
+            img = Image.open(io.BytesIO(data)).convert("RGBA")
+            img.thumbnail((100, 100))
+            self._img_tk = ImageTk.PhotoImage(img)
+            lbl.config(image=self._img_tk, text="", width=100, height=100)
+        except Exception:
+            lbl.config(image="", text=f"🖼 image ({len(data)//1024}KB)", fg=self.GREEN)
+
+    def _browse_image(self):
+        """Ouvre un sélecteur de fichier pour charger une image NPC."""
+        path = filedialog.askopenfilename(
+            parent=self.win,
+            title=f"Image pour {self.npc_name}",
+            filetypes=[("Images", "*.png *.jpg *.jpeg *.webp *.gif"), ("Tous", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            from PIL import Image
+            import io
+            img = Image.open(path).convert("RGBA")
+            img.thumbnail((512, 512))
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            self._img_bytes = buf.getvalue()
+            save_npc_image_bytes(self.npc_name, self._img_bytes)
+            self._refresh_image_thumbnail()
+        except Exception as e:
+            messagebox.showerror("Image", f"Impossible de charger l'image : {e}",
+                                 parent=self.win)
+
+    def _clear_image(self):
+        self._img_bytes = None
+        path = _npc_image_path(self.npc_name)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+        self._refresh_image_thumbnail()
+
+    def _send_image_to_agents(self):
+        """Envoie l'image NPC à tous les agents multimodaux (Gemini)."""
+        if not self._img_bytes:
+            messagebox.showinfo("Image", "Aucune image définie pour ce PNJ.",
+                                parent=self.win)
+            return
+        if not self.chat_queue:
+            return
+        b64      = _b64.b64encode(self._img_bytes).decode()
+        npc_name = self.npc_name
+        msg_queue = self.chat_queue
+        audio_q   = self.audio_queue
+
+        self.chat_queue.put({
+            "sender": "🖼️ Système",
+            "text":   f"📸 Image de {npc_name} envoyée aux agents multimodaux.",
+            "color":  "#81c784",
+        })
+
+        def _run():
+            try:
+                import autogen as _ag
+                from app_config import get_agent_config
+                from llm_config import build_llm_config
+
+                monster = self._current_monster
+                m_type  = _fmt_type(monster.get("type", "personnage")) if monster else "personnage"
+
+                # On envoie à tous les agents Gemini (multimodaux)
+                for agent_name in ["Kaelen", "Elara", "Thorne", "Lyra"]:
+                    acfg  = get_agent_config(agent_name)
+                    model = acfg.get("model", "")
+                    if not model.startswith("gemini-"):
+                        continue
+                    llm_cfg = build_llm_config(model, temperature=acfg.get("temperature", 0.7))
+                    client  = _ag.OpenAIWrapper(config_list=llm_cfg["config_list"])
+
+                    prompt = (
+                        f"[IMAGE NPC — CONTEXTE PRIVÉ]\n"
+                        f"Le MJ te montre une illustration de {npc_name} ({m_type}).\n"
+                        f"En 1-2 phrases courtes de roleplay, décris la première impression "
+                        f"que {agent_name} ressent en apercevant ce personnage. "
+                        f"Reste dans le personnage. Ne pose pas de question."
+                    )
+                    try:
+                        resp = client.create(messages=[{
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {
+                                    "url": f"data:image/png;base64,{b64}"
+                                }},
+                            ]
+                        }])
+                        text = (resp.choices[0].message.content or "").strip()
+                        if text:
+                            msg_queue.put({"sender": agent_name, "text": text,
+                                           "color": "#e0e0e0"})
+                            if audio_q:
+                                audio_q.put((text, agent_name))
+                    except Exception as e:
+                        msg_queue.put({"sender": "⚠ Image", "text": str(e),
+                                       "color": "#F44336"})
+            except Exception as e:
+                msg_queue.put({"sender": "⚠ Image", "text": str(e), "color": "#F44336"})
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    # ── Panneau "Parler en tant que" ──────────────────────────────────────────
+
+    def _build_speak_as_panel(self, parent, monster: dict | None):
+        """Construit le panneau dans un container donné (legacy compat — délègue)."""
+        self._build_speak_as_content(parent, monster)
+
+    def _build_speak_as_content(self, container: tk.Frame, monster: dict | None):
+        """Construit ou reconstruit le contenu du panneau 'Parler en tant que'."""
+        for w in container.winfo_children():
+            w.destroy()
+
+        container.configure(bg="#0e1a10")
+
+        tk.Label(container, text=f"Parler en tant que {self.npc_name} :",
+                 bg="#0e1a10", fg="#a5d6a7", font=("Arial", 9, "bold")
+                 ).pack(anchor="w", padx=10, pady=(4, 2))
+
+        row = tk.Frame(container, bg="#0e1a10")
+        row.pack(fill=tk.X, padx=10, pady=(0, 6))
+
+        self._speak_var = tk.StringVar()
+        entry = tk.Entry(row, textvariable=self._speak_var,
+                         bg="#0d1f0d", fg="white", font=("Consolas", 10),
+                         insertbackground="white", relief="flat")
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5, padx=(0, 6))
+        entry.insert(0, "Que dites-vous ?")
+        entry.bind("<FocusIn>",
+                   lambda e: (self._speak_var.get() == "Que dites-vous ?"
+                              and (self._speak_var.set(""), None)))
+        entry.bind("<Return>", lambda e, m=monster: self._do_speak(m))
+
+        self._scene_ctx_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(row, text="Scène", variable=self._scene_ctx_var,
+                       bg="#0e1a10", fg="#7aad7a", selectcolor="#0e1a10",
+                       activebackground="#0e1a10", font=("Arial", 8)
+                       ).pack(side=tk.LEFT, padx=(0, 4))
+
+        tk.Button(row, text="Generer", bg="#1a3a1a", fg="#81c784",
+                  font=("Arial", 9, "bold"), relief="flat", padx=10, pady=4,
+                  command=lambda m=monster: self._do_speak(m)
+                  ).pack(side=tk.LEFT)
+
+        if monster:
+            sub = (f"{_fmt_type(monster.get('type','?'))}  "
+                   f"FP {_fmt_cr(monster.get('cr','?'))}  "
+                   f"Align.: {' '.join(monster.get('alignment', []))}")
+            tk.Label(container, text=sub, bg="#0e1a10", fg="#3a5a3a",
+                     font=("Consolas", 7)).pack(anchor="w", padx=10, pady=(0, 4))
+
+        tk.Frame(container, bg="#2a3a2a", height=1).pack(fill=tk.X)
+
+    def _refresh_speak_panel(self, monster: dict | None):
+        """Met à jour le panneau 'Parler en tant que' quand le monstre change."""
+        if hasattr(self, "_speak_frame") and self._speak_frame.winfo_exists():
+            self._build_speak_as_content(self._speak_frame, monster)
+
+    def _do_speak(self, monster: dict | None):
+        """Déclenche la génération de réplique NPC via LLM."""
+        if not self.chat_queue:
+            return
+        prompt = self._speak_var.get().strip()
+        if not prompt or prompt == "Que dites-vous ?":
+            prompt = ""
+
+        scene = ""
+        if self._scene_ctx_var.get() and self.get_scene_fn:
+            try:
+                scene = self.get_scene_fn()
+            except Exception:
+                pass
+
+        self.chat_queue.put({
+            "sender": "🎭 Système",
+            "text":   f"{self.npc_name} prend la parole…",
+            "color":  "#555566",
+        })
+        speak_as_npc(
+            self.npc_name, monster, prompt,
+            self.chat_queue, self.audio_queue,
+            color=self.npc_color, scene_context=scene,
+        )
+
     # ── Recherche ─────────────────────────────────────────────────────────────
+
 
     def _on_search_key(self, event=None):
         q = self._search_var.get().strip()
@@ -605,10 +1015,12 @@ class MonsterSheetWindow:
 
     def _show_empty(self):
         self._clear_body()
-        tk.Label(self._inner, text="🔍 Recherchez un monstre ci-dessus",
+        self._current_monster = None
+        self._refresh_speak_panel(None)
+        tk.Label(self._inner, text="Recherchez un monstre ci-dessus",
                  bg=self.BG, fg=self.FG_DIM, font=("Consolas", 10, "italic"),
-                 pady=40).pack()
-        tk.Label(self._inner, text="Tapez un nom et appuyez sur Entrée",
+                 pady=30).pack()
+        tk.Label(self._inner, text="Tapez un nom et appuyez sur Entree",
                  bg=self.BG, fg=self.FG_DIM, font=("Consolas", 9)).pack()
 
     def _sep(self, color="#2a2a3a", height=1, pady=4):
@@ -793,10 +1205,16 @@ class MonsterSheetWindow:
             _btn(f"DD {dc_val} — {save_lbl}", "#0a1a30", "#64b5f6", _show_dc)
 
     def _skill_roll_widget(self, parent, monster: dict, row_bg: str):
-        """Ligne de boutons jets de compétences / sauvegardes / caractéristiques."""
+        """
+        Bloc interactif complet :
+          • Initiative
+          • 6 caractéristiques brutes
+          • 6 sauvegardes (avec bonus proficiency si présent dans fiche, sinon stat seule)
+          • Toutes les compétences (proficiency si dans fiche, sinon stat de base)
+        """
         import random as _rnd
 
-        STAT_MAP = {
+        STAT_MAP_FR = {
             "str": ("FOR", "#e57373"), "dex": ("DEX", "#81c784"),
             "con": ("CON", "#ffb74d"), "int": ("INT", "#64b5f6"),
             "wis": ("SAG", "#ce93d8"), "cha": ("CHA", "#f06292"),
@@ -806,99 +1224,105 @@ class MonsterSheetWindow:
             "int": "INT", "wis": "SAG", "cha": "CHA",
         }
 
-        # Frame scrollable horizontalement (wraplength via grid)
         outer = tk.Frame(parent, bg=row_bg)
-        outer.pack(fill=tk.X, padx=8, pady=(0, 6))
+        outer.pack(fill=tk.X, padx=8, pady=(0, 8))
 
-        tk.Label(outer, text="JETS RAPIDES", bg=row_bg, fg=self.FG_DIM,
-                 font=("Consolas", 7, "bold")).pack(anchor="w", padx=2)
+        def _section_lbl(txt):
+            tk.Label(outer, text=txt, bg=row_bg, fg=self.FG_DIM,
+                     font=("Consolas", 7, "bold")).pack(anchor="w", padx=2, pady=(6, 1))
 
-        btn_wrap = tk.Frame(outer, bg=row_bg)
-        btn_wrap.pack(fill=tk.X)
+        def _btn_wrap():
+            f = tk.Frame(outer, bg=row_bg)
+            f.pack(fill=tk.X)
+            return f
 
-        def _qbtn(text, bg, fg, cmd):
-            tk.Button(btn_wrap, text=text, bg=bg, fg=fg,
-                      font=("Consolas", 7, "bold"), relief="flat",
-                      padx=5, pady=1, cursor="hand2",
-                      command=cmd).pack(side=tk.LEFT, padx=2, pady=2)
+        def _qbtn(wrap, text, bg, fg, cmd):
+            b = tk.Button(wrap, text=text, bg=bg, fg=fg,
+                          font=("Consolas", 7, "bold"), relief="flat",
+                          padx=5, pady=2, cursor="hand2", command=cmd)
+            b.pack(side=tk.LEFT, padx=2, pady=1)
 
-        # Caractéristiques brutes
-        for key, (label, color) in STAT_MAP.items():
+        def _roll_d20(bonus: int, label: str, color: str):
+            d20  = _rnd.randint(1, 20)
+            tot  = d20 + bonus
+            sign = "+" if bonus >= 0 else ""
+            crit = " 🎯 CRITIQUE!" if d20 == 20 else (" ☠ FUMBLE" if d20 == 1 else "")
+            msg  = f"**{label}** : d20({d20}){sign}{bonus} = **{tot}**{crit}"
+            self._send_to_chat(msg, color)
+
+        # ── Initiative ───────────────────────────────────────────────────────
+        _section_lbl("INITIATIVE")
+        w = _btn_wrap()
+        dex_val = monster.get("dex", 10)
+        dex_mod = (dex_val - 10) // 2
+        sign    = "+" if dex_mod >= 0 else ""
+        _qbtn(w, f"Initiative {sign}{dex_mod}", "#101820", "#81c784",
+              lambda m=dex_mod: _roll_d20(m, "Initiative", "#81c784"))
+
+        # ── Caractéristiques ─────────────────────────────────────────────────
+        _section_lbl("CARACTÉRISTIQUES")
+        w = _btn_wrap()
+        for key, (label, color) in STAT_MAP_FR.items():
             val = monster.get(key, 10)
             mod = (val - 10) // 2
-            sign = "+" if mod >= 0 else ""
+            s   = "+" if mod >= 0 else ""
+            _qbtn(w, f"{label} {s}{mod}", "#1a1a2a", color,
+                  lambda m=mod, l=f"Jet de {label}", c=color: _roll_d20(m, l, c))
 
-            def _roll_stat(k=key, lbl=label, m=mod, c=color):
-                d20  = _rnd.randint(1, 20)
-                tot  = d20 + m
-                s    = "+" if m >= 0 else ""
-                msg  = f"**Jet de {lbl}**  d20({d20}){s}{m} = **{tot}**"
-                self._send_to_chat(msg, c)
+        # ── Sauvegardes (TOUTES, avec proficiency si dispo) ──────────────────
+        _section_lbl("SAUVEGARDES")
+        w = _btn_wrap()
+        saves_dict = monster.get("save", {})
+        for key, (label, color) in STAT_MAP_FR.items():
+            if key in saves_dict:
+                # Proficiency explicite dans la fiche
+                import re as _re4
+                m4 = _re4.search(r'([+-]?\d+)', str(saves_dict[key]))
+                bonus = int(m4.group(1)) if m4 else 0
+                star  = "★"
+            else:
+                # Pas de proficiency — bonus = mod de stat seul
+                bonus = (monster.get(key, 10) - 10) // 2
+                star  = ""
+            sign = "+" if bonus >= 0 else ""
+            fr   = SAVE_FR.get(key, key.upper())
+            _qbtn(w, f"Sauv.{fr}{star} {sign}{bonus}", "#0a1a0a", color,
+                  lambda b=bonus, l=f"Sauvegarde {fr}", c=color: _roll_d20(b, l, c))
 
-            _qbtn(f"{label} {sign}{mod}", "#1a1a2a", color, _roll_stat)
+        # ── Compétences (TOUTES, avec proficiency si dispo) ──────────────────
+        _section_lbl("COMPÉTENCES")
+        skills_dict = monster.get("skill", {})
 
-        # Sauvegardes (si présentes dans la fiche)
-        saves = monster.get("save", {})
-        if saves:
-            tk.Label(outer, text="SAUVEGARDES", bg=row_bg, fg=self.FG_DIM,
-                     font=("Consolas", 7, "bold")).pack(anchor="w", padx=2, pady=(4,0))
-            btn_wrap2 = tk.Frame(outer, bg=row_bg)
-            btn_wrap2.pack(fill=tk.X)
-            for k, v_str in saves.items():
-                import re as _re2
-                m2 = _re2.search(r'([+-]?\d+)', str(v_str))
-                bonus = int(m2.group(1)) if m2 else 0
-                label, color = SAVE_FR.get(k, (k.upper(), self.FG)), STAT_MAP.get(k, (k, self.FG))[1]
-                sign2 = "+" if bonus >= 0 else ""
+        # On regroupe les compétences par stat pour garder l'ordre logique
+        import re as _re5
+        for stat_key in ("str", "dex", "int", "wis", "cha"):
+            color = STAT_MAP_FR[stat_key][1]
+            stat_val = monster.get(stat_key, 10)
+            stat_mod = (stat_val - 10) // 2
+            row_skills = [(k, v) for k, v in _SKILL_TO_STAT.items() if v == stat_key]
+            if not row_skills:
+                continue
+            w = _btn_wrap()
+            for skill_en, _ in sorted(row_skills, key=lambda x: x[0]):
+                fr_name = _SKILL_FR.get(skill_en, skill_en.capitalize())
+                # Cherche le bonus dans la fiche (5etools stocke "perception": "+5" etc.)
+                match_key = next(
+                    (k for k in skills_dict
+                     if k.lower().replace(" ", "") == skill_en.replace(" ", "")), None
+                )
+                if match_key:
+                    m5 = _re5.search(r'([+-]?\d+)', str(skills_dict[match_key]))
+                    bonus = int(m5.group(1)) if m5 else stat_mod
+                    star  = "★"
+                else:
+                    bonus = stat_mod
+                    star  = ""
+                sign = "+" if bonus >= 0 else ""
+                short_fr = fr_name[:10]
+                _qbtn(w, f"{short_fr}{star} {sign}{bonus}", "#0d0d1a", color,
+                      lambda b=bonus, l=fr_name, c=color: _roll_d20(b, l, c))
 
-                def _roll_save(lbl=label, b=bonus, c=color):
-                    d20  = _rnd.randint(1, 20)
-                    tot  = d20 + b
-                    s    = "+" if b >= 0 else ""
-                    msg  = f"**Sauvegarde {lbl}**  d20({d20}){s}{b} = **{tot}**"
-                    self._send_to_chat(msg, c)
 
-                tk.Button(btn_wrap2, text=f"Sauv. {label} {sign2}{bonus}",
-                          bg="#0a1a0a", fg=color,
-                          font=("Consolas", 7, "bold"), relief="flat",
-                          padx=5, pady=1, cursor="hand2",
-                          command=_roll_save).pack(side=tk.LEFT, padx=2, pady=2)
-
-        # Compétences (si présentes dans la fiche)
-        skills = monster.get("skill", {})
-        if skills:
-            tk.Label(outer, text="COMPÉTENCES", bg=row_bg, fg=self.FG_DIM,
-                     font=("Consolas", 7, "bold")).pack(anchor="w", padx=2, pady=(4,0))
-            btn_wrap3 = tk.Frame(outer, bg=row_bg)
-            btn_wrap3.pack(fill=tk.X)
-            SKILL_COLORS = {
-                "perception": "#ce93d8", "stealth": "#81c784",
-                "athletics": "#e57373", "arcana": "#64b5f6",
-                "history": "#64b5f6",   "insight": "#ce93d8",
-                "persuasion": "#f06292","deception": "#f06292",
-                "intimidation":"#e57373","investigation":"#64b5f6",
-            }
-            import re as _re3
-            for skill_key, v_str in skills.items():
-                m3 = _re3.search(r'([+-]?\d+)', str(v_str))
-                bonus = int(m3.group(1)) if m3 else 0
-                color = SKILL_COLORS.get(skill_key.lower(), self.FG_MID)
-                sign3 = "+" if bonus >= 0 else ""
-                sk_label = skill_key.capitalize()
-
-                def _roll_skill(lbl=sk_label, b=bonus, c=color):
-                    import random as _rnd2
-                    d20  = _rnd2.randint(1, 20)
-                    tot  = d20 + b
-                    s    = "+" if b >= 0 else ""
-                    msg  = f"**Compétence : {lbl}**  d20({d20}){s}{b} = **{tot}**"
-                    self._send_to_chat(msg, c)
-
-                tk.Button(btn_wrap3, text=f"{sk_label} {sign3}{bonus}",
-                          bg="#0d0d1a", fg=color,
-                          font=("Consolas", 7, "bold"), relief="flat",
-                          padx=5, pady=1, cursor="hand2",
-                          command=_roll_skill).pack(side=tk.LEFT, padx=2, pady=2)
 
     def _action_block(self, parent, action: dict, monster: dict,
                       name_color: str, row_bg: str):
@@ -923,8 +1347,13 @@ class MonsterSheetWindow:
             self._show_empty()
             return
 
+        self._current_monster = m
         self._clear_body()
         self._hide_suggestions()
+        self.win.title(f"[{self.npc_name}] {name}")
+
+        # Mettre à jour le panneau "Parler en tant que" avec le nouveau monstre
+        self._refresh_speak_panel(m)
 
         # ── EN-TÊTE ─────────────────────────────────────────────────────────
         hdr = tk.Frame(self._inner, bg="#1a0808", pady=8)
@@ -1109,12 +1538,15 @@ class GroupNPCPanel:
     ACCENT = "#4CAF50"
 
     def __init__(self, parent_frame: tk.Frame, root, win_state: dict,
-                 save_win_state_fn, track_fn, msg_queue):
+                 save_win_state_fn, track_fn, msg_queue, audio_queue=None,
+                 get_scene_fn=None):
         self.root             = root
         self._win_state       = win_state
         self._save_ws         = save_win_state_fn
         self._track           = track_fn
         self._msg_queue       = msg_queue
+        self._audio_queue     = audio_queue
+        self._get_scene_fn    = get_scene_fn
         self._open_sheets: dict[str, MonsterSheetWindow] = {}
 
         # Import ici pour éviter une dépendance circulaire
@@ -1155,44 +1587,71 @@ class GroupNPCPanel:
             return
 
         for i, npc in enumerate(npcs):
-            name         = npc.get("name", "?")
-            bestiary     = npc.get("bestiary_name", "")
-            color        = npc.get("color", self.FG)
-            hp_cur       = npc.get("hp_current")
-            row_bg       = "#0d1a0d" if i % 2 == 0 else "#0f220f"
+            name      = npc.get("name", "?")
+            bestiary  = npc.get("bestiary_name", "")
+            color     = npc.get("color", self.FG)
+            hp_cur    = npc.get("hp_current")
+            row_bg    = "#0d1a0d" if i % 2 == 0 else "#0f220f"
 
-            row = tk.Frame(self._list_frame, bg=row_bg, cursor="hand2")
+            row = tk.Frame(self._list_frame, bg=row_bg)
             row.pack(fill=tk.X, pady=1)
 
-            # Indicateur monstre associé
+            # ── Indicateur monstre associé ────────────────────────────────────
             icon = "📋" if bestiary else "❓"
-            tk.Label(row, text=icon, bg=row_bg, fg=color if bestiary else self.FG_DIM,
-                     font=("TkDefaultFont", 9)).pack(side=tk.LEFT, padx=(6, 2), pady=4)
+            tk.Label(row, text=icon, bg=row_bg,
+                     fg=color if bestiary else self.FG_DIM,
+                     font=("TkDefaultFont", 9)).pack(side=tk.LEFT, padx=(4, 1), pady=3)
 
-            # Nom cliquable
+            # ── Nom cliquable → ouvre la fiche ────────────────────────────────
             name_lbl = tk.Label(row, text=name, bg=row_bg, fg=color,
-                                 font=("Consolas", 9, "bold"), anchor="w",
-                                 cursor="hand2")
-            name_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=4)
+                                font=("Consolas", 9, "bold"), anchor="w",
+                                cursor="hand2")
+            name_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=3)
+            for w2 in (row, name_lbl):
+                w2.bind("<Button-1>",
+                        lambda e, n=name, b=bestiary: self._open_sheet(n, b))
 
-            # PV actuels (si renseignés)
+            # ── PV cliquables → édition inline ────────────────────────────────
             if hp_cur is not None:
-                m = get_monster(bestiary) if bestiary else None
-                hp_max = m.get("hp", {}).get("average", "?") if m else "?"
-                tk.Label(row, text=f"❤ {hp_cur}/{hp_max}", bg=row_bg,
-                         fg="#81c784" if isinstance(hp_max, int) and hp_cur > hp_max * 0.5
-                         else "#FF9800" if isinstance(hp_max, int) and hp_cur > hp_max * 0.25
-                         else "#e57373",
-                         font=("Consolas", 8)).pack(side=tk.RIGHT, padx=(0, 4))
+                m_data = get_monster(bestiary) if bestiary else None
+                hp_max = m_data.get("hp", {}).get("average", "?") if m_data else "?"
+                hp_color = (
+                    "#81c784" if (isinstance(hp_max, int) and hp_cur > hp_max * 0.5)
+                    else "#FF9800" if (isinstance(hp_max, int) and hp_cur > hp_max * 0.25)
+                    else "#e57373"
+                )
+                hp_lbl = tk.Label(row, text=f"❤ {hp_cur}/{hp_max}",
+                                  bg=row_bg, fg=hp_color,
+                                  font=("Consolas", 8), cursor="hand2")
+                hp_lbl.pack(side=tk.RIGHT, padx=(0, 2))
+                hp_lbl.bind("<Button-1>",
+                            lambda e, n=name, idx=i: self._edit_hp_dialog(n, idx))
 
-            # Bouton supprimer
-            tk.Button(row, text="✕", bg=row_bg, fg="#553333", font=("Arial", 7),
-                      relief="flat", padx=2, cursor="hand2",
-                      command=lambda idx=i: self._remove_npc(idx)).pack(side=tk.RIGHT, padx=2)
+            # ── Bouton 🎭 Parler en tant que ──────────────────────────────────
+            speak_btn = tk.Button(
+                row, text="🎭", bg=row_bg, fg="#9b8fc7",
+                font=("Arial", 9), relief="flat", padx=3, pady=1,
+                cursor="hand2",
+                command=lambda n=name, b=bestiary, c=color:
+                    self._speak_as_dialog(n, b, c)
+            )
+            speak_btn.pack(side=tk.RIGHT, padx=1)
 
-            # Click → ouvre la fiche
-            for widget in (row, name_lbl):
-                widget.bind("<Button-1>", lambda e, n=name, b=bestiary: self._open_sheet(n, b))
+            # ── Bouton 📋 Fiche rapide ────────────────────────────────────────
+            sheet_btn = tk.Button(
+                row, text="📋", bg=row_bg, fg=self.FG_DIM,
+                font=("Arial", 9), relief="flat", padx=3, pady=1,
+                cursor="hand2",
+                command=lambda n=name, b=bestiary: self._open_sheet(n, b)
+            )
+            sheet_btn.pack(side=tk.RIGHT, padx=1)
+
+            # ── Bouton supprimer ──────────────────────────────────────────────
+            tk.Button(row, text="✕", bg=row_bg, fg="#553333",
+                      font=("Arial", 7), relief="flat", padx=2,
+                      cursor="hand2",
+                      command=lambda idx=i: self._remove_npc(idx)
+                      ).pack(side=tk.RIGHT, padx=2)
 
     def _open_sheet(self, npc_name: str, bestiary_name: str | None):
         """Ouvre (ou ramène) la fiche de monstre pour ce PNJ."""
@@ -1204,6 +1663,13 @@ class GroupNPCPanel:
                 return
             except Exception:
                 pass
+
+        # Couleur du PNJ
+        npcs = self._get_npcs()
+        npc_color = next(
+            (n.get("color", "#e0e0e0") for n in npcs if n.get("name") == npc_name),
+            "#e0e0e0"
+        )
 
         def _on_select(new_bestiary: str):
             """Callback quand le MJ sélectionne un monstre dans la fiche."""
@@ -1230,6 +1696,9 @@ class GroupNPCPanel:
             win_state=self._win_state,
             track_fn=self._track,
             chat_queue=self._msg_queue,
+            audio_queue=self._audio_queue,
+            npc_color=npc_color,
+            get_scene_fn=self._get_scene_fn,
         )
         self._open_sheets[npc_name] = sheet
 
@@ -1241,6 +1710,120 @@ class GroupNPCPanel:
                 pass
 
         sheet.win.protocol("WM_DELETE_WINDOW", _on_close)
+
+    # ─── Dialogue "Parler en tant que" ────────────────────────────────────────
+
+    def _speak_as_dialog(self, npc_name: str, bestiary_name: str | None,
+                         npc_color: str):
+        """Fenêtre rapide : MJ tape un prompt → LLM génère la réplique du PNJ."""
+        monster = get_monster(bestiary_name) if bestiary_name else None
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"🎭 Parler en tant que {npc_name}")
+        dlg.configure(bg="#0e1a10")
+        dlg.geometry("420x220")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        tk.Label(dlg, text=f"🎭 {npc_name} prend la parole",
+                 bg="#0e1a10", fg="#a5d6a7",
+                 font=("Arial", 11, "bold")).pack(pady=(14, 4))
+
+        if monster:
+            sub = f"{_fmt_type(monster.get('type','?'))}  •  FP {_fmt_cr(monster.get('cr','?'))}"
+            tk.Label(dlg, text=sub, bg="#0e1a10", fg="#4a7a4a",
+                     font=("Consolas", 8)).pack()
+
+        tk.Label(dlg, text="Contexte / question (optionnel) :",
+                 bg="#0e1a10", fg="#888", font=("Arial", 8)
+                 ).pack(anchor="w", padx=14, pady=(10, 2))
+
+        prompt_var = tk.StringVar()
+        entry = tk.Entry(dlg, textvariable=prompt_var,
+                         bg="#0d1f0d", fg="white", font=("Consolas", 10),
+                         insertbackground="white", relief="flat")
+        entry.pack(fill=tk.X, padx=14, ipady=6)
+        entry.focus_set()
+
+        scene_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(dlg, text="Inclure le contexte de scène",
+                       variable=scene_var, bg="#0e1a10", fg="#7aad7a",
+                       selectcolor="#0e1a10", activebackground="#0e1a10",
+                       font=("Arial", 8)).pack(anchor="w", padx=14, pady=4)
+
+        def _send():
+            prompt = prompt_var.get().strip()
+            scene  = ""
+            if scene_var.get() and self._get_scene_fn:
+                try:
+                    scene = self._get_scene_fn()
+                except Exception:
+                    pass
+            self._msg_queue.put({
+                "sender": "🎭 Système",
+                "text":   f"{npc_name} prend la parole…",
+                "color":  "#555566",
+            })
+            speak_as_npc(
+                npc_name, monster, prompt,
+                self._msg_queue, self._audio_queue,
+                color=npc_color, scene_context=scene,
+            )
+            dlg.destroy()
+
+        entry.bind("<Return>", lambda e: _send())
+        tk.Button(dlg, text="Générer la réplique", bg="#1a3a1a", fg="#81c784",
+                  font=("Arial", 10, "bold"), relief="flat", pady=6,
+                  command=_send).pack(fill=tk.X, padx=14, pady=(4, 14))
+
+    # ─── Édition HP inline ────────────────────────────────────────────────────
+
+    def _edit_hp_dialog(self, npc_name: str, idx: int):
+        """Mini-dialog pour modifier les PV d'un PNJ directement."""
+        npcs = self._get_npcs()
+        if idx >= len(npcs):
+            return
+        npc     = npcs[idx]
+        hp_cur  = npc.get("hp_current", 0)
+        bestiary = npc.get("bestiary_name", "")
+        m_data  = get_monster(bestiary) if bestiary else None
+        hp_max  = m_data.get("hp", {}).get("average", "?") if m_data else "?"
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"❤ PV — {npc_name}")
+        dlg.configure(bg="#1a0d0d")
+        dlg.geometry("280x150")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        tk.Label(dlg, text=f"PV actuels de {npc_name}",
+                 bg="#1a0d0d", fg="#e57373", font=("Arial", 10, "bold")
+                 ).pack(pady=(12, 4))
+        tk.Label(dlg, text=f"(max : {hp_max})",
+                 bg="#1a0d0d", fg="#888", font=("Consolas", 8)).pack()
+
+        hp_var = tk.StringVar(value=str(hp_cur))
+        entry  = tk.Entry(dlg, textvariable=hp_var, bg="#2a0d0d", fg="white",
+                          font=("Consolas", 14, "bold"), justify="center",
+                          insertbackground="white", relief="flat", width=8)
+        entry.pack(pady=8, ipady=6)
+        entry.select_range(0, tk.END)
+        entry.focus_set()
+
+        def _save_hp():
+            try:
+                new_hp = int(hp_var.get())
+                npcs[idx]["hp_current"] = new_hp
+                self._save_npcs(npcs)
+                self._refresh()
+                dlg.destroy()
+            except ValueError:
+                entry.config(bg="#3a0000")
+
+        entry.bind("<Return>", lambda e: _save_hp())
+        tk.Button(dlg, text="Appliquer", bg="#2a1010", fg="#e57373",
+                  font=("Arial", 9, "bold"), relief="flat",
+                  command=_save_hp).pack()
 
     def _add_npc(self):
         """Ouvre une mini-fenêtre pour ajouter un PNJ au groupe."""

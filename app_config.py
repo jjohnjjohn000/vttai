@@ -28,6 +28,9 @@ KNOWN_MODELS = [
     "gemini-2.0-flash",
     "gemini-1.5-pro",
     "gemini-1.5-flash",
+    # DeepSeek direct (DEEPSEEK_API_KEY)
+    "deepseek/deepseek-chat",       # V3.2 — outil calls, 128K ctx, pas cher
+    "deepseek/deepseek-reasoner",   # V3.2 thinking — CoT, ignorer temperature
     # Groq
     "groq/meta-llama/llama-4-scout-17b-16e-instruct",
     "groq/llama-3.3-70b-versatile",
@@ -143,11 +146,13 @@ def load_app_config() -> dict:
 
 
 def save_app_config(cfg: dict):
-    """Sauvegarde la config dans app_config.json."""
+    """Sauvegarde la config dans app_config.json (écriture atomique via fichier temporaire)."""
     with _lock:
         try:
-            with open(APP_CONFIG_FILE, "w", encoding="utf-8") as f:
+            tmp = APP_CONFIG_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, APP_CONFIG_FILE)  # atomique sur Linux et Windows
         except Exception as e:
             print(f"[AppConfig] Erreur sauvegarde : {e}")
 

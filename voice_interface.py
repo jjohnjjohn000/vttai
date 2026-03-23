@@ -609,15 +609,59 @@ def _get_backend() -> str:
         return "edge-tts"
 
 
+def _is_piper_voice(voice_id: str) -> bool:
+    """Retourne True si voice_id est un nom de modèle Piper valide.
+
+    Piper  : fr_FR-siwis-medium, fr_FR-upmc-medium, fr_FR-gilles-low …
+             → contient un underscore ET ne contient pas "Neural"
+    EdgeTTS: fr-FR-HenriNeural, fr-BE-GerardNeural …
+             → se termine par "Neural" (suffixe Microsoft)
+    """
+    if not voice_id:
+        return False
+    return "_" in voice_id and "Neural" not in voice_id
+
+
 def _get_piper_voice_id(character_name: str) -> tuple[str, str]:
-    """Retourne (voice_id, models_dir) Piper pour un personnage."""
+    """Retourne (voice_id, models_dir) Piper pour un personnage.
+
+    Ordre de priorité :
+      1. VOICE_MAPPING[character_name] — si c'est un nom Piper valide.
+         (Le gestionnaire PNJs y écrit la voix choisie dans le dropdown.
+          Si l'ancienne valeur est encore un nom edge-tts, on l'ignore.)
+      2. APP_CONFIG["piper"]["voices"][character_name] — voix statique PJs
+         définie dans app_config.json.
+      3. APP_CONFIG["piper"]["voices"]["default"] / fallback codé en dur.
+
+    Les noms edge-tts (contenant "Neural") sont rejetés à chaque étape :
+    ils ne correspondent à aucun fichier .onnx dans piper_models/.
+    """
     try:
         from app_config import APP_CONFIG
-        pcfg      = APP_CONFIG.get("piper", {})
-        voices    = pcfg.get("voices", {})
-        voice_id  = voices.get(character_name, voices.get("default", "fr_FR-upmc-medium"))
+        pcfg       = APP_CONFIG.get("piper", {})
+        voices_cfg = pcfg.get("voices", {})
         models_dir = pcfg.get("models_dir", "piper_models")
-        return voice_id, models_dir
+
+        # 1. Voix du gestionnaire PNJs — seulement si c'est un nom Piper
+        #    Le panneau NPC stocke les voix sous la clé "__npc__<nom>"
+        #    mais play_voice() reçoit le nom brut ("Ismark").
+        #    On essaie les deux formes.
+        for key in (f"__npc__{character_name}", character_name):
+            candidate = VOICE_MAPPING.get(key, "")
+            if _is_piper_voice(candidate):
+                return candidate, models_dir
+
+        # 2. Voix statique PJs depuis app_config
+        candidate = voices_cfg.get(character_name, "")
+        if _is_piper_voice(candidate):
+            return candidate, models_dir
+
+        # 3. Défaut piper
+        default = voices_cfg.get("default", "fr_FR-upmc-medium")
+        if _is_piper_voice(default):
+            return default, models_dir
+
+        return "fr_FR-upmc-medium", models_dir
     except Exception:
         return "fr_FR-upmc-medium", "piper_models"
 

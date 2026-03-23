@@ -80,26 +80,36 @@ class CharacterMixin:
         win.protocol("WM_DELETE_WINDOW", _on_close)
         setattr(self, attr, win)
 
-        # ── Données statiques par personnage ──────────────────────────────────
-        _CHAR_STATS = {
-            # Emplacements de sort officiels D&D 5e niveau 15
-            # Paladin (demi-lanceur L15)   : 4/3/3/2/1
-            # Clerc / Mage (plein L15)     : 4/3/3/3/2/1/1/1/1  (niv 9 inclus)
-            "Kaelen": {"hit_die": 10, "level": 15, "con_mod": 3, "ac": 20,
-                       "max_slots": {"1":4,"2":3,"3":3,"4":2,"5":1}},
-            "Elara":  {"hit_die": 6,  "level": 15, "con_mod": 1, "ac": 14,
-                       "max_slots": {"1":4,"2":3,"3":3,"4":3,"5":2,"6":1,"7":1,"8":1,"9":1}},
-            "Thorne": {"hit_die": 10, "level": 15, "con_mod": 3, "ac": 18,
-                       "max_slots": {}},
-            "Lyra":   {"hit_die": 8,  "level": 15, "con_mod": 2, "ac": 17,
-                       "max_slots": {"1":4,"2":3,"3":3,"4":3,"5":2,"6":1,"7":1,"8":1,"9":1}},
-        }
-        cstats    = _CHAR_STATS.get(char_name, {"hit_die":8,"level":1,"con_mod":0,"ac":10,"max_slots":{}})
-        hit_die   = data.get("hit_die",  cstats["hit_die"])
-        level     = data.get("level",    cstats["level"])
-        con_mod   = data.get("con_mod",  cstats["con_mod"])
-        ac        = data.get("ac",       cstats["ac"])
-        max_slots = cstats["max_slots"]
+        # Polling continu de la géométrie (comme _track_window) :
+        # sans ce polling, la position n'est sauvegardée qu'à la fermeture
+        # manuelle — un crash entre-temps fait perdre tout déplacement/redimensionnement.
+        def _poll_geom():
+            try:
+                if not win.winfo_exists():
+                    return
+                g = _get_win_geometry(win)
+                if g:
+                    self._win_state[_key] = g
+                    _save_window_state(self._win_state)
+                win.after(2000, _poll_geom)
+            except Exception:
+                pass
+        win.after(2000, _poll_geom)
+
+        # ── Données de classe depuis class_data.py ────────────────────────────
+        # hit_die et max_slots sont dérivés de la classe D&D 5e.
+        # con_mod et ac restent dans campaign_state.json (spécifiques au perso).
+        from class_data import get_hit_die, get_spell_slots
+        char_class = data.get("class", "fighter")
+        level      = data.get("level", 1)
+        try:
+            hit_die   = get_hit_die(char_class)
+            max_slots = get_spell_slots(char_class, level)
+        except Exception:
+            hit_die   = data.get("hit_die", 8)
+            max_slots = {}
+        con_mod   = data.get("con_mod",  0)
+        ac        = data.get("ac",       10)
 
         # ── Avatar animé ──────────────────────────────────────────────────────
         char_bg    = CHARACTER_DATA.get(char_name, {}).get("bg", "#1e1e2e")
@@ -217,18 +227,22 @@ class CharacterMixin:
 
         stats_frame  = tk.Frame(win, bg="#1e1e2e")
         spells_frame = tk.Frame(win, bg="#1e1e2e")
+        class_frame  = tk.Frame(win, bg="#1e1e2e")
 
         def _show_tab(name):
+            for f in (stats_frame, spells_frame, class_frame):
+                f.pack_forget()
+            for b in (btn_stats, btn_spells, btn_class):
+                b.config(bg="#12121e", fg="#555566")
             if name == "stats":
-                spells_frame.pack_forget()
                 stats_frame.pack(fill=tk.BOTH, expand=True)
                 btn_stats.config(bg=color, fg="#0d0d0d")
-                btn_spells.config(bg="#12121e", fg="#555566")
-            else:
-                stats_frame.pack_forget()
+            elif name == "spells":
                 spells_frame.pack(fill=tk.BOTH, expand=True)
-                btn_stats.config(bg="#12121e", fg="#555566")
                 btn_spells.config(bg=color, fg="#0d0d0d")
+            elif name == "class":
+                class_frame.pack(fill=tk.BOTH, expand=True)
+                btn_class.config(bg=color, fg="#0d0d0d")
 
         btn_stats  = tk.Button(tabs_bar, text="📊 Stats",  font=("Arial", 9, "bold"),
                                relief="flat", padx=10, pady=5, cursor="hand2",
@@ -236,11 +250,298 @@ class CharacterMixin:
         btn_spells = tk.Button(tabs_bar, text="✨ Sorts",  font=("Arial", 9, "bold"),
                                relief="flat", padx=10, pady=5, cursor="hand2",
                                command=lambda: _show_tab("spells"))
+        btn_class  = tk.Button(tabs_bar, text="⚔ Classe", font=("Arial", 9, "bold"),
+                               relief="flat", padx=10, pady=5, cursor="hand2",
+                               command=lambda: _show_tab("class"))
         btn_stats.pack(side=tk.LEFT, fill=tk.X, expand=True)
         btn_spells.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        btn_class.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # ════════════════════════════════════════════════════════════════════
-        # ── ONGLET STATS ──────────────────────────────────────────────────
+        # ── ONGLET CLASSE ───────────────────────────────────────────────────
+        # ════════════════════════════════════════════════════════════════════
+        from class_data import (
+            get_class_features, get_subclass_features, get_subclass_spells,
+            get_proficiencies, get_caster_progression, get_hit_die, get_spell_slots,
+            get_all_feature_details, get_feature_details,
+        )
+
+        cls_canvas = tk.Canvas(class_frame, bg="#1e1e2e", highlightthickness=0)
+        cls_scroll = tk.Scrollbar(class_frame, orient="vertical", command=cls_canvas.yview)
+        cls_inner  = tk.Frame(cls_canvas, bg="#1e1e2e")
+        cls_canvas.create_window((0, 0), window=cls_inner, anchor="nw")
+        cls_canvas.configure(yscrollcommand=cls_scroll.set)
+        cls_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        cls_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        cls_inner.bind("<Configure>", lambda e: cls_canvas.configure(scrollregion=cls_canvas.bbox("all")))
+        # Mousewheel
+        def _cls_mousewheel(e):
+            cls_canvas.yview_scroll(int(-1*(e.delta or (1 if e.num == 4 else -1))*3), "units")
+        cls_canvas.bind("<Button-4>", _cls_mousewheel)
+        cls_canvas.bind("<Button-5>", _cls_mousewheel)
+        cls_canvas.bind("<MouseWheel>", _cls_mousewheel)
+
+        char_class    = data.get("class", "fighter")
+        char_subclass = data.get("subclass", "")
+        char_level    = data.get("level", 1)
+
+        _cls_bg = "#1e1e2e"
+        _sec_bg = "#252535"
+
+        # ── Popup de détail de capacité ───────────────────────────────────
+        def _open_feature_popup(feat_name, feat_data):
+            """Ouvre une fenêtre indépendante avec la description complète."""
+            popup = tk.Toplevel(win)
+            popup.title(f"{feat_name} — {char_class.title()}")
+            popup.geometry("520x480")
+            popup.configure(bg="#1a1a2e")
+            popup.attributes("-topmost", True)
+
+            # Header
+            phdr = tk.Frame(popup, bg=color, pady=6)
+            phdr.pack(fill=tk.X)
+            tk.Label(phdr, text=feat_name, bg=color, fg="#0d0d0d",
+                     font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=12)
+            _badges = []
+            if feat_data.get("level"):
+                _badges.append(f"Niv. {feat_data['level']}")
+            if feat_data.get("source"):
+                _badges.append(feat_data["source"])
+            if feat_data.get("type") == "subclass":
+                _badges.append(char_subclass)
+            tk.Label(phdr, text=" | ".join(_badges), bg=color, fg="#333333",
+                     font=("Consolas", 9)).pack(side=tk.RIGHT, padx=12)
+
+            # Body — scrollable text
+            txt_frame = tk.Frame(popup, bg="#1a1a2e")
+            txt_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+
+            txt_scroll = tk.Scrollbar(txt_frame)
+            txt_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+            txt_widget = tk.Text(
+                txt_frame, wrap=tk.WORD, bg="#1a1a2e", fg="#cccccc",
+                font=("Consolas", 10), padx=12, pady=8,
+                relief="flat", highlightthickness=0,
+                yscrollcommand=txt_scroll.set,
+                state=tk.NORMAL, cursor="arrow",
+            )
+            txt_widget.pack(fill=tk.BOTH, expand=True)
+            txt_scroll.config(command=txt_widget.yview)
+
+            # Insérer texte avec formatting
+            description = feat_data.get("text", "(Aucune description disponible)")
+            lines = description.split("\n")
+            txt_widget.tag_configure("heading", font=("Arial", 10, "bold"), foreground=color)
+            txt_widget.tag_configure("body", font=("Consolas", 10), foreground="#cccccc")
+            txt_widget.tag_configure("bullet", font=("Consolas", 10), foreground="#aabbcc")
+
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith("▸ "):
+                    txt_widget.insert(tk.END, stripped + "\n", "heading")
+                elif stripped.startswith("• "):
+                    txt_widget.insert(tk.END, "  " + stripped + "\n", "bullet")
+                else:
+                    txt_widget.insert(tk.END, stripped + "\n\n", "body")
+
+            txt_widget.config(state=tk.DISABLED)
+
+            # Bouton fermer
+            tk.Button(popup, text="Fermer", bg="#333344", fg="#cccccc",
+                      font=("Arial", 9), relief="flat", padx=12, pady=4,
+                      command=popup.destroy).pack(pady=(0, 8))
+
+        # ── En-tête : Classe + Niveau + Sous-classe ──────────────────────────
+        hdr_cls = tk.Frame(cls_inner, bg=color, pady=6)
+        hdr_cls.pack(fill=tk.X, padx=8, pady=(8, 4))
+        _cls_title = char_class.title()
+        if char_subclass:
+            _cls_title += f" — {char_subclass}"
+        tk.Label(hdr_cls, text=f"⚔ {_cls_title}", bg=color, fg="#0d0d0d",
+                 font=("Arial", 11, "bold")).pack(side=tk.LEFT, padx=8)
+        tk.Label(hdr_cls, text=f"Niv. {char_level}", bg=color, fg="#333333",
+                 font=("Consolas", 10, "bold")).pack(side=tk.RIGHT, padx=8)
+
+        # ── Dé de vie & Caster Info ──────────────────────────────────────
+        info_fr = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
+        info_fr.pack(fill=tk.X, padx=8, pady=(4, 2))
+        try:
+            _hd = get_hit_die(char_class)
+        except Exception:
+            _hd = 8
+        tk.Label(info_fr, text=f"🎲 Dé de vie : d{_hd}", bg=_sec_bg, fg="#cccccc",
+                 font=("Arial", 10)).pack(anchor="w")
+        _caster = get_caster_progression(char_class)
+        if _caster:
+            _caster_labels = {"full": "Lanceur complet", "1/2": "Demi-lanceur", "1/3": "Tiers-lanceur"}
+            _caster_str = _caster_labels.get(_caster, _caster)
+            try:
+                _slots = get_spell_slots(char_class, char_level)
+                _slots_str = " / ".join(str(v) for v in _slots.values()) if _slots else "—"
+            except Exception:
+                _slots_str = "?"
+            tk.Label(info_fr, text=f"\u2728 {_caster_str} — Emplacements : {_slots_str}",
+                     bg=_sec_bg, fg="#aabbdd", font=("Arial", 9)).pack(anchor="w", pady=(2, 0))
+        else:
+            tk.Label(info_fr, text="\u2694 Pas de sorts (classe martiale)",
+                     bg=_sec_bg, fg="#666677", font=("Arial", 9, "italic")).pack(anchor="w", pady=(2, 0))
+
+        # ── Maîtrises (Armor, Weapons, Saves) ─────────────────────────────
+        try:
+            _profs = get_proficiencies(char_class)
+        except Exception:
+            _profs = {"armor": [], "weapons": [], "saves": []}
+
+        if any(_profs.values()):
+            prof_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
+            prof_sec.pack(fill=tk.X, padx=8, pady=(2, 2))
+            tk.Label(prof_sec, text="\U0001f6e1 Maîtrises", bg=_sec_bg, fg=color,
+                     font=("Arial", 10, "bold")).pack(anchor="w")
+
+            _save_names = {"str": "FOR", "dex": "DEX", "con": "CON",
+                           "int": "INT", "wis": "SAG", "cha": "CHA"}
+            _prof_items = [
+                ("Armures",    ", ".join(a.title() for a in _profs.get("armor", []))),
+                ("Armes",      ", ".join(w.title() for w in _profs.get("weapons", []))),
+                ("Sauvegardes", ", ".join(_save_names.get(s, s.upper()) for s in _profs.get("saves", []))),
+            ]
+            for _lbl, _val in _prof_items:
+                if _val:
+                    _row = tk.Frame(prof_sec, bg=_sec_bg)
+                    _row.pack(fill=tk.X, pady=1)
+                    tk.Label(_row, text=f"  {_lbl} :", bg=_sec_bg, fg="#888899",
+                             font=("Arial", 9), anchor="w").pack(side=tk.LEFT)
+                    tk.Label(_row, text=_val, bg=_sec_bg, fg="#cccccc",
+                             font=("Arial", 9), wraplength=220, justify=tk.LEFT).pack(side=tk.LEFT, padx=(4, 0))
+
+        # ── Capacités (classe + sous-classe) — CLIQUABLES ─────────────────
+        try:
+            _all_feats = get_all_feature_details(char_class, char_subclass, char_level)
+        except Exception:
+            _all_feats = []
+
+        if _all_feats:
+            feat_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
+            feat_sec.pack(fill=tk.X, padx=8, pady=(2, 2))
+
+            _n_class = sum(1 for f in _all_feats if f["type"] == "class")
+            _n_sub   = sum(1 for f in _all_feats if f["type"] == "subclass")
+            _title_parts = []
+            if _n_class:
+                _title_parts.append(f"{_n_class} classe")
+            if _n_sub:
+                _title_parts.append(f"{_n_sub} {char_subclass}")
+            tk.Label(feat_sec, text=f"\u2b50 Capacités ({' + '.join(_title_parts)})",
+                     bg=_sec_bg, fg=color, font=("Arial", 10, "bold")).pack(anchor="w")
+            tk.Label(feat_sec, text="Cliquer pour voir les détails", bg=_sec_bg,
+                     fg="#555566", font=("Arial", 8, "italic")).pack(anchor="w")
+
+            _current_level = None
+            for _idx, _feat in enumerate(_all_feats):
+                # Séparateur de niveau
+                if _feat["level"] != _current_level:
+                    _current_level = _feat["level"]
+                    _lvl_sep = tk.Frame(feat_sec, bg=_sec_bg)
+                    _lvl_sep.pack(fill=tk.X, pady=(6, 2))
+                    tk.Label(_lvl_sep, text=f"── Niveau {_current_level} ──",
+                             bg=_sec_bg, fg="#555566",
+                             font=("Consolas", 8)).pack(anchor="w")
+
+                _is_sub = (_feat["type"] == "subclass")
+                _feat_fg = "#ddbbaa" if _is_sub else "#ccddee"
+                _feat_icon = "🔥" if _is_sub else "⭐"
+
+                _fr = tk.Frame(feat_sec, bg=_sec_bg)
+                _fr.pack(fill=tk.X, pady=1)
+                _name_lbl = tk.Label(
+                    _fr, text=f"  {_feat_icon}  {_feat['name']}",
+                    bg=_sec_bg, fg=_feat_fg,
+                    font=("Arial", 9), cursor="hand2",
+                    anchor="w",
+                )
+                _name_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                # Source badge
+                tk.Label(_fr, text=_feat.get("source", ""),
+                         bg=_sec_bg, fg="#444455",
+                         font=("Consolas", 7)).pack(side=tk.RIGHT)
+
+                # Bind click — closure capture
+                def _on_click(e, fd=_feat):
+                    _open_feature_popup(fd["name"], fd)
+                _name_lbl.bind("<Button-1>", _on_click)
+
+                # Hover effect
+                def _on_enter(e, lbl=_name_lbl, fg=_feat_fg):
+                    lbl.config(fg=color, font=("Arial", 9, "bold"))
+                def _on_leave(e, lbl=_name_lbl, fg=_feat_fg):
+                    lbl.config(fg=fg, font=("Arial", 9))
+                _name_lbl.bind("<Enter>", _on_enter)
+                _name_lbl.bind("<Leave>", _on_leave)
+
+        # ── Sorts de domaine / serment ─────────────────────────────────
+        if char_subclass:
+            try:
+                _dom_spells = get_subclass_spells(char_class, char_subclass, char_level)
+            except Exception:
+                _dom_spells = []
+            if _dom_spells:
+                dom_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
+                dom_sec.pack(fill=tk.X, padx=8, pady=(2, 2))
+                _domain_label = "Sorts de Serment" if char_class == "paladin" else "Sorts de Domaine"
+                tk.Label(dom_sec, text=f"\U0001f4d6 {_domain_label}",
+                         bg=_sec_bg, fg=color, font=("Arial", 10, "bold")).pack(anchor="w")
+                # Afficher en grille 2 par ligne
+                _spell_row = None
+                for i, _sp in enumerate(_dom_spells):
+                    if i % 2 == 0:
+                        _spell_row = tk.Frame(dom_sec, bg=_sec_bg)
+                        _spell_row.pack(fill=tk.X, pady=1)
+                    tk.Label(_spell_row, text=f"  \u2022 {_sp}", bg=_sec_bg, fg="#aaddbb",
+                             font=("Arial", 9), anchor="w", width=22).pack(side=tk.LEFT)
+
+        # ── Emplacements de sort (table complète) ───────────────────────
+        if _caster:
+            slots_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
+            slots_sec.pack(fill=tk.X, padx=8, pady=(2, 8))
+            tk.Label(slots_sec, text="\U0001f4ca Table de progression",
+                     bg=_sec_bg, fg=color, font=("Arial", 10, "bold")).pack(anchor="w")
+            # Compact table : show spell slots at levels 1-20
+            _tbl_hdr = tk.Frame(slots_sec, bg=_sec_bg)
+            _tbl_hdr.pack(fill=tk.X, pady=(4, 2))
+            tk.Label(_tbl_hdr, text="Niv", bg=_sec_bg, fg="#666677",
+                     font=("Consolas", 8, "bold"), width=4, anchor="w").pack(side=tk.LEFT)
+            for sp_lvl in range(1, 10):
+                tk.Label(_tbl_hdr, text=str(sp_lvl), bg=_sec_bg, fg="#666677",
+                         font=("Consolas", 8, "bold"), width=3, anchor="center").pack(side=tk.LEFT)
+
+            for _clvl in range(1, 21):
+                try:
+                    _row_slots = get_spell_slots(char_class, _clvl)
+                except Exception:
+                    _row_slots = {}
+                if not _row_slots and _clvl > 1:
+                    continue  # Skip rows with no slots for non-caster early levels
+                _tbl_row = tk.Frame(slots_sec, bg=_sec_bg)
+                _tbl_row.pack(fill=tk.X)
+                _is_current = (_clvl == char_level)
+                _niv_fg = color if _is_current else "#888899"
+                _niv_font = ("Consolas", 8, "bold") if _is_current else ("Consolas", 8)
+                tk.Label(_tbl_row, text=f"{_clvl:>2}", bg=_sec_bg, fg=_niv_fg,
+                         font=_niv_font, width=4, anchor="w").pack(side=tk.LEFT)
+                for sp_lvl in range(1, 10):
+                    val = _row_slots.get(str(sp_lvl), 0)
+                    _val_fg = "#cccccc" if val > 0 else "#333344"
+                    if _is_current and val > 0:
+                        _val_fg = color
+                    tk.Label(_tbl_row, text=str(val) if val > 0 else "\u2014", bg=_sec_bg, fg=_val_fg,
+                             font=_niv_font, width=3, anchor="center").pack(side=tk.LEFT)
+
+        # Bas de page spacer
+        tk.Frame(cls_inner, bg=_cls_bg, height=20).pack(fill=tk.X)
+
+        # ════════════════════════════════════════════════════════════════════
+        # ── ONGLET STATS ────────────────────────────────────────────────────
         # ════════════════════════════════════════════════════════════════════
         body = tk.Frame(stats_frame, bg="#1e1e2e")
         body.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)

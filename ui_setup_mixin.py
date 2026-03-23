@@ -108,6 +108,14 @@ class UISetupMixin:
         )
         self.btn_pause.pack(side=tk.LEFT, padx=(5, 0))
 
+        tk.Button(
+            input_frame, text="↑ Fenêtres",
+            bg="#2a3a4a", fg="#aaccee",
+            font=("Arial", 10, "bold"),
+            relief="flat", padx=6,
+            command=self.raise_all_windows,
+        ).pack(side=tk.LEFT, padx=(5, 0))
+
         # --- PANNEAU LATÉRAL (Stats & Actions) ---
         stats_frame = tk.Frame(self.root, bg="#252526", width=250)
         stats_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
@@ -134,6 +142,8 @@ class UISetupMixin:
             save_win_state_fn = lambda: _save_window_state(self._win_state),
             track_fn          = self._track_window,
             msg_queue         = self.msg_queue,
+            audio_queue       = self.audio_queue,
+            get_scene_fn      = lambda: __import__('state_manager').get_scene_prompt(),
         )
 
         # --- BOUTONS D'ACTION ---

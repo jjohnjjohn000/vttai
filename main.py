@@ -395,6 +395,9 @@ class DnDApp(
         if self._win_state.get("_open_combat_tracker"):
             delay += 300
             self.root.after(delay, self.open_combat_tracker)
+        if self._win_state.get("_open_inventory"):
+            delay += 300
+            self.root.after(delay, self.open_inventory_panel)
         if self._win_state.get("_open_quest_journal"):
             delay += 300
             self.root.after(delay, self.open_quest_journal)
@@ -407,6 +410,9 @@ class DnDApp(
         if self._win_state.get("_open_calendar"):
             delay += 300
             self.root.after(delay, self.open_calendar_popout)
+        if self._win_state.get("_open_combat_map"):
+            delay += 300
+            self.root.after(delay, self.open_combat_map)
         for name in ["Kaelen", "Elara", "Thorne", "Lyra"]:
             if self._win_state.get(f"_open_char_{name}"):
                 delay += 400   # 400 ms entre chaque popout pour éviter les races gRPC/Tk
@@ -441,4 +447,25 @@ class DnDApp(
 if __name__ == "__main__":
     root = tk.Tk()
     app = DnDApp(root)
+
+    def _on_app_close():
+        import copy
+        # 1. Marquer la fermeture applicative pour que _on_destroy_cleanup
+        #    des Toplevels ne supprime pas les flags _open_*.
+        app._app_closing = True
+        # 2. Capturer l'état exact AVANT que root.destroy() ne déclenche les
+        #    events <Destroy> des fenêtres enfants (qui peuvent modifier win_state).
+        final_state = copy.deepcopy(app._win_state)
+        # 3. Détruire la fenêtre principale (et toutes ses Toplevels).
+        root.destroy()
+        # 4. Après destroy(), tous les events <Destroy> ont été traités.
+        #    Réécrire le fichier avec le snapshot capturé au point 2 pour
+        #    garantir que c'est bien le dernier write — peu importe ce que
+        #    les handlers <Destroy> ont pu sauvegarder pendant le teardown.
+        try:
+            _save_window_state(final_state)
+        except Exception:
+            pass
+
+    root.protocol("WM_DELETE_WINDOW", _on_app_close)
     root.mainloop()

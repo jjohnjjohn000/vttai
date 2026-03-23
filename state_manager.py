@@ -5,7 +5,17 @@ import os
 import threading
 import uuid
 
+from class_data import get_hit_die, get_spell_slots
+
 STATE_FILE = "campaign_state.json"
+
+# ─── Mapping personnage → classe D&D 5e + stats spécifiques ──────────────────
+DEFAULT_CHARACTER_CLASSES = {
+    "Kaelen": {"class": "paladin", "subclass": "Devotion", "level": 15, "con_mod": 3, "ac": 20},
+    "Elara":  {"class": "wizard",  "subclass": "",         "level": 15, "con_mod": 1, "ac": 14},
+    "Thorne": {"class": "rogue",   "subclass": "Assassin",  "level": 15, "con_mod": 3, "ac": 18},
+    "Lyra":   {"class": "cleric",  "subclass": "Life",      "level": 15, "con_mod": 2, "ac": 17},
+}
 state_lock = threading.Lock()
 
 # ============================================================
@@ -236,7 +246,7 @@ DEFAULT_MEMORIES = [
 ]
 
 # Voix Edge-TTS disponibles pour les PNJs (liste prédéfinie raisonnable)
-AVAILABLE_VOICES = [
+_EDGE_TTS_VOICES = [
     "fr-FR-HenriNeural",
     "fr-FR-DeniseNeural",
     "fr-FR-EloiseNeural",
@@ -255,6 +265,56 @@ AVAILABLE_VOICES = [
     "fr-CH-ArianeNeural",
     "fr-CH-FabriceNeural",
 ]
+
+
+def get_available_voices() -> list[str]:
+    """
+    Retourne la liste des voix TTS disponibles selon le backend configuré.
+
+    - backend "piper"    : scanne piper_models/ et retourne les noms de modèles
+                           (.onnx sans extension), triés alphabétiquement.
+                           Si le dossier est vide ou absent, retourne une liste
+                           de secours avec les modèles piper fr_FR courants.
+    - backend "edge-tts" : retourne la liste statique des voix Neural fr-FR/BE/CH.
+    """
+    try:
+        from app_config import get_voice_config, get_piper_config
+        backend = get_voice_config().get("backend", "edge-tts")
+    except Exception:
+        backend = "edge-tts"
+
+    if backend == "piper":
+        try:
+            from app_config import get_piper_config
+            models_dir = get_piper_config().get("models_dir", "piper_models")
+        except Exception:
+            models_dir = "piper_models"
+
+        voices = []
+        if os.path.isdir(models_dir):
+            for fname in sorted(os.listdir(models_dir)):
+                # Seuls les .onnx sont des modèles de voix (les .json sont les configs)
+                if fname.endswith(".onnx"):
+                    voices.append(fname[:-5])   # retire l'extension .onnx
+
+        if not voices:
+            # Secours : modèles piper fr_FR officiels courants
+            voices = [
+                "fr_FR-upmc-medium",
+                "fr_FR-siwis-medium",
+                "fr_FR-siwis-low",
+                "fr_FR-gilles-low",
+                "fr_FR-tom-medium",
+            ]
+        return voices
+
+    # Par défaut : edge-tts
+    return list(_EDGE_TTS_VOICES)
+
+
+# Alias rétrocompatible — contient les voix edge-tts (valeur au chargement du module).
+# Préférer get_available_voices() pour un résultat toujours à jour.
+AVAILABLE_VOICES = _EDGE_TTS_VOICES
 
 # ============================================================
 # --- SORTS PAR DÉFAUT (niveau 15) ---
@@ -372,6 +432,15 @@ def load_state():
             if "active" not in char_data:
                 char_data["active"] = True
                 dirty = True
+
+        # Migration : ajoute class/subclass/level/con_mod/ac si absents
+        for char_name, char_data in state.get("characters", {}).items():
+            defaults = DEFAULT_CHARACTER_CLASSES.get(char_name, {})
+            if defaults:
+                for key in ("class", "subclass", "level", "con_mod", "ac"):
+                    if key not in char_data:
+                        char_data[key] = defaults[key]
+                        dirty = True
 
         # Migration : ajoute le calendrier si absent
         if "calendar" not in state:

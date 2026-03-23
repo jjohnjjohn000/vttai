@@ -40,13 +40,15 @@ _ACTION_BLOCK_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 _FIN_TOUR_RE = re.compile(r'\[FIN_DE_TOUR\]', re.IGNORECASE)
+_ERR_SYSTEM_RE = re.compile(r'\[Erreur système.*?\]', re.DOTALL | re.IGNORECASE)
 
 
 def strip_mechanical_blocks(text: str) -> str:
-    """Supprime les blocs [ACTION] et [FIN_DE_TOUR] du texte avant envoi au TTS.
+    """Supprime les blocs [ACTION], [FIN_DE_TOUR] et [Erreur système] du texte avant envoi au TTS.
     Le roleplay narratif est conservé intégralement."""
     text = _ACTION_BLOCK_RE.sub('', text)
     text = _FIN_TOUR_RE.sub('', text)
+    text = _ERR_SYSTEM_RE.sub('', text)
     return text.strip()
 
 # Noms des agents joueurs + MJ

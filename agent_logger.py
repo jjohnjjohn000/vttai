@@ -42,6 +42,14 @@ _tts_starts: dict[str, float] = {}
 # (messages privés, votes, images). Setter : set_face_windows_ref(dict).
 _face_windows_ref: dict = {}
 
+# ── Modèles configurés par agent (injecté au démarrage depuis engine_agents) ──
+_agent_configured_models: dict[str, str] = {}
+
+
+def set_agent_configured_model(name: str, model: str):
+    """Enregistre le modèle configuré pour un agent. Appelé une fois à l'init."""
+    _agent_configured_models[name] = model
+
 
 def _char_color(name: str) -> str:
     return _COLORS.get(name, "\033[97m")
@@ -125,6 +133,9 @@ def log_llm_end(name: str, response_preview: str = "", error: str = ""):
             f"{_COL_TIME}({_fmt_ms(elapsed)}){_RESET}"
             + (f"\n{prev}" if prev else "")
         )
+        # Afficher le solde OpenRouter si cet agent utilise ce fournisseur
+        if _agent_configured_models.get(name, "").startswith("openrouter/"):
+            log_openrouter_status()
 
 
 def log_llm_model_used(name: str, model: str, configured_model: str = ""):
@@ -164,6 +175,10 @@ def log_llm_model_used(name: str, model: str, configured_model: str = ""):
             f"{cc}🤖 {_BOLD}{name}{_RESET}{cc} — répondu par : {model}{_RESET}"
         )
 
+    # Afficher le solde OpenRouter si le modèle configuré ou ayant répondu vient d'OpenRouter
+    if configured_model.startswith("openrouter/") or model.startswith("openrouter/"):
+        log_openrouter_status()
+
 
 def log_tts_start(name: str, text_preview: str = ""):
     """
@@ -182,3 +197,42 @@ def log_tts_start(name: str, text_preview: str = ""):
 def log_tts_end(name: str, success: bool = True):
     """Nettoyage du timer TTS — log supprimé (appelé N fois par phrase, cause 0ms)."""
     _tts_starts.pop(name, None)
+# ─── OpenRouter : affichage du solde après chaque réponse ────────────────────
+
+_COL_CREDITS = "\033[96m"   # cyan — infos crédits
+
+# Cache : timestamp du dernier affichage pour éviter le spam
+# (affiché au max une fois toutes les 60 s)
+_openrouter_last_check: float = 0.0
+_OPENROUTER_CHECK_INTERVAL = 60.0   # secondes entre deux affichages
+
+
+def log_openrouter_status():
+    """
+    Interroge l'endpoint /api/v1/key d'OpenRouter et affiche le solde
+    et les limites dans le terminal.
+    Appelé en arrière-plan après chaque réponse d'un agent OpenRouter.
+    Throttlé à 1 affichage / 60 s pour ne pas spammer.
+    """
+    global _openrouter_last_check
+    now = time.perf_counter()
+    if now - _openrouter_last_check < _OPENROUTER_CHECK_INTERVAL:
+        return
+    _openrouter_last_check = now
+
+    def _fetch():
+        try:
+            from llm_config import fetch_openrouter_key_status, format_openrouter_status
+            data = fetch_openrouter_key_status()
+            if not data:
+                return
+            status_line = format_openrouter_status(data)
+            if status_line:
+                _print(
+                    f"{_COL_TIME}{_now()}{_RESET}  "
+                    f"{_COL_CREDITS}💳 OpenRouter  {status_line}{_RESET}"
+                )
+        except Exception as e:
+            _print(f"{_COL_TIME}{_now()}{_RESET}  {_COL_ERR}[OpenRouter status] erreur : {e}{_RESET}")
+
+    threading.Thread(target=_fetch, daemon=True, name="or-status").start()

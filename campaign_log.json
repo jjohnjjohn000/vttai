@@ -151,10 +151,10 @@
       "importance": 2,
       "auto_archived": true,
       "agent_reads": {
-        "Kaelen": "2026-03-21T10:55:33",
-        "Elara": "2026-03-21T10:55:33",
-        "Thorne": "2026-03-21T10:55:33",
-        "Lyra": "2026-03-21T10:55:33"
+        "Kaelen": "2026-03-21T21:48:59",
+        "Elara": "2026-03-21T21:48:59",
+        "Thorne": "2026-03-21T21:48:59",
+        "Lyra": "2026-03-21T21:48:59"
       }
     },
     {
@@ -203,10 +203,10 @@
       "importance": 2,
       "auto_archived": true,
       "agent_reads": {
-        "Kaelen": "2026-03-21T10:55:33",
-        "Elara": "2026-03-21T10:55:33",
-        "Thorne": "2026-03-21T10:55:33",
-        "Lyra": "2026-03-21T10:55:33"
+        "Kaelen": "2026-03-22T20:55:21",
+        "Elara": "2026-03-22T20:55:21",
+        "Thorne": "2026-03-22T20:55:21",
+        "Lyra": "2026-03-22T20:55:21"
       }
     },
     {
@@ -255,10 +255,62 @@
       "importance": 2,
       "auto_archived": true,
       "agent_reads": {
-        "Kaelen": "2026-03-19T20:58:26",
-        "Elara": "2026-03-19T20:58:26",
-        "Thorne": "2026-03-19T20:58:26",
-        "Lyra": "2026-03-19T20:58:26"
+        "Kaelen": "2026-03-22T20:29:42",
+        "Elara": "2026-03-22T20:29:42",
+        "Thorne": "2026-03-22T20:29:42",
+        "Lyra": "2026-03-22T20:29:42"
+      }
+    },
+    {
+      "id": "clog_006",
+      "label": "Sessions 1–3",
+      "session_range": [
+        1,
+        3
+      ],
+      "date_archived": "2026-03-22T20:33:40",
+      "summary": "### Archives de la Campagne : Le Mur Noir et la Fracture du Réel (Sessions 1-3)\n\n**Synthèse Historique**\n\nLe sanctuaire d'Argynvostholt, autrefois perçu comme un havre de paix face à la tyrannie de Strahd, est devenu le théâtre d'une instabilité cosmique sans précédent. Alors que les travaux de fortification, dirigés par les artisans **Gil et Mart**, tentaient de renforcer les défenses physiques du manoir, la réalité barovienne a subi une altération brutale. Un « Mur Noir » — une imposante colonne d'obscurité, identifiée par **Elara** comme une brèche planaire active — a émergé au Gué de la Tser, déstabilisant la trame même du bastion.\n\n**La Mutation du Front**\nSous la pression du Mur Noir, le phare d'Argynvost a vacillé, et le mausolée, point focal de la corruption, est devenu le cœur d'une instabilité énergétique critique. Comprenant que la passivité signifiait la condamnation des réfugiés sous leur protection — dont **Ireena** et **Ismark** — le groupe a radicalement réorienté sa stratégie. Délaissant les travaux de fortification pure, **Thorne, Lyra, Kaelen et Elara** ont choisi l'offensive. La découverte d'une liane cristalline, collectée comme témoin de cette mutation, a servi d'outil diagnostique, confirmant qu'Argynvostholt ne pouvait être sécurisé sans une neutralisation de la faille source.\n\n**L'Incursion dans l'Abîme**\nLe groupe a franchi le seuil du bastion pour se rendre au Gué de la Tser, lieu d'origine de la faille. Sur place, la nature de la menace s'est révélée : des créatures « diaboliques à épines », pourvues d'une carapace cristalline, ont surgi de la déchirure planaire. Ce combat fut une révélation tactique pour les compagnons : les sorts de feu conventionnels se sont avérés inefficaces contre ces entités à la densité moléculaire anormale. Seule la synergie entre la force cinétique brute de **Kaelen et Thorne**, et l'utilisation de *Gardiens Spirituels* par **Lyra**, a permis de contenir l'assaut. \n\n**État de la Situation**\nLe groupe est désormais pleinement engagé dans un conflit qui dépasse les frontières de la Barovie traditionnelle. La faille planaire n'est pas qu'un phénomène météorologique, mais un processus évolutif qui dévore la réalité. Si Argynvostholt demeure leur ligne de front, la priorité est désormais de percer les secrets de la brèche au Gué de la Tser.\n\n**Continuité Narrative**\n*   **Menaces** : Le « Mur Noir » et ses créatures cristallines représentent une menace existentielle. La corruption du mausolée demeure, bien que temporairement scellée par les interventions arcaniques d'Elara.\n*   **Dynamique du Groupe** : L'unité s'est cimentée autour d'une approche combinée : l'analyse arcanique fine (Elara) couplée à une détermination martiale et spirituelle inébranlable (Thorne, Lyra, Kaelen).\n*   **Objets Clés** : L'échantillon de liane cristalline, agissant comme un diapason de la corruption, reste l'outil de recherche prioritaire. Le contenu des poches de Donavich demeure en attente d'examen, tout comme la lettre cachetée dont la pertinence reste à démontrer face à l'urgence planaire.\n\n*Archivé le 21 mars 2026 par le Chroniqueur IA.*",
+      "keywords": [
+        "Kaelen",
+        "Thorne",
+        "Elara",
+        "d'une",
+        "planaire",
+        "groupe",
+        "Ireena",
+        "Phare",
+        "combat",
+        "Donavich",
+        "Ismark",
+        "sort",
+        "Lyra",
+        "Strahd",
+        "sanctuaire",
+        "Argynvostholt",
+        "cosmique",
+        "Manoir",
+        "corruption",
+        "cristalline",
+        "faille",
+        "demeure",
+        "Campagne",
+        "Noir",
+        "Fracture"
+      ],
+      "characters": [
+        "Kaelen",
+        "Elara",
+        "Thorne",
+        "Lyra"
+      ],
+      "locations": [],
+      "importance": 2,
+      "auto_archived": true,
+      "agent_reads": {
+        "Kaelen": "2026-03-22T20:55:21",
+        "Elara": "2026-03-22T20:55:21",
+        "Thorne": "2026-03-22T20:55:21",
+        "Lyra": "2026-03-22T20:55:21"
       }
     }
   ],
