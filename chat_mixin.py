@@ -169,6 +169,14 @@ class ChatMixin:
                         msg["resume_callback"],
                         sub_index=msg.get("sub_index"),
                         sub_total=msg.get("sub_total"),
+                        chain_abort_callback=msg.get("chain_abort_callback"),
+                    )
+                elif action == "tool_confirm":
+                    self._append_tool_confirm_link(
+                        msg["sender"],
+                        msg["tool_name"],
+                        msg.get("tool_args", {}),
+                        msg["resume_callback"],
                     )
                 elif action == "set_llm_running":
                     running = msg["value"]
@@ -182,6 +190,8 @@ class ChatMixin:
                     active = self._llm_running and not waiting
                     self.btn_stop.config(state=tk.NORMAL if active else tk.DISABLED,
                                          bg="#cc0000" if active else "#880000")
+                elif action == "damage_link":
+                    self._handle_damage_link(msg)
                 else:
                     self.append_message(msg["sender"], msg["text"], msg["color"])
         except queue.Empty:
@@ -598,7 +608,7 @@ class ChatMixin:
         tk.Label(frame, text="Niveau :", bg="#1a1a2e", fg="#aaaaaa",
                  font=("Arial", 8)).pack(side=tk.LEFT, padx=(0, 4))
 
-        spx = tk.Spinbox(frame, from_=1, to=9, width=2, textvariable=level_var,
+        spx = tk.Spinbox(frame, from_=spell_level, to=9, width=2, textvariable=level_var,
                          bg="#2a2a3e", fg=color, font=("Consolas", 9, "bold"),
                          buttonbackground="#2a2a3e", relief="flat",
                          highlightthickness=1, highlightcolor=color)
@@ -609,12 +619,23 @@ class ChatMixin:
         def _confirm():
             confirmed[0] = True
             lvl = level_var.get()
+            # Un slot doit être >= au niveau minimum du sort
+            if lvl < spell_level:
+                self.append_message(
+                    "⚠️ Sort invalide",
+                    f"{spell_name} requiert un slot de niveau {spell_level} minimum "
+                    f"(slot niv.{lvl} sélectionné — annulé).",
+                    "#cc8800",
+                )
+                resume_callback(False, spell_level)
+                frame.destroy()
+                _remove_spell_lines()
+                return
             result = use_spell_slot(char_name, str(lvl))
             self.append_message("✨ Sort", f"{char_name} — {spell_name} niv.{lvl}{cible_txt} → {result}", color)
             frame.destroy()
             _remove_spell_lines()
             resume_callback(True, lvl)
-
         def _deny():
             self.append_message("🚫 Sort refusé", f"{char_name} ne peut pas lancer {spell_name}.", "#cc4444")
             frame.destroy()
@@ -820,16 +841,20 @@ class ChatMixin:
                                 intention: str, regle: str, cible: str,
                                 resume_callback,
                                 sub_index: int | None = None,
-                                sub_total: int | None = None):
+                                sub_total: int | None = None,
+                                chain_abort_callback=None):
         """
         Affiche une carte de confirmation de sous-action dans le chat.
         Chaque attaque individuelle, action bonus, mouvement ou action gratuite
         reçoit sa propre carte séquentielle — le MJ confirme ou refuse chacune.
 
-        type_label : ex. "Action — Attaque 1/2", "Action Bonus", "Mouvement"
-        sub_index  : position 1-based dans la séquence (None si unique)
-        sub_total  : nombre total de sous-actions dans la séquence
+        type_label          : ex. "Action — Attaque 1/2", "Action Bonus", "Mouvement"
+        sub_index           : position 1-based dans la séquence (None si unique)
+        sub_total           : nombre total de sous-actions dans la séquence
         resume_callback(confirmed: bool, mj_note: str)
+        chain_abort_callback: appelé SANS argument quand le MJ refuse, pour
+                              détruire toutes les cartes restantes de la chaîne.
+                              None si l'action est isolée (aucune chaîne active).
         """
         color = self.CHAR_COLORS.get(char_name, "#aaaaaa")
         self.msg_counter += 1
@@ -941,6 +966,15 @@ class ChatMixin:
                 f"[{type_label}]{suffix} refusé : {intention}" + (f"  — {note}" if note else ""),
                 "#aa4444",
             )
+            # ── Abandon de chaîne ────────────────────────────────────────────
+            # On appelle chain_abort_callback AVANT resume_callback pour que
+            # les cartes restantes soient détruites avant que le thread de jeu
+            # ne reçoive le signal de refus.
+            if chain_abort_callback is not None:
+                try:
+                    chain_abort_callback()
+                except Exception as _cae:
+                    print(f"[chain_abort] Erreur : {_cae}")
             resume_callback(False, note)
 
         note_entry.bind("<Return>", _confirm)
@@ -1266,3 +1300,12 @@ class ChatMixin:
                 "text":   " | ".join(parts),
                 "color":  "#888844",
             })
+
+# ─── Damage-link popup (greffé depuis damage_link_ui_handler.py) ─────────────
+from damage_link_ui_handler import (
+    _handle_damage_link as _handle_damage_link,
+    _open_damage_popup  as _open_damage_popup,
+)
+
+ChatMixin._handle_damage_link = _handle_damage_link
+ChatMixin._open_damage_popup  = _open_damage_popup

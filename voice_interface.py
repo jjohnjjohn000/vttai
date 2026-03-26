@@ -288,10 +288,17 @@ def _play_file(tmp_path):
             dur_s = sz / 16_000
         play_timeout = max(dur_s * 1.5 + 5.0, 8.0)
 
+        vol = _GLOBAL_VOLUME
+        # aplay ne gère pas le volume nativement → on bascule sur ffplay
+        # dès que le volume est réduit pour conserver le contrôle précis.
+        if player == "aplay" and vol < 100:
+            player = "ffplay"
+
         if player == "aplay":
             cmd = ["aplay", "-q", tmp_path]
         else:
-            cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", tmp_path]
+            cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet",
+                   "-volume", str(vol), tmp_path]
 
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with _proc_lock:
@@ -590,6 +597,58 @@ def pause_audio():
 def resume_audio():
     """Débloque la lecture audio après une pause."""
     _AUDIO_PAUSE_EVENT.set()
+
+
+# ─── Volume global ────────────────────────────────────────────────────────────
+#
+# Valeur entière 0–100 appliquée à tous les appels ffplay / aplay.
+# 100 = volume maximal (aucune réduction), 0 = silence.
+#
+# Conception extensible : quand d'autres mécaniques audio seront ajoutées
+# (ambiances, effets sonores…), elles liront _GLOBAL_VOLUME via get_volume().
+# set_volume() persiste la valeur dans app_config.json.
+
+_GLOBAL_VOLUME: int = 100
+
+
+def get_volume() -> int:
+    """Retourne le volume global actuel (0–100)."""
+    return _GLOBAL_VOLUME
+
+
+def set_volume(value: int) -> None:
+    """
+    Définit le volume global (0–100) et le persiste dans app_config.json.
+    Thread-safe — peut être appelé depuis n'importe quel thread.
+    """
+    global _GLOBAL_VOLUME
+    _GLOBAL_VOLUME = max(0, min(100, int(value)))
+    # Persistance asynchrone pour ne pas bloquer le thread UI
+    threading.Thread(target=_persist_volume, daemon=True, name="vol-save").start()
+
+
+def _persist_volume() -> None:
+    """Sauvegarde le volume dans app_config.json (appelé dans un thread daemon)."""
+    try:
+        from app_config import APP_CONFIG, save_app_config
+        APP_CONFIG.setdefault("voice", {})["volume"] = _GLOBAL_VOLUME
+        save_app_config(APP_CONFIG)
+    except Exception as e:
+        print(f"[Volume] Erreur persistance : {e}")
+
+
+def load_volume_from_config() -> None:
+    """
+    Charge le volume sauvegardé depuis app_config.json.
+    À appeler une seule fois au démarrage de l'application (avant setup_ui).
+    """
+    global _GLOBAL_VOLUME
+    try:
+        from app_config import APP_CONFIG
+        v = APP_CONFIG.get("voice", {}).get("volume", 100)
+        _GLOBAL_VOLUME = max(0, min(100, int(v)))
+    except Exception:
+        _GLOBAL_VOLUME = 100
 
 
 # ─── API publique routée (edge-tts ↔ Piper local) ────────────────────────────

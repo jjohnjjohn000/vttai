@@ -45,10 +45,19 @@ _face_windows_ref: dict = {}
 # ── Modèles configurés par agent (injecté au démarrage depuis engine_agents) ──
 _agent_configured_models: dict[str, str] = {}
 
+# ── Dernier modèle ayant réellement répondu par agent (mis à jour en live) ────
+# Permet à config_panel._tab_llm_resources de détecter les fallbacks silencieux.
+_agent_last_responded_models: dict[str, str] = {}
+
 
 def set_agent_configured_model(name: str, model: str):
     """Enregistre le modèle configuré pour un agent. Appelé une fois à l'init."""
     _agent_configured_models[name] = model
+
+
+def get_agent_last_responded_model(name: str) -> str:
+    """Retourne le dernier modèle ayant répondu pour cet agent ('' si aucun appel)."""
+    return _agent_last_responded_models.get(name, "")
 
 
 def _char_color(name: str) -> str:
@@ -147,6 +156,9 @@ def log_llm_model_used(name: str, model: str, configured_model: str = ""):
     model            : modèle qui a effectivement répondu (extrait de la réponse API)
     configured_model : modèle configuré dans app_config (pour comparaison)
     """
+    # ── Mise à jour du tracking live (lu par config_panel._tab_llm_resources) ─
+    _agent_last_responded_models[name] = model
+
     cc = _char_color(name)
 
     def _canonical(m):

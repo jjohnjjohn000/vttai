@@ -292,21 +292,40 @@ def build_pnj_patterns(PNJ_NAMES: list) -> dict:
         r'(?:^|\n)\s*(?:' + joined + r')\s*(?::|«|\u201c)',
         _re.IGNORECASE | _re.MULTILINE
     )
-    # Forme 2 : description narrative  NomPNJ + verbe
-    pnj_narrative_re = _re.compile(
-        r'\b(?:' + joined + r')\b'
-        r"\s+(?:dit|r[eé]pond|soupire|murmure|ajoute|s.exclame|lance|"
+    # Forme 2 : description narrative  NomPNJ (+ mots optionnels) + verbe
+    # Le groupe (?:\s+\S+){0,3} permet de capturer les noms composés comme
+    # "Ezmerelda d'Avenir jette" où 1-2 mots séparent le nom du verbe.
+    _VERBE_LIST = (
+        r"dit|r[eé]pond|soupire|murmure|ajoute|s.exclame|lance|"
         r"explique|observe|regarde|se tourne|.change|hoche|fronce|esquisse|"
         r"croise|saisit|tend|pose|s.essui|sourit|grimace|cligne|l[eè]ve|"
         r"baisse|s.approche|recule|marche|court|s.arr[eê]te|"
-        r"frotte|jette|[eé]tire|acquiesce|examine|[eé]change|tourne|"
+        r"jette|fixe|toise|scrute|adresse|poursuit|glisse|tranche|"
+        r"frotte|[eé]tire|acquiesce|examine|[eé]change|tourne|"
         r"plisse|tressaille|chancelle|d[eé]glutit|grommelle|ricane|"
         r"renifle|pouffe|[eé]met|pousse|l[aâ]che|interrompt|reprend|"
         r"conclut|insiste|h[eé]site|bafouille|semble|para[iî]t|"
         r"se r[ae]id|se d[eé]tend|se penche|se redresse|se l[eè]ve|"
-        r"se tait|se retourne|se fige|s.immobilise|se lev)",
+        r"se tait|se retourne|se fige|s.immobilise|se lev|"
+        r"a une voix|a l.air|a un|fait un|prend|devient|reste"
+    )
+    pnj_narrative_re = _re.compile(
+        r'\b(?:' + joined + r')\b'
+        r'(?:\s+\S+){0,3}'
+        r'\s+(?:' + _VERBE_LIST + r')',
         _re.IGNORECASE
     )
+    # Forme 2b : possessif PNJ après dialogue inventé
+    # Détecte "Sa voix est", "Son regard", "Ses yeux" quand précédé d'un nom PNJ
+    # dans le même message — signe que l'agent décrit le PNJ en détail.
+    pnj_possessive_re = _re.compile(
+        r'(?:^|\n)\s*(?:sa voix|son regard|ses yeux|son visage|son ton|'
+        r'sa main|ses mains|son expression|sa posture|son attitude|'
+        r'il s.approche|elle s.approche|il se tourne|elle se tourne|'
+        r'il hoche|elle hoche|il acquiesce|elle acquiesce)',
+        _re.IGNORECASE | _re.MULTILINE
+    )
+
     # Forme 3 : verbe + NomPNJ inversé (après guillemets)
     pnj_narrative_inv_re = _re.compile(
         r'(?:dit|r[eé]pond|soupire|murmure|ajoute|s.exclame|lance|explique|'
@@ -326,7 +345,8 @@ def build_pnj_patterns(PNJ_NAMES: list) -> dict:
         """Retourne True si le texte contient une violation de type PNJ."""
         if (pnj_dialogue_re.search(text)
                 or pnj_narrative_re.search(text)
-                or pnj_narrative_inv_re.search(text)):
+                or pnj_narrative_inv_re.search(text)
+                or pnj_possessive_re.search(text)):
             return True
         if pnj_vocative_re.search(text):
             import re as _re_voc
@@ -350,6 +370,7 @@ def build_pnj_patterns(PNJ_NAMES: list) -> dict:
         "pnj_dialogue_re":      pnj_dialogue_re,
         "pnj_narrative_re":     pnj_narrative_re,
         "pnj_narrative_inv_re": pnj_narrative_inv_re,
+        "pnj_possessive_re":    pnj_possessive_re,
         "pnj_vocative_re":      pnj_vocative_re,
         "pnj_pattern":          _PnjPatternCompat(),
         "pnj_pattern_search":   pnj_pattern_search,

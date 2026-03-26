@@ -70,13 +70,19 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
     """
     Construit le llm_config AutoGen avec un système de fallback automatique.
 
+    Rotation multi-comptes Gemini :
+      Pour chaque modèle Gemini dans la chaîne, AutoGen essaie toutes les clés
+      disponibles (GEMINI_API_KEY, GEMINI_API_KEY_1, GEMINI_API_KEY_2…) avant
+      de passer au modèle suivant. Cela maximise le quota disponible sans
+      intervention manuelle.
+
     Ordre de fallback (après le modèle principal demandé) :
-      1. gemini-3.1-pro-preview
-      2. gemini-3.1-flash-lite-preview
-      3. gemini-2.5-pro
-      4. groq/meta-llama/llama-4-scout-17b-16e-instruct
-      5. gemini-2.5-flash
-      6. OpenRouter (llama + arcee trinity — fallbacks JDR-friendly)
+      1. gemini-3-flash-preview        (toutes les clés)
+      2. gemini-3.1-flash-lite-preview (toutes les clés)
+      3. gemini-2.5-pro                (toutes les clés)
+      4. gemini-2.5-flash              (toutes les clés)
+      5. groq/meta-llama/llama-4-scout-17b-16e-instruct
+      6. OpenRouter (llama + mistral + arcee trinity)
 
     NOTE IMPORTANTE : Tous les modèles Gemini utilisent l'endpoint OpenAI-compatible
     de Google afin que le mécanisme de retry config_list d'AutoGen se déclenche
@@ -85,27 +91,62 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
     m = model_name.strip()
     config_list = []
 
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
-    groq_key   = os.getenv("GROQ_API_KEY", "")
     router_key = os.getenv("OPENROUTER_API_KEY", "")
 
-    def _gemini(model: str) -> dict:
+    # ── Collecte de toutes les clés Gemini disponibles ────────────────────────
+    # Supporte GEMINI_API_KEY (legacy), GEMINI_API_KEY_1, GEMINI_API_KEY_2, etc.
+    # AutoGen essaie chaque entrée de config_list dans l'ordre — même modèle,
+    # clé différente = quota d'un autre compte.
+    _gemini_keys: list = []
+    _legacy_key = os.getenv("GEMINI_API_KEY", "")
+    if _legacy_key:
+        _gemini_keys.append(_legacy_key)
+    for _i in range(1, 10):
+        _k = os.getenv(f"GEMINI_API_KEY_{_i}", "")
+        if _k and _k not in _gemini_keys:
+            _gemini_keys.append(_k)
+    gemini_key = _gemini_keys[0] if _gemini_keys else ""
+
+    # ── Collecte de toutes les clés Groq disponibles ─────────────────────────
+    _groq_keys: list = []
+    _groq_legacy = os.getenv("GROQ_API_KEY", "")
+    if _groq_legacy:
+        _groq_keys.append(_groq_legacy)
+    for _i in range(1, 10):
+        _k = os.getenv(f"GROQ_API_KEY_{_i}", "")
+        if _k and _k not in _groq_keys:
+            _groq_keys.append(_k)
+    groq_key = _groq_keys[0] if _groq_keys else ""
+
+    def _gemini(model: str, api_key: str = None) -> dict:
         return {
             "model":       model,
-            "api_key":     gemini_key,
+            "api_key":     api_key or gemini_key,
             "base_url":    _GEMINI_OPENAI_BASE,
             "api_type":    "openai",
             "http_client": _make_no_keepalive_http_client(),
         }
 
-    def _groq(model: str) -> dict:
+    def _gemini_all_keys(model: str) -> list:
+        """Une entrée config_list par clé Gemini dispo pour ce modèle."""
+        if not _gemini_keys:
+            return []
+        return [_gemini(model, key) for key in _gemini_keys]
+
+    def _groq(model: str, api_key: str = None) -> dict:
         return {
             "model":       model,
-            "api_key":     groq_key,
+            "api_key":     api_key or groq_key,
             "base_url":    "https://api.groq.com/openai/v1",
             "api_type":    "openai",
             "http_client": _make_no_keepalive_http_client(),
         }
+
+    def _groq_all_keys(model: str) -> list:
+        """Une entrée config_list par clé Groq dispo pour ce modèle."""
+        if not _groq_keys:
+            return []
+        return [_groq(model, key) for key in _groq_keys]
 
     def _deepseek(model: str) -> dict:
         # deepseek-reasoner ne supporte pas temperature — AutoGen l'ignore silencieusement
@@ -133,8 +174,7 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
 
     # ── 1. Modèle principal demandé ───────────────────────────────────────────
     if m.startswith("groq/"):
-        if groq_key:
-            config_list.append(_groq(m[len("groq/"):]))
+        config_list.extend(_groq_all_keys(m[len("groq/"):]))
     elif m.startswith("openrouter/"):
         if router_key:
             config_list.append(_openrouter(m[len("openrouter/"):]))
@@ -142,9 +182,8 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
         deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
         if deepseek_key:
             config_list.append(_deepseek(m[len("deepseek/"):]))
-    else:  # Gemini (ex: "gemini-2.5-pro", "gemini-3.1-pro-preview"…)
-        if gemini_key:
-            config_list.append(_gemini(m))
+    else:  # Gemini — une entrée par clé disponible (rotation multi-comptes)
+        config_list.extend(_gemini_all_keys(m))
 
     # ── Fallbacks : comportement différent selon le fournisseur primaire ──────
     #
@@ -155,8 +194,9 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
     # Pour les agents Groq on préfère un vrai échec visible plutôt qu'un switch
     # invisible de fournisseur.
     #
-    # Pour les modèles Gemini/OpenRouter, on conserve la chaîne de fallback
-    # complète (même fournisseur ou équivalent).
+    # Pour les modèles Gemini, chaque modèle de la chaîne est ajouté avec
+    # TOUTES les clés disponibles — AutoGen épuise tous les comptes pour un
+    # modèle avant de passer au suivant.
 
     if m.startswith("groq/"):
         pass  # pas de fallback Groq
@@ -165,29 +205,29 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
         pass  # pas de fallback OpenRouter
 
     elif m.startswith("deepseek/"):
-        # Pas de fallback DeepSeek — même raisonnement que Groq/OpenRouter :
-        # un fallback silencieux vers un autre fournisseur est pire qu'un vrai échec visible.
-        pass
+        pass  # pas de fallback DeepSeek
 
     else:
-        # Modèle Gemini : chaîne de fallback complète.
+        # Modèle Gemini : chaîne de fallback complète avec rotation multi-comptes.
+        # Ordre : gemini-3-flash-preview → gemini-3.1-flash-lite-preview →
+        #         gemini-2.5-pro → gemini-2.5-flash → Groq → OpenRouter
+        # ORDRE CRITIQUE : mettre les modèles confirmés disponibles en premier.
+        # Si un modèle "preview" n'existe pas sur l'API (404), AutoGen le traite
+        # comme un échec et passe au suivant — la rotation de clés est court-circuitée.
+        # Vérifiez que chaque nom ici correspond exactement à un modèle Gemini actif.
         _GEMINI_FALLBACK_ORDER = [
-            "gemini-3.1-pro-preview",
-            "gemini-3.1-flash-lite-preview",
-            "gemini-2.5-pro",
+            "gemini-2.5-flash",             # stable, très disponible
+            "gemini-2.5-pro",               # stable
+            "gemini-2.0-flash",             # stable, rapide
+            "gemini-3-flash-preview",        # preview — peut ne pas exister
+            "gemini-3.1-flash-lite-preview", # preview — peut ne pas exister
         ]
-        if gemini_key:
-            for fb in _GEMINI_FALLBACK_ORDER:
-                if m != fb:
-                    config_list.append(_gemini(fb))
+        for fb in _GEMINI_FALLBACK_ORDER:
+            if m != fb:
+                config_list.extend(_gemini_all_keys(fb))
 
-        # Fallback Groq inter-fournisseur (si Groq disponible)
-        if groq_key:
-            config_list.append(_groq("meta-llama/llama-4-scout-17b-16e-instruct"))
-
-        # Dernier recours Gemini Flash
-        if gemini_key and m != "gemini-2.5-flash":
-            config_list.append(_gemini("gemini-2.5-flash"))
+        # Fallback Groq inter-fournisseur (toutes les clés)
+        config_list.extend(_groq_all_keys("meta-llama/llama-4-scout-17b-16e-instruct"))
 
         # Fallbacks OpenRouter en ultime recours
         if router_key:
@@ -205,10 +245,18 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
         })
 
     print("🛠️ DEBUG CONFIG LLM:", [c.get("model") for c in config_list])
+    print(f"🔑 Clés Gemini chargées : {len(_gemini_keys)} | Clés Groq : {len(_groq_keys)}")
 
     return {
         "config_list": config_list,
         "temperature":  temperature,
+        # ── Désactive le cache sticky d'AutoGen ──────────────────────────────
+        # Par défaut, AutoGen mémorise le dernier index ayant réussi (_last_config_index)
+        # et repart de là au prochain appel → les clés précédentes sont ignorées
+        # si l'index mémorisé est > 0, ce qui empêche la rotation multi-clés.
+        # cache_seed=None force AutoGen à réévaluer config_list depuis l'index 0
+        # à chaque nouvel appel, garantissant que TOUTES les clés sont tentées.
+        "cache_seed":   None,
     }
 
 

@@ -32,6 +32,22 @@ def build_regle_outils() -> str:
         "\n\n═══════════════════════════════════════════"
         "\nRÈGLES ABSOLUES — LIRE ET APPLIQUER À CHAQUE MESSAGE"
         "\n═══════════════════════════════════════════"
+        "\n\n⛔ RÈGLE N°1 — ABSOLUE ET SANS EXCEPTION : TU N'ES PAS LE MJ"
+        "\nTu joues UNIQUEMENT ton personnage. Tu n'as aucune autorité sur :"
+        "\n  • Les PNJ (Van Richten, Ezmerelda, Ismark, Ireena, tout PNJ sans exception)"
+        "\n  • Leurs gestes, expressions, paroles, pensées, réactions, déplacements"
+        "\n  • L'environnement, les objets, les sons, les odeurs, la météo"
+        "\n  • Ce qui se passe dans le monde autour de toi"
+        "\nEXEMPLES INTERDITS ABSOLUS :"
+        "\n  ✗ 'Van Richten ajuste son appareil...'"
+        "\n  ✗ 'Ezmerelda se retourne vers moi...'"
+        "\n  ✗ 'Le mur vibre sous l'effet de...'"
+        "\n  ✗ 'On entend un grondement au loin...'"
+        "\nEXEMPLES CORRECTS :"
+        "\n  ✓ 'Je pose une main sur mon symbole sacré.'"
+        "\n  ✓ 'Mes yeux scrutent la faille.'"
+        "\n  ✓ 'Van Richten, qu'indique l'appareil ?' — et tu t'arrêtes là."
+        "\nSi tu décris un PNJ ou l'environnement, ton message sera rejeté.\n"
         "\n\n▶ HORS COMBAT"
         "\nTu joues ton rôle : roleplay, dialogue, exploration, réflexion."
         "\nNe déclare PAS d'action d'attaque, ne lance PAS de dés, ne prends PAS d'initiative de combat"
@@ -57,6 +73,13 @@ def build_regle_outils() -> str:
         "\n     EXCEPTION : si tu reçois une [DIRECTIVE SYSTÈME — JET] ou [DIRECTIVE SYSTÈME — DÉGÂTS]"
         "\n     avec ton nom, tu DOIS appeler l'outil indiqué IMMÉDIATEMENT, AVANT tout texte."
         "\n  5. NE JAMAIS inventer un résultat différent de celui donné par le système.\n"
+        "\n▶ SORTS — RÈGLE ABSOLUE"
+        "\nPour lancer un sort, tu DOIS utiliser ce tag exact APRÈS ton roleplay :"
+        "\n  [SORT: Nom du sort | Niveau: X | Cible: nom ou description]"
+        "\nExemple : [SORT: Soins | Niveau: 3 | Cible: Kaelen]"
+        "\nCe tag déclenche automatiquement la boîte de confirmation du MJ."
+        "\nTu N'APPELLES JAMAIS use_spell_slot directement — le système s'en charge après confirmation."
+        "\nSi tu n'as plus de slot au niveau voulu, le système te le signalera — choisis un niveau inférieur.\n"
         "\n▶ MOUVEMENT SUR LA CARTE (combat ET exploration)"
         "\nDès que ton personnage se déplace narrativement, utilise un bloc [ACTION] Type: Mouvement."
         "\nCela fonctionne EN PERMANENCE — en combat et hors combat."
@@ -87,6 +110,16 @@ def build_regle_outils() -> str:
         "\nde toi. Si ton jet de dés réussit, dis ce que TON CORPS ressent (une anomalie,"
         "\nun doute, une intuition) — PAS ce que tu trouves. Attends qu'Alexis décrive."
         "\nNe répète jamais une question ou idée déjà exprimée — apporte un angle nouveau."
+        "\n\n▶ IDENTITÉ — RÈGLE ABSOLUE"
+        "\nTu es UN SEUL personnage. Tu connais ton propre nom."
+        "\nINTERDIT ABSOLU :"
+        "\n  ✗ Attribuer à toi-même les paroles d'un autre personnage"
+        "\n  ✗ Dire 'Excellente question, [TON PROPRE NOM]' — tu ne te félicites pas toi-même"
+        "\n  ✗ Parler à la troisième personne de toi-même"
+        "\n  ✗ Confondre ce que TU as dit avec ce qu'un autre a dit"
+        "\nSi le message précédent vient d'Elara, c'est Elara qui a parlé — pas toi."
+        "\nSi le message précédent vient de Kaelen, c'est Kaelen — pas toi."
+        "\nLis attentivement le nom de l'auteur de chaque message avant de répondre.\n"
         "\n\n▶ INTERDICTION DE COPIE — RÈGLE ABSOLUE"
         "\nNe reproduis JAMAIS, même partiellement, le contenu du message précédent."
         "\nSi un autre personnage vient de dire ou faire quelque chose, tu ne le répètes pas,"
@@ -164,6 +197,19 @@ def make_thinking_wrapper(agent, name: str, app_ref):
     _orig_gr = agent.generate_reply.__func__
 
     def _wrapped(self_agent, messages=None, sender=None, **kwargs):
+        # ── Guard race condition : personnage retiré de la scène mid-session ──
+        # Le speaker selector peut avoir choisi cet agent AVANT que
+        # _sync_groupchat_agents() ne mette à jour groupchat.agents depuis
+        # le thread UI. On vérifie l'état actif ici, au dernier moment,
+        # pour bloquer l'appel LLM sans crasher la boucle AutoGen.
+        try:
+            from state_manager import is_character_active as _is_active
+            if not _is_active(name):
+                return None   # None = silence ; AutoGen retourne au MJ
+        except Exception:
+            pass
+        # ─────────────────────────────────────────────────────────────────────
+
         face = app_ref.face_windows.get(name)
         if face:
             try:
@@ -253,9 +299,10 @@ def make_thinking_wrapper(agent, name: str, app_ref):
 
             # 404 NotFoundError — modele introuvable ou sans tool use
             if "404" in _err_str or _status_code == 404:
-                # Priorité : campaign_state.json > app_config.json (même logique que _cfg() dans autogen_engine)
+                # Priorité : llm_session_override > llm > app_config (même logique que _cfg())
                 try:
-                    _cs_model = load_state().get("characters", {}).get(name, {}).get("llm", "")
+                    _cs = load_state().get("characters", {}).get(name, {})
+                    _cs_model = _cs.get("llm_session_override", "") or _cs.get("llm", "")
                 except Exception:
                     _cs_model = ""
                 _actual_model = _cs_model or get_agent_config(name).get("model", "?")
@@ -270,7 +317,16 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                         "  - Modele desactive ou retire de l'offre OpenRouter",
                         "  - Syntaxe attendue : openrouter/<provider>/<model-id>",
                     ]
-                    _source = "campaign_state.json" if _cs_model else "app_config.json"
+                    try:
+                        _cs2 = load_state().get("characters", {}).get(name, {})
+                        if _cs2.get("llm_session_override", ""):
+                            _source = "UI session override"
+                        elif _cs2.get("llm", ""):
+                            _source = "campaign_state.json (llm)"
+                        else:
+                            _source = "app_config.json"
+                    except Exception:
+                        _source = "app_config.json"
                     _txt404 = [
                         "Modele introuvable ou sans support tool use pour " + name + ".",
                         "Modele tente    : " + _actual_model,
@@ -280,7 +336,16 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                         "Causes possibles :",
                     ] + _tips
                 else:
-                    _source = "campaign_state.json" if _cs_model else "app_config.json"
+                    try:
+                        _cs2 = load_state().get("characters", {}).get(name, {})
+                        if _cs2.get("llm_session_override", ""):
+                            _source = "UI session override"
+                        elif _cs2.get("llm", ""):
+                            _source = "campaign_state.json (llm)"
+                        else:
+                            _source = "app_config.json"
+                    except Exception:
+                        _source = "app_config.json"
                     _txt404 = [
                         "Modele introuvable ou sans support tool use pour " + name + ".",
                         "Modele configure : " + _actual_model,
@@ -440,20 +505,16 @@ def combat_speaker_selector(last_speaker, groupchat):
         content_low = last_mj_content.lower()
 
         # Détection réponse PNJ → re-router vers le dernier PJ questionneur
-        _PNJ_BASE_SEL = [
-            "Ismark", "Ireena", "Strahd", "Madam Eva", "Rahadin",
-            "Viktor", "Morgantha", "Gil", "Mart", "Tavernier",
-            "Garde", "Maire", "Gustav", "Donavich",
-        ]
         try:
             _sel_state = load_state()
-            _sel_extra = (
-                [n["name"] for n in _sel_state.get("npcs", []) if n.get("name")]
-                + [n["name"] for n in _sel_state.get("group_npcs", []) if n.get("name")]
-            )
-            _PNJ_NAMES_SEL = list({*_PNJ_BASE_SEL, *_sel_extra})
+            _PNJ_NAMES_SEL = list({
+                n["name"]
+                for src in ("npcs", "group_npcs")
+                for n in _sel_state.get(src, [])
+                if n.get("name")
+            })
         except Exception:
-            _PNJ_NAMES_SEL = _PNJ_BASE_SEL
+            _PNJ_NAMES_SEL = []
 
         _pnj_reply_re = _re_sel.compile(
             r'(?:^|\n)\s*(?:' + '|'.join(_re_sel.escape(n) for n in _PNJ_NAMES_SEL) + r')\s*(?::|—|-)',
@@ -665,8 +726,23 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
             "PERSONNALITÉ : Tu vois le monde en termes de risques, de profits et de qui manipule qui. "
             "Tes questions portent sur les motivations cachées, les pièges potentiels, ce qu'on ne te dit pas, "
             "et ce que rapporte concrètement la mission. Tu es sarcastique et tu n'accordes ta confiance à personne. "
-            "Tu parles avec un accent québécois."
+            "Tu parles avec un accent québécois. "
             "Tu ne poses JAMAIS une question qu'un autre personnage vient de poser — tu trouves ça embarrassant.\n"
+            "INTERDICTION ABSOLUE POUR THORNE : Tu n'utilises JAMAIS [SILENCE]. "
+            "Tu as toujours quelque chose à dire — un commentaire sarcastique, une méfiance, "
+            "une suspicion, une remarque cynique en québécois. "
+            "Si tu n'as rien à dire sur le fond, tu exprimes ce que Thorne ressent : "
+            "l'ennui, l'agacement, le malaise, la méfiance. "
+            "Un Tieffelin cynique ne se tait jamais quand il peut piquer.\n"
+            "COMPÉTENCES — RÈGLE ABSOLUE : Tu es un Voleur Assassin, PAS un mage ni un érudit. "
+            "Tu ne fais JAMAIS d'analyse magique, arcanique ou planaire. "
+            "Tu ne parles JAMAIS d'énergie corrompue, de pression planaire, de résidu magique, "
+            "de failles dimensionnelles ou de phénomènes surnaturels en termes techniques. "
+            "Ces sujets appartiennent à Elara (magie) et Lyra (divin) — tu les laisses parler. "
+            "Toi, tu réagis en Voleur : qu'est-ce qui est dangereux pour ta peau, "
+            "qui tire les ficelles, est-ce un piège, qu'est-ce qu'on peut ramasser, "
+            "comment sortir vivant de là. Tes observations sont tactiques et pragmatiques, "
+            "jamais magiques ni théoriques.\n"
             + _get_combat_prompt("rogue", "Assassin", 15) + "\n"
             "RÈGLES ABSOLUES :\n"
             "0. LONGUEUR STRICTE : 1 réplique (1-2 phrases) maximum par message hors combat. "

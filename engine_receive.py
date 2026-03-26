@@ -44,6 +44,22 @@ from engine_spell_mj   import (
 
 # ─── EngineContext ────────────────────────────────────────────────────────────
 
+def _slots_superieurs_disponibles(name: str, niveau_demande: int) -> list:
+    """
+    Retourne la liste triée des niveaux de slot > niveau_demande
+    encore disponibles pour le personnage 'name'.
+    Utilisé pour proposer un upcast quand le slot demandé est épuisé.
+    """
+    try:
+        _st    = load_state()
+        _slots = _st.get("characters", {}).get(name, {}).get("spell_slots", {})
+        return sorted(
+            int(lvl) for lvl, nb in _slots.items()
+            if int(lvl) > niveau_demande and int(nb) > 0
+        )
+    except Exception:
+        return []
+
 @dataclass
 class EngineContext:
     """Tout l'état mutable partagé entre les closures de patched_receive."""
@@ -98,7 +114,16 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
     # ── Helpers TTS ────────────────────────────────────────────────────────────
 
     def _strip_stars(text: str) -> str:
-        return text.replace("*", "") if text else text
+        if not text:
+            return text
+        import re as _re_strip
+        text = text.replace("*", "")
+        # Supprimer les marqueurs mécaniques qui n'ont rien à faire dans le chat
+        text = _re_strip.sub(r"\[FIN_DE_TOUR\]", "", text)
+        text = _re_strip.sub(r"\[SILENCE\]",     "", text)
+        # Effondrer les lignes blanches multiples en une seule
+        text = _re_strip.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
 
     def _tts_clean(text: str) -> str:
         if not text:
@@ -359,6 +384,33 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
             if _copy_detected:
                 ctx.copy_strikes[name] = ctx.copy_strikes.get(name, 0) + 1
                 _strike_n = ctx.copy_strikes[name]
+
+                # ── LOG CONSOLE DÉTAILLÉ ──────────────────────────────────
+                _HR = "─" * 72
+                print(f"\n{_HR}")
+                print(f"[COPIE DÉTECTÉE] {name}  |  ratio={int(_copy_ratio*100)}%  |  strike={_strike_n}")
+                print(f"  Mots communs   : {sorted(_cur_words)}")
+                # Identifier quelle source a déclenché le match
+                _self_prev_dbg = ctx.last_player_messages.get(f"_hist_{name}_0", "")
+                if _self_prev_dbg and _word_set(_self_prev_dbg) & _cur_words:
+                    print(f"  Source         : AUTO-RÉPÉTITION ({name})")
+                    print(f"  Msg précédent  : {_self_prev_dbg[:200]!r}")
+                else:
+                    for _pn_dbg in PLAYER_NAMES:
+                        if _pn_dbg == name:
+                            continue
+                        for _sl_dbg in range(5):
+                            _src = ctx.last_player_messages.get(f"_hist_{_pn_dbg}_{_sl_dbg}", "")
+                            if _src and (_word_set(_src) & _cur_words):
+                                _r_dbg = len(_word_set(_src) & _cur_words) / max(len(_word_set(_src)), 1)
+                                if _r_dbg > 0.40:
+                                    print(f"  Source         : COPIE INTER-JOUEURS ({_pn_dbg}, slot {_sl_dbg})")
+                                    print(f"  Msg source     : {_src[:200]!r}")
+                                    break
+                print(f"  Msg incriminé  : {str(content)[:300]!r}")
+                print(_HR)
+                # ─────────────────────────────────────────────────────────
+
                 _app.msg_queue.put({
                     "sender": "⚠️ Règle",
                     "text": (
@@ -403,19 +455,37 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                 and str(content or "").strip() == "[SILENCE]"):
             ctx.silence_strikes[name] = ctx.silence_strikes.get(name, 0) + 1
             _sil_n = ctx.silence_strikes[name]
-            if _sil_n == 1:
+
+            # Notifier le MJ dans l'UI pour qu'il sache ce qui se passe
+            _app.msg_queue.put({
+                "sender": "⚙️ Système",
+                "text": (
+                    f"[SILENCE] reçu de {name} (strike {_sil_n}). "
+                    f"Nudge injecté — le personnage va retenter."
+                ),
+                "color": "#888888",
+            })
+
+            if _sil_n <= 2:
+                # request_reply=True : force AutoGen à faire répondre l'agent immédiatement
+                # silent=False      : le nudge est visible dans les logs AutoGen
                 _original_receive(
                     self_mgr,
                     {"role": "user", "content": (
                         f"[NUDGE SYSTÈME — {name}] [SILENCE] refusé dans ce contexte. "
                         f"Tu dois contribuer une phrase — une pensée, une réaction émotionnelle, "
                         f"un doute, une question au MJ. [SILENCE] n'est autorisé que si tu es "
-                        f"physiquement incapable de parler. Réponds maintenant en une phrase."
+                        f"physiquement incapable de parler. Réponds maintenant en une seule phrase, "
+                        f"dans la peau de {name}."
                     ), "name": "Alexis_Le_MJ"},
-                    sender, request_reply=False, silent=True,
+                    sender, request_reply=True, silent=False,
                 )
-            elif _sil_n >= 3:
+            else:
+                # Strike 3+ : abandon, remise à zéro du compteur
                 ctx.silence_strikes[name] = 0
+
+            return  # CRUCIAL : empêche la chute vers le bloc d'affichage vide
+
         elif not is_system and name in PLAYER_NAMES and str(content or "").strip():
             ctx.silence_strikes[name] = 0
 
@@ -476,6 +546,68 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             sender, request_reply=False, silent=True,
                         )
                         ctx.tool_refusal_strikes[name] = 0
+                    # Si le message contient du texte en plus de l'outil parasite
+                    # (fréquent avec les modèles Groq/LLaMA), laisser le texte
+                    # s'afficher plutôt que silencer complètement l'agent.
+                    _has_text = content and str(content).strip() not in ("", "[SILENCE]")
+                    if not _has_text:
+                        return
+                    # Neutraliser le tool_call pour ne pas l'exécuter,
+                    # puis laisser le flux normal afficher le contenu textuel.
+                    tool_calls = None
+                    break
+
+                # Guard 3 : dice_type invalide pour roll_dice
+                # L'agent passe parfois un nom de compétence ("Perception", "Investigation")
+                # au lieu d'une formule de dés ("1d20"). On re-prompt avec correction.
+                if _fn_name == "roll_dice":
+                    _rd_args = _extract_tool_args(_tc)
+                    _dice_val = str(_rd_args.get("dice_type", "")).strip()
+                    _VALID_DICE_RE = _re.compile(r'^\d+d\d+$', _re.IGNORECASE)
+                    if not _VALID_DICE_RE.match(_dice_val):
+                        _bad_dice_msg = (
+                            f"[SYSTÈME — PARAMÈTRE INVALIDE]\n"
+                            f"{name} : dice_type=\"{_dice_val}\" n'est pas une formule valide.\n"
+                            f"CORRECTION : dice_type doit être une formule comme \"1d20\", \"2d6\".\n"
+                            f"Le bonus de compétence/sauvegarde se passe dans le champ bonus (entier).\n\n"
+                            f"[DIRECTIVE SYSTÈME — JET OBLIGATOIRE]\n"
+                            f"Rappelle d'abord en UNE phrase courte ce que {name} fait physiquement, "
+                            f"puis rappelle roll_dice avec dice_type=\"1d20\" et le bonus approprié."
+                        )
+                        _app.msg_queue.put({
+                            "sender": "⚠️ Système",
+                            "text":   _bad_dice_msg,
+                            "color":  "#FF9800",
+                        })
+                        _original_receive(
+                            self_mgr,
+                            {"role": "user", "content": _bad_dice_msg, "name": "Alexis_Le_MJ"},
+                            sender, request_reply=True, silent=False,
+                        )
+                        return
+
+                # Guard 4 : appel d'outil sans narration
+                # L'agent doit toujours fournir une phrase décrivant ce qu'il fait
+                # avant (ou avec) l'appel d'outil. Si content est vide, on re-prompt.
+                _has_narrative = content and str(content).strip() not in ("", "[SILENCE]")
+                if not _has_narrative and name in PLAYER_NAMES:
+                    _no_narr_msg = (
+                        f"[DIRECTIVE SYSTÈME — NARRATION MANQUANTE]\n"
+                        f"{name} : avant d'appeler {_fn_name}, tu dois écrire UNE phrase "
+                        f"décrivant brièvement ce que ton personnage fait ou ressent "
+                        f"(ex : « Je scrute les alentours avec attention. »).\n"
+                        f"Réponds avec ta phrase narrative ET l'appel d'outil dans le même message."
+                    )
+                    _app.msg_queue.put({
+                        "sender": "⚠️ Système",
+                        "text":   _no_narr_msg,
+                        "color":  "#FF9800",
+                    })
+                    _original_receive(
+                        self_mgr,
+                        {"role": "user", "content": _no_narr_msg, "name": "Alexis_Le_MJ"},
+                        sender, request_reply=True, silent=False,
+                    )
                     return
 
                 # Appel légitime
@@ -613,14 +745,27 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         )
                         _app.msg_queue.put({"sender": "⚙️ Système", "text": _ritual_msg, "color": "#8888cc"})
                     else:
+                        _supers = _slots_superieurs_disponibles(name, spell_level)
+                        if _supers:
+                            _upcast_hint = (
+                                f"\n  ↑ UPCAST DISPONIBLE : tu peux lancer {spell_name} "
+                                f"avec un slot de niveau supérieur.\n"
+                                f"  Niveaux disponibles : {', '.join(str(l) for l in _supers)}\n"
+                                f"  → Déclare : [SORT: {spell_name} | Niveau: {_supers[0]} | Cible: {target}]"
+                            )
+                        else:
+                            _upcast_hint = (
+                                f"\n  Aucun emplacement de niveau supérieur disponible non plus."
+                            )
                         _no_slot_msg = (
                             f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
                             f"{name} n'a plus d'emplacement de sort de niveau {spell_level}. "
-                            f"Le sort {spell_name} ne peut pas être lancé.\n\n"
+                            f"Le sort {spell_name} ne peut pas être lancé à ce niveau.\n"
+                            f"{_upcast_hint}\n\n"
                             f"[INSTRUCTION]\n"
-                            f"Choisis une autre action (sort de niveau inférieur avec slots disponibles, "
-                            f"attaque physique, ou sort sans slot). "
-                            f"Ne tente PAS de lancer ce sort — déclare une nouvelle action avec [ACTION]."
+                            f"Choisis parmi : upcast (slot sup. si ✅ ci-dessus), "
+                            f"sort de niveau inférieur, tour de magie, ou attaque physique. "
+                            f"Déclare une nouvelle action avec [ACTION]."
                         )
                         _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_slot_msg, "color": "#cc4444"})
                         _original_receive(
@@ -734,13 +879,27 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             )
                             _app.msg_queue.put({"sender": "⚙️ Système", "text": _ritual_msg2, "color": "#8888cc"})
                         else:
+                            _supers2 = _slots_superieurs_disponibles(name, _pre_lvl)
+                            _spell_nm = extract_spell_name_llm(_sub["intention"], name) or "ce sort"
+                            if _supers2:
+                                _upcast_hint2 = (
+                                    f"\n  ↑ UPCAST DISPONIBLE : tu peux lancer {_spell_nm} "
+                                    f"avec un slot de niveau supérieur.\n"
+                                    f"  Niveaux disponibles : {', '.join(str(l) for l in _supers2)}\n"
+                                    f"  → Déclare : [SORT: {_spell_nm} | Niveau: {_supers2[0]} | Cible: ...]"
+                                )
+                            else:
+                                _upcast_hint2 = (
+                                    f"\n  Aucun emplacement de niveau supérieur disponible non plus."
+                                )
                             _no_slot_fb = (
                                 f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
                                 f"{name} n'a plus d'emplacement de sort de niveau {_pre_lvl}. "
-                                f"Ce sort ne peut pas être lancé.\n\n"
+                                f"Ce sort ne peut pas être lancé à ce niveau.\n"
+                                f"{_upcast_hint2}\n\n"
                                 f"[INSTRUCTION]\n"
-                                f"Choisis une autre action : sort de niveau inférieur, "
-                                f"tour de magie, ou attaque physique."
+                                f"Choisis parmi : upcast (slot sup. si ✅ ci-dessus), "
+                                f"sort de niveau inférieur, tour de magie, ou attaque physique."
                             )
                             _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_slot_fb, "color": "#cc4444"})
                             _original_receive(
@@ -970,32 +1129,143 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                     print(f"[Smite slot] Erreur : {_sse}")
 
                         # Phase 3 : dégâts
-                        _dmg_feedback = roll_damage_only(
+                        # roll_damage_only retourne maintenant (str, int)
+                        _dmg_feedback, _dmg_total = roll_damage_only(
                             name, _sub["cible"],
                             _atk_data["dn"], _atk_data["df"], _atk_data["db"],
                             _atk_data["is_crit"], _smite_used, _hit_note, _CM
                         )
 
+                        # Texte compact des dés (sans l'instruction narrative ni le header)
                         _dmg_part = (
                             _dmg_feedback
                             .split("\n\n[INSTRUCTION NARRATIVE]")[0]
                             .replace("[RÉSULTAT SYSTÈME — DÉGÂTS CONFIRMÉS PAR MJ]\n", "")
                             .strip()
                         )
+
+                        # ── Hyperlien dans le chat → popup de confirmation ────────────
+                        # Le message "damage_link" est intercepté par le consumer de
+                        # msg_queue dans l'application principale, qui crée un widget
+                        # cliquable (label/bouton) dans la fenêtre de chat.
+                        # Cliquer sur ce widget appelle resume_callback(final_amount).
+                        # ─────────────────────────────────────────────────────────────
+                        # Code à ajouter dans le handler msg_queue de l'app principale :
+                        #
+                        #   elif msg.get("action") == "damage_link":
+                        #       _cname  = msg["sender"]
+                        #       _cible  = msg["cible"]
+                        #       _total  = msg["dmg_total"]
+                        #       _dtext  = msg["dmg_text"]
+                        #       _crit   = msg["is_crit"]
+                        #       _cb     = msg["resume_callback"]
+                        #       _color  = self.CHAR_COLORS.get(_cname, "#4fc3f7")
+                        #       _lbl_txt = (
+                        #           f"⚔️  {_cname}  →  {_cible}  :  "
+                        #           f"{'🎯 CRITIQUE — ' if _crit else ''}{_total} dégâts "
+                        #           f" ─  [Modifier / Confirmer]"
+                        #       )
+                        #       # Insérer dans le chat_text (tk.Text) un widget cliquable :
+                        #       lnk = tk.Label(
+                        #           self.chat_text,
+                        #           text=_lbl_txt,
+                        #           bg="#1e1e2e", fg="#ff9944",
+                        #           font=("Consolas", 9, "underline"),
+                        #           cursor="hand2",
+                        #       )
+                        #       lnk.bind("<Button-1>", lambda e, cb=_cb, cn=_cname,
+                        #                                        ci=_cible, dt=_dtext,
+                        #                                        tot=_total, crit=_crit:
+                        #           self.root.after(0, lambda:
+                        #               self._open_damage_popup(cn, ci, dt, tot, crit, cb)))
+                        #       self.chat_text.window_create(tk.END, window=lnk)
+                        #       self.chat_text.insert(tk.END, "\n")
+                        #       self.chat_text.see(tk.END)
+                        # ─────────────────────────────────────────────────────────────
+
+                        _dmg_ev  = _threading.Event()
+                        _dmg_res: dict = {}
+
+                        def _dmg_link_cb(final_amount,
+                                         _ev=_dmg_ev, _res=_dmg_res):
+                            _app._unregister_approval_event(_ev)
+                            _res["amount"] = final_amount
+                            _ev.set()
+
+                        _app._register_approval_event(_dmg_ev)
                         _app.msg_queue.put({
-                            "sender": f"🎲 {_sub['type_label']}",
-                            "text": _dmg_part,
-                            "color": "#4fc3f7",
+                            "action":          "damage_link",
+                            "sender":          name,
+                            "char_name":       name,        # clé lue par _handle_damage_link
+                            "cible":           _sub["cible"],
+                            "dmg_text":        _dmg_part,
+                            "dmg_total":       _dmg_total,
+                            "is_crit":         _atk_data["is_crit"],
+                            "resume_callback": _dmg_link_cb,
                         })
 
+                        # Bloque le thread AutoGen jusqu'au clic MJ (timeout 300 s)
+                        _dmg_ev.wait(timeout=300)
+                        _app._unregister_approval_event(_dmg_ev)
+
+                        _final_dmg = _dmg_res.get("amount", _dmg_total)
+
+                        # ── Appliquer les dégâts si la cible est un PJ ───────────────
+                        try:
+                            from state_manager import load_state as _ls_d, save_state as _ss_d
+                            _cible_str   = _sub["cible"].lower()
+                            _pj_targets  = [
+                                _pn for _pn in PLAYER_NAMES
+                                if _pn.lower() in _cible_str
+                                or _cible_str in _pn.lower()
+                            ]
+                            _state_d = _ls_d()
+                            for _pj in _pj_targets:
+                                _hp_now  = _state_d.get("characters", {}).get(_pj, {}).get("hp", 0)
+                                _new_hp  = max(0, _hp_now - _final_dmg)
+                                _state_d["characters"][_pj]["hp"] = _new_hp
+                            if _pj_targets:
+                                _ss_d(_state_d)
+                                try:
+                                    _app.root.after(300, _app._refresh_char_stats)
+                                except Exception:
+                                    pass
+                                try:
+                                    if _app._combat_tracker is not None:
+                                        _app.root.after(400, _app._combat_tracker.sync_pc_hp_from_state)
+                                except Exception:
+                                    pass
+                        except Exception as _dmg_err:
+                            print(f"[DamageApply] {_dmg_err}")
+
+                        # ── Feedback propre pour les agents (sans les lignes de dés) ─
+                        _crit_tag = " 🎯 CRITIQUE" if _atk_data["is_crit"] else ""
+                        _modif_note = (
+                            f" (roulé : {_dmg_total}, modifié par MJ)"
+                            if _final_dmg != _dmg_total else ""
+                        )
                         feedback = (
                             "[RÉSULTAT SYSTÈME — ATTAQUE RÉSOLUE]\n"
                             + _atk_data["atk_text"]
                             + "\n  → TOUCHÉ ✅ (MJ)"
                             + (f"\n  Note : {_hit_note}" if _hit_note else "")
-                            + "\n\n" + _dmg_feedback
+                            + f"\n\n[RÉSULTAT SYSTÈME — DÉGÂTS CONFIRMÉS PAR MJ]\n"
+                            + f"⚔️ {name} → {_sub['cible']}{_crit_tag}\n"
+                            + f"  Dégâts appliqués : {_final_dmg}{_modif_note}\n"
+                            + "\n[INSTRUCTION NARRATIVE]\n"
+                            + f"Le système vient d exécuter les dégâts. "
+                            + f"Narre en 1-2 phrases vivantes l impact sur {_sub['cible']}. "
+                            + f"Ne mentionne PAS les chiffres."
                         )
-                        _app.msg_queue.put({"sender": "⚙️ Système", "text": feedback, "color": "#4fc3f7"})
+
+                        _app.msg_queue.put({
+                            "sender": "⚙️ Système",
+                            "text": (
+                                f"[Dégâts confirmés] {name} → {_sub['cible']}{_crit_tag} : "
+                                f"{_final_dmg} dégâts{_modif_note}"
+                            ),
+                            "color": "#ff9944",
+                        })
                         _original_receive(
                             self_mgr,
                             {"role": "user", "content": feedback, "name": "Alexis_Le_MJ"},
@@ -1099,7 +1369,10 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 if _cmap is not None:
                                     def _do_move(cmap=_cmap, n=_mv_name, c=_mv_col, r=_mv_row):
                                         msg = cmap.move_token(n, c, r)
-                                        _app.msg_queue.put({"sender": "🗺️ Carte", "text": msg, "color": "#64b5f6"})
+                                        # Si le token n'existe pas sur la carte, on skip silencieusement
+                                        # (pas de placement préalable = mécanique carte non applicable)
+                                        if msg and "introuvable" not in msg.lower():
+                                            _app.msg_queue.put({"sender": "🗺️ Carte", "text": msg, "color": "#64b5f6"})
                                         try:
                                             _app._rebuild_agent_prompts()
                                         except Exception:
@@ -1441,11 +1714,35 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                     _enqueue_tts(display_text, display_name)
 
             if tool_calls and not is_auto_roll:
+                # ── Confirmation MJ : lien cliquable dans le chat ────────────
+                _tc0 = tool_calls[0] if tool_calls else {}
+                _tool_name = (
+                    _tc0.get("function", {}).get("name", "outil")
+                    if isinstance(_tc0, dict)
+                    else getattr(getattr(_tc0, "function", None), "name", "outil")
+                )
+                _tool_args = _extract_tool_args(_tc0) if tool_calls else {}
+
+                _tc_event  = _threading.Event()
+                _tc_result = {}
+
+                def _tc_cb(_ev=_tc_event, _res=_tc_result):
+                    _res["confirmed"] = True
+                    _ev.set()
+
+                _app._register_approval_event(_tc_event)
                 _app.msg_queue.put({
-                    "sender": name,
-                    "text":   "✨[Est en train de préparer une action/un sort...]",
-                    "color":  "#aaaaaa"
+                    "action":          "tool_confirm",
+                    "sender":          name,
+                    "tool_name":       _tool_name,
+                    "tool_args":       _tool_args,
+                    "resume_callback": _tc_cb,
                 })
+
+                # Bloque le thread AutoGen jusqu'au clic MJ (timeout 180 s → auto-confirme)
+                _tc_event.wait(timeout=180)
+                _app._unregister_approval_event(_tc_event)
+
             elif not tool_calls and name in PLAYER_NAMES:
                 # L'agent a répondu par du texte au lieu d'appeler roll_dice :
                 # annuler le flag pour éviter un auto-roll parasite ultérieur.

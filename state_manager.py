@@ -545,6 +545,20 @@ def get_calendar_prompt() -> str:
 
 def save_state(state):
     with state_lock:
+        # ── Garde-fou absolu : "llm" de chaque personnage est en LECTURE SEULE ──
+        # Aucune fonction ne doit pouvoir écraser ce champ. On relit les valeurs
+        # présentes sur disque et on les réinjecte dans `state` avant chaque
+        # écriture — même si du code appelant a modifié state["characters"][x]["llm"]
+        # par erreur, la valeur sur disque est toujours restaurée.
+        try:
+            if os.path.exists(STATE_FILE):
+                with open(STATE_FILE, "r", encoding="utf-8") as _f:
+                    _on_disk = json.load(_f)
+                for _cn, _cd in _on_disk.get("characters", {}).items():
+                    if "llm" in _cd:
+                        state.setdefault("characters", {}).setdefault(_cn, {})["llm"] = _cd["llm"]
+        except Exception:
+            pass  # Si la lecture échoue, on continue sans bloquer la sauvegarde
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=4, ensure_ascii=False)
 

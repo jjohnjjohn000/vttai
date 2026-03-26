@@ -24,6 +24,11 @@ import random
 import json
 import threading
 
+try:
+    from state_manager import load_state as _sm_load_state
+except ImportError:
+    _sm_load_state = None
+
 # ─── Intégration bestiary (optionnelle) ───────────────────────────────────────
 try:
     from npc_bestiary_panel import (
@@ -46,6 +51,11 @@ COMBAT_STATE: dict = {
     # Deux ressources hors-tour indépendantes, réinitialisées à chaque round :
     "reactions_used":    set(),   # PJ ayant utilisé leur réaction D&D 5e ce round
     "speech_used":       set(),   # PJ ayant utilisé leur parole hors-tour ce round
+    # Flag [PAROLE_SPONTANEE] : indique que la prochaine prise de parole
+    # d'un agent est sollicitée par le MJ et ne doit PAS consommer speech_used.
+    # Mis à True dans engine_receive quand le MJ envoie [PAROLE_SPONTANEE],
+    # remis à False dès que l'agent a répondu.
+    "spontaneous_speech_pending": False,
 }
 
 
@@ -53,6 +63,21 @@ def _is_fully_silenced(agent_name: str) -> bool:
     """Retourne True si l'agent a épuisé ses DEUX ressources hors-tour ce round."""
     return (agent_name in COMBAT_STATE["reactions_used"]
             and agent_name in COMBAT_STATE["speech_used"])
+
+
+def mark_speech_used(agent_name: str):
+    """
+    Enregistre une prise de parole hors-tour pour agent_name.
+
+    Si spontaneous_speech_pending est True, la parole a été sollicitée par
+    le MJ via [PAROLE_SPONTANEE] : elle est GRATUITE et ne consomme PAS
+    la ressource parole du round.  Le flag est réinitialisé dans tous les cas.
+    """
+    if COMBAT_STATE.get("spontaneous_speech_pending"):
+        COMBAT_STATE["spontaneous_speech_pending"] = False
+        return   # parole MJ-sollicitée → gratuite, pas de débit
+    COMBAT_STATE["speech_used"].add(agent_name)
+    COMBAT_STATE["spontaneous_speech_pending"] = False
 
 
 def get_combat_prompt(agent_name: str) -> str:
@@ -78,6 +103,32 @@ def get_combat_prompt(agent_name: str) -> str:
 
     # ── Tour actif ───────────────────────────────────────────────────────────
     if agent_name == active:
+        # ── Snapshot emplacements de sorts ───────────────────────────────────
+        _slot_block = ""
+        if _sm_load_state is not None:
+            try:
+                _st    = _sm_load_state()
+                _slots = (
+                    _st.get("characters", {})
+                       .get(agent_name, {})
+                       .get("spell_slots", {})
+                )
+                if _slots:
+                    _slot_lines = []
+                    for _lvl in sorted(_slots.keys(), key=lambda x: int(x)):
+                        _n = _slots[_lvl]
+                        _icon = "✅" if _n > 0 else "❌"
+                        _slot_lines.append(f"    Niv.{_lvl} : {_icon} {_n} slot(s)")
+                    _slot_block = (
+                        "  📖 EMPLACEMENTS DE SORTS (état actuel) :\n"
+                        + "\n".join(_slot_lines) + "\n"
+                        "  ⚠ Ne tente JAMAIS un sort dont le slot est à ❌ 0 —\n"
+                        "    si tu veux le lancer, choisis un niveau avec ✅ slots dispo (upcast),\n"
+                        "    ou opte pour un tour de magie / action physique.\n"
+                    )
+            except Exception:
+                pass
+
         # Rappels spécifiques par personnage
         _char_hints = {
             "Kaelen": (
@@ -108,6 +159,7 @@ def get_combat_prompt(agent_name: str) -> str:
             f"\n\n⚔️ ═══ COMBAT — ROUND {rnd} — C'EST TON TOUR ═══\n"
             "Utilise TON ÉCONOMIE D'ACTION COMPLÈTE de façon AUTONOME :\n\n"
             f"{hint}"
+            f"{_slot_block}"
             "  ↺ RÉACTION : disponible si déclencheur hors-tour (Bouclier, AttOpp…).\n"
             "  🏃 MOUVEMENT : repositionne-toi si c'est tactiquement utile.\n\n"
             "⚠ Ne laisse JAMAIS ton Action inutilisée — au minimum : Esquive (Dodge) ou Aide (Help).\n"

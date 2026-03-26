@@ -108,6 +108,9 @@ class UISetupMixin:
         )
         self.btn_pause.pack(side=tk.LEFT, padx=(5, 0))
 
+        # ── Contrôle de volume ───────────────────────────────────────────────
+        self.build_volume_control(input_frame).pack(side=tk.LEFT, padx=(8, 0))
+
         tk.Button(
             input_frame, text="↑ Fenêtres",
             bg="#2a3a4a", fg="#aaccee",
@@ -480,6 +483,81 @@ class UISetupMixin:
             card_widgets["bar_bg"].config(bg="#2a2a2a")
             card_widgets["bar_fill"].config(bg="#444444")
             card_widgets["bar_fill"].place(relwidth=1.0)
+
+    def _append_tool_confirm_link(self, char_name: str, tool_name: str,
+                                   tool_args: dict, callback):
+        """
+        Insère dans chat_display un lien cliquable pour confirmer un appel d'outil.
+        Le clic MJ débloque le thread AutoGen via callback().
+        Si le MJ ne clique pas dans le délai, AutoGen auto-confirme côté engine.
+        """
+        # ── Formatage du libellé ─────────────────────────────────────────────
+        _LABELS = {
+            "roll_dice":               "🎲 Jet de dés",
+            "use_spell_slot":          "🔮 Slot de sort",
+            "update_hp":               "❤️ Mise à jour PV",
+            "add_temp_hp":             "🛡 PV temporaires",
+            "add_item_to_inventory":   "🎒 Ajout inventaire",
+            "remove_item_from_inventory": "🗑 Retrait inventaire",
+            "update_currency":         "💰 Mise à jour monnaie",
+        }
+        label = _LABELS.get(tool_name, f"⚙ {tool_name}")
+
+        args_parts = []
+        for k, v in (tool_args or {}).items():
+            if k == "character_name":
+                continue          # redondant avec char_name
+            args_parts.append(f"{k}={v}")
+        args_str = "  " + "  ".join(args_parts) if args_parts else ""
+
+        link_text = f"✨ {char_name} — {label}{args_str}   ▶ Confirmer"
+
+        # ── Tag unique par callback ──────────────────────────────────────────
+        tag = f"tool_confirm_{id(callback)}"
+        color = self.CHAR_COLORS.get(char_name, "#FFD700")
+
+        # ── Insertion dans le widget (thread-safe via root.after) ────────────
+        def _insert():
+            self.chat_display.config(state=tk.NORMAL)
+            self.chat_display.insert(tk.END, link_text + "\n", (tag, "tool_confirm_link"))
+            self.chat_display.config(state=tk.DISABLED)
+            self.chat_display.see(tk.END)
+
+            # Style du lien
+            self.chat_display.tag_config(
+                tag,
+                foreground=color,
+                underline=True,
+                font=("Consolas", 11, "bold"),
+            )
+            self.chat_display.tag_raise(tag)
+
+            # ── Clic → confirme et grisse le lien ───────────────────────────
+            def _on_click(event, _cb=callback, _t=tag, _lt=link_text):
+                self.chat_display.config(state=tk.NORMAL)
+                # Remplacer le texte cliquable par "✓ Confirmé"
+                idx_start = self.chat_display.tag_ranges(_t)
+                if idx_start:
+                    self.chat_display.delete(idx_start[0], idx_start[1])
+                    done = _lt.replace("▶ Confirmer", "✓ Confirmé")
+                    self.chat_display.insert(idx_start[0], done + "\n", ("tool_done",))
+                self.chat_display.config(state=tk.DISABLED)
+                self.chat_display.tag_unbind(_t, "<Button-1>")
+                _cb()
+
+            self.chat_display.tag_bind(tag, "<Button-1>", _on_click)
+            self.chat_display.tag_bind(
+                tag, "<Enter>", lambda e: self.chat_display.config(cursor="hand2"))
+            self.chat_display.tag_bind(
+                tag, "<Leave>", lambda e: self.chat_display.config(cursor=""))
+
+            # Style "confirmé" (grisé, non souligné)
+            self.chat_display.tag_config(
+                "tool_done", foreground="#555566", underline=False,
+                font=("Consolas", 10, "italic"),
+            )
+
+        self.root.after(0, _insert)
 
     @staticmethod
     def _hp_color(pct: float) -> str:

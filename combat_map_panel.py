@@ -3332,12 +3332,12 @@ class CombatMapWindow:
         self._save_state()
 
     def _resize_grid(self):
-        cols = simpledialog.askinteger("Colonnes", "Colonnes (5–60) :",
-            initialvalue=self.cols, minvalue=5, maxvalue=60, parent=self.win)
+        cols = simpledialog.askinteger("Colonnes", "Colonnes (5–160) :",
+            initialvalue=self.cols, minvalue=5, maxvalue=160, parent=self.win)
         if cols is None:
             return
-        rows = simpledialog.askinteger("Lignes", "Lignes (5–40) :",
-            initialvalue=self.rows, minvalue=5, maxvalue=40, parent=self.win)
+        rows = simpledialog.askinteger("Lignes", "Lignes (5–100) :",
+            initialvalue=self.rows, minvalue=5, maxvalue=100, parent=self.win)
         if rows is None:
             return
 
@@ -4781,7 +4781,9 @@ def get_map_prompt(win_state: dict) -> str:
         return max(abs(c1 - c2), abs(r1 - r2)) * 1.5
 
     lines = [
-        f"\n\n🗺️ ═══ CARTE DE COMBAT ({cols}×{rows} cases — 1 case = 1,5 m) ═══"
+        f"\n\n🗺️ ═══ CARTE DE COMBAT ({cols}×{rows} cases — 1 case = 1,5 m) ═══",
+        "  • L'axe des Colonnes (Col) va de GAUCHE (1) vers la DROITE (est).",
+        "  • L'axe des Rangées/Lignes (Lig) va du HAUT (1) vers le BAS (sud)."
     ]
 
     # ── Positions des héros ────────────────────────────────────────────────────

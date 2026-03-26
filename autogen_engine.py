@@ -85,15 +85,47 @@ class AutogenEngineMixin:
         # ── Config LLM par personnage ─────────────────────────────────────────
         _char_state = load_state().get("characters", {})
 
+        # ── SECONDARY LLM — null llm_session_override at program start ────────
+        # llm_session_override is written to campaign_state.json whenever the
+        # GM picks a model from the UI dropdown during a session.  It MUST be
+        # cleared on every startup so a stale value from a previous session does
+        # not silently shadow the per-agent "llm" field in campaign_state.json.
+        #
+        # Priority order (enforced by _cfg below):
+        #   1. campaign_state.json "llm"   — permanent per-agent setting (default)
+        #   2. llm_session_override        — set via UI dropdown during THIS session
+        #   3. app_config model            — global fallback
+        #   4. _default_model              — last-resort fallback
+        # The existing fallback chain in build_llm_config() kicks in after step 4.
+        _null_startup_state = load_state()
+        _null_modified = False
+        for _cn, _cd in _null_startup_state.get("characters", {}).items():
+            if _cd.get("llm_session_override"):
+                _cd["llm_session_override"] = ""
+                _char_state.setdefault(_cn, {})["llm_session_override"] = ""
+                _null_modified = True
+        if _null_modified:
+            save_state(_null_startup_state)
+        print("[LLM] Startup: llm_session_override nulled for all characters.")
+        del _null_startup_state, _null_modified
+
         def _cfg(char_name: str) -> dict:
-            model = (_char_state.get(char_name, {}).get("llm", "")
+            # Priority 1 — no secondary LLM set this session: use campaign_state "llm"
+            # Priority 2 — secondary LLM set via UI dropdown:  use llm_session_override
+            # Priority 3 — neither available:                  app_config → _default_model
+            #              (build_llm_config then runs the full provider fallback chain)
+            cs_char = _char_state.get(char_name, {})
+            model = (cs_char.get("llm_session_override", "")
+                     or cs_char.get("llm", "")
                      or get_agent_config(char_name).get("model", "")
                      or _default_model)
             temp  = get_agent_config(char_name).get("temperature", 0.7)
             return build_llm_config(model, temperature=temp)
 
         def _provider_label(char_name: str) -> str:
-            model = (_char_state.get(char_name, {}).get("llm", "")
+            cs_char = _char_state.get(char_name, {})
+            model = (cs_char.get("llm_session_override", "")
+                     or cs_char.get("llm", "")
                      or get_agent_config(char_name).get("model", "")
                      or _default_model)
             if model.startswith("groq/"):        return f"Groq ({model[5:]})"
@@ -138,18 +170,16 @@ class AutogenEngineMixin:
             SPELL_CASTERS = ["Kaelen", "Elara", "Lyra"]
 
         # ── PNJ patterns ──────────────────────────────────────────────────────
-        _PNJ_BASE = ["Ismark", "Strahd", "Ireena", "Madam Eva", "Rahadin",
-                     "Viktor", "Morgantha", "Gil", "Mart", "Donavich", "Dori",
-                     "Gustav", "Tavernier", "Garde", "Maire"]
         try:
             _state_pnj = load_state()
-            _dynamic_pnj = (
-                [n["name"] for n in _state_pnj.get("npcs", []) if n.get("name")]
-                + [n["name"] for n in _state_pnj.get("group_npcs", []) if n.get("name")]
-            )
-            PNJ_NAMES = list({*_PNJ_BASE, *_dynamic_pnj})
+            PNJ_NAMES = list({
+                n["name"]
+                for src in ("npcs", "group_npcs")
+                for n in _state_pnj.get(src, [])
+                if n.get("name")
+            })
         except Exception:
-            PNJ_NAMES = _PNJ_BASE
+            PNJ_NAMES = []
 
         pnj_patterns = build_pnj_patterns(PNJ_NAMES)
 
@@ -227,22 +257,47 @@ class AutogenEngineMixin:
                 agents.append(agent)
                 self.msg_queue.put({
                     "sender": "⚙ Scène",
-                    "text":   f"{char_name} rejoint la scène.",
+                    "text":   f"{char_name} entre dans la scene.",
                     "color":  "#666677",
                 })
+                # ── Injecter un message MJ dans l'historique AutoGen ─────────
+                # Sans ça, combat_speaker_selector ignore le nouvel arrivant :
+                # aucun message MJ ne le cible, donc il n'est jamais sélectionné.
+                # Le message injecté contient le nom explicite → Cas 1 du
+                # sélecteur → ce PJ et seulement lui est appelé en priorité.
+                if hasattr(self, "groupchat") and self.groupchat.messages is not None:
+                    self.groupchat.messages.append({
+                        "role":    "user",
+                        "name":    "Alexis_Le_MJ",
+                        "content": (
+                            f"[ENTRÉE EN SCÈNE] {char_name} rejoint le groupe. "
+                            f"{char_name}, quelle est ta première réaction ?"
+                        ),
+                    })
+                # ─────────────────────────────────────────────────────────────
             elif not active and agent in agents:
                 agents.remove(agent)
+                # ── Nettoyer le message [ENTRÉE EN SCÈNE] injecté ───────────
+                # Sans ça, _find_last_mj_msg() peut encore trouver ce message
+                # et sélectionner l'agent comme prochain speaker malgré son
+                # retrait de groupchat.agents (ex: [PAROLE_SPONTANEE] vide).
+                if hasattr(self, "groupchat") and self.groupchat.messages is not None:
+                    self.groupchat.messages = [
+                        m for m in self.groupchat.messages
+                        if not (
+                            m.get("name") == "Alexis_Le_MJ"
+                            and f"[ENTRÉE EN SCÈNE] {char_name}" in str(m.get("content", ""))
+                        )
+                    ]
+                # ─────────────────────────────────────────────────────────────
                 self.msg_queue.put({
                     "sender": "⚙ Scène",
                     "text":   f"{char_name} quitte la scène.",
                     "color":  "#666677",
                 })
 
-        import types as _types
-        self._sync_groupchat_agents = _types.MethodType(
-            lambda self_inner, n, a: _sync_groupchat_agents(n, a), self
-        )
-        # Version simple (pas de MethodType trick nécessaire — closure directe)
+        # _sync_groupchat_agents est défini dans ui_setup_mixin.py — pas d'override ici.
+        # On garde _sync_gc comme alias interne si besoin depuis autogen_engine.
         self._sync_gc = _sync_groupchat_agents
 
         # ── Démarrage ────────────────────────────────────────────────────────
@@ -309,14 +364,42 @@ class AutogenEngineMixin:
                     or "429" in err_msg
                     or "quota" in err_msg.lower()
                 )
+                # ── Erreur 400 : capacité invalide (modèle sans tool-use) ─────────
+                # Certains modèles free OpenRouter ou Groq n'acceptent pas les
+                # appels de fonctions/outils. AutoGen lève une Exception avec
+                # le code 400 dans le message. On tente de désactiver les outils
+                # pour tous les agents et de relancer SANS clear_history.
+                is_tool_capability_error = (
+                    "400" in err_msg
+                    and any(kw in err_msg.lower()
+                            for kw in ("capacit", "invalid", "capability",
+                                       "tool", "function", "unsupported"))
+                )
+                if is_tool_capability_error:
+                    self.msg_queue.put({
+                        "sender": "⚠️ Système (Tool Error)",
+                        "text": (
+                            "❌ Erreur 400 — le modèle actif ne supporte pas les appels d'outils.\n"
+                            f"Détail : {err_msg[:200]}\n\n"
+                            "💡 Changez le modèle de l'agent concerné pour un modèle compatible "
+                            "(ex: gemini-2.5-flash, gpt-4o-mini) dans le panneau de config.\n"
+                            "Tapez un message pour reprendre (historique conservé)."
+                        ),
+                        "color": "#FF5722",
+                    })
+                    self._set_waiting_for_mj(True)
+                    premier_message = self.wait_for_input()
+                    self._set_waiting_for_mj(False)
+                    clear_hist = False
+                    continue
 
                 # ── Fallback automatique sur quota épuisé ─────────────────────
                 _FALLBACK_CHAIN = [
-                    "gemini-3.1-pro-preview",
+                    "gemini-3-flash-preview",
                     "gemini-3.1-flash-lite-preview",
                     "gemini-2.5-pro",
-                    "groq/meta-llama/llama-4-scout-17b-16e-instruct",
                     "gemini-2.5-flash",
+                    "groq/meta-llama/llama-4-scout-17b-16e-instruct",
                     "openrouter/meta-llama/llama-3.3-70b-instruct:free",
                     "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
                     "openrouter/arcee-ai/trinity-large-preview:free",
@@ -345,19 +428,16 @@ class AutogenEngineMixin:
                                 next_model = _FALLBACK_CHAIN[idx + 1]
 
                         if next_model:
+                            # ── Détermine les agents concernés (lecture seule) ─
+                            # campaign_state.json["characters"][*]["llm"] est en
+                            # LECTURE SEULE — le fallback ne l'écrit jamais.
+                            # Seul app_config.json est mis à jour sur disque.
                             switched = []
-                            try:
-                                state = load_state()
-                                for _cn in PLAYER_NAMES:
-                                    current = (_char_state.get(_cn, {}).get("llm", "")
-                                               or get_agent_config(_cn).get("model", ""))
-                                    if current == exhausted_model:
-                                        state.setdefault("characters", {}).setdefault(_cn, {})["llm"] = next_model
-                                        switched.append(_cn)
-                                if switched:
-                                    save_state(state)
-                            except Exception as _se:
-                                print(f"[Auto-Fallback] Erreur écriture campaign_state : {_se}")
+                            for _cn in PLAYER_NAMES:
+                                current = (_char_state.get(_cn, {}).get("llm", "")
+                                           or get_agent_config(_cn).get("model", ""))
+                                if current == exhausted_model:
+                                    switched.append(_cn)
 
                             if switched:
                                 try:
@@ -368,6 +448,36 @@ class AutogenEngineMixin:
                                     reload_app_config()
                                 except Exception as _ae:
                                     print(f"[Auto-Fallback] Erreur écriture app_config : {_ae}")
+
+                                # ── Mise à jour des agents EN MÉMOIRE ──────────
+                                # Sans ça, les agents continuent d'utiliser
+                                # l'ancien modèle épuisé et le fallback boucle.
+                                for _cn in switched:
+                                    _agent_obj = self._agents.get(_cn)
+                                    if _agent_obj is None:
+                                        continue
+                                    try:
+                                        _new_cfg = build_llm_config(next_model, temperature=0.7)
+                                        _agent_obj.llm_config = _new_cfg
+                                        import autogen as _ag
+                                        _agent_obj.client = _ag.OpenAIWrapper(
+                                            **{k: v for k, v in _new_cfg.items()
+                                               if k != "functions"}
+                                        )
+                                        print(f"[Auto-Fallback] Agent {_cn} mis à jour en mémoire → {next_model}")
+                                    except Exception as _me:
+                                        print(f"[Auto-Fallback] Erreur mise à jour agent {_cn} en mémoire : {_me}")
+
+                                # ── Mise à jour de _char_state EN MÉMOIRE ─────
+                                # campaign_state.json ne stocke plus le modèle
+                                # de fallback → on met à jour _char_state
+                                # directement pour que _cfg() voie next_model.
+                                try:
+                                    for _cn in switched:
+                                        _char_state.setdefault(_cn, {})["llm"] = next_model
+                                except Exception as _cse:
+                                    print(f"[Auto-Fallback] Erreur mise à jour _char_state : {_cse}")
+
                                 print(f"[Auto-Fallback] {exhausted_model} → {next_model} pour : {switched}")
                                 self.msg_queue.put({
                                     "sender": "⚠️ Système (Auto-Fallback)",
@@ -375,7 +485,7 @@ class AutogenEngineMixin:
                                         f"⚡ Quota épuisé : {exhausted_model}\n"
                                         f"✅ Basculement automatique → {next_model}\n"
                                         f"Agents concernés : {', '.join(switched)}\n"
-                                        f"app_config.json et campaign_state.json mis à jour.\n"
+                                        f"app_config.json mis à jour.\n"
                                         f"Tapez un message pour reprendre (historique conservé)."
                                     ),
                                     "color": "#FF9800",

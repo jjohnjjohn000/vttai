@@ -470,3 +470,130 @@ def get_all_feature_details(class_name: str, subclass_short: str = "",
     # Trier par niveau puis par nom
     results.sort(key=lambda x: (x["level"], x["name"]))
     return results
+
+
+# ─── Capacités de classe sans jet de dés ──────────────────────────────────────
+#
+# Dictionnaire des capacités qui NE nécessitent PAS de d20.
+# Clé   : mot-clé lowercase pour la détection dans intention/regle
+# Valeur: (class_name, feature_name, narrative_hint)
+# {name} dans narrative_hint est remplacé par le nom du personnage à l'exécution.
+#
+NO_ROLL_FEATURES: dict = {
+    # ── Paladin ───────────────────────────────────────────────────────────────
+    "divine sense": (
+        "paladin", "Divine Sense",
+        "Narre en 1-2 phrases la concentration de {name} : ses paupières qui se ferment, "
+        "l'aura sacrée qui rayonne brièvement. Attends que le MJ décrive ce qu'il perçoit.",
+    ),
+    "lay on hands": (
+        "paladin", "Lay on Hands",
+        "Narre le toucher sacré de {name} : la chaleur irradiant de sa paume. "
+        "Le MJ appliquera les PV restaurés.",
+    ),
+    "aura of protection": (
+        "paladin", "Aura of Protection",
+        "Capacité passive — toujours active. Rappelle au MJ qu'elle s'applique "
+        "aux jets de sauvegarde des alliés dans les 3 m.",
+    ),
+    "aura of courage": (
+        "paladin", "Aura of Courage",
+        "Capacité passive — toujours active. Aucune action requise.",
+    ),
+    "divine health": (
+        "paladin", "Divine Health",
+        "Capacité passive. Aucune mécanique à résoudre.",
+    ),
+    "improved divine smite": (
+        "paladin", "Improved Divine Smite",
+        "Passif automatique — s'ajoute aux jets d'attaque. Déclare plutôt une attaque.",
+    ),
+    "cleansing touch": (
+        "paladin", "Cleansing Touch",
+        "Narre le toucher purificateur de {name}. Le MJ confirmera quel sort est dissipé.",
+    ),
+    # ── Guerrier ──────────────────────────────────────────────────────────────
+    "action surge": (
+        "fighter", "Action Surge",
+        "Narre l'élan soudain de {name}. "
+        "Déclare l'Action supplémentaire dans un nouveau [ACTION].",
+    ),
+    "second wind": (
+        "fighter", "Second Wind",
+        "Narre la respiration forcée de {name}. "
+        "Le MJ lancera le dé de récupération.",
+    ),
+    "indomitable": (
+        "fighter", "Indomitable",
+        "Utilisé en réaction à un jet de sauvegarde raté. Relance ce jet spécifique.",
+    ),
+    # ── Barbare ───────────────────────────────────────────────────────────────
+    "rage": (
+        "barbarian", "Rage",
+        "Narre le basculement de {name} dans la furie : les veines saillant, "
+        "le rugissement. Durée 1 minute (10 rounds).",
+    ),
+    "reckless attack": (
+        "barbarian", "Reckless Attack",
+        "Avantage sur le jet d'attaque suivant, mais les attaques contre {name} "
+        "ont aussi avantage. Déclare l'attaque dans un [ACTION] distinct.",
+    ),
+    # ── Roublard ──────────────────────────────────────────────────────────────
+    "cunning action": (
+        "rogue", "Cunning Action",
+        "Action Bonus : Se désengager, Se précipiter, ou Se cacher. "
+        "Déclare laquelle dans un [ACTION] distinct.",
+    ),
+    "uncanny dodge": (
+        "rogue", "Uncanny Dodge",
+        "Réaction quand une attaque touche {name} : dégâts divisés par 2. "
+        "Aucun jet de {name} — c'est la cible qui subit.",
+    ),
+    "evasion": (
+        "rogue", "Evasion",
+        "Passif — s'applique automatiquement sur les jets de Dex vs zone.",
+    ),
+    # ── Druide ────────────────────────────────────────────────────────────────
+    "wild shape": (
+        "druid", "Wild Shape",
+        "Narre la transformation de {name}. "
+        "Le MJ confirmera la forme choisie et ses stats.",
+    ),
+    # ── Barde ─────────────────────────────────────────────────────────────────
+    "bardic inspiration": (
+        "bard", "Bardic Inspiration",
+        "Narre les mots ou la mélodie que {name} offre à l'allié ciblé. "
+        "L'allié gagne un dé d'Inspiration à utiliser quand il le souhaite.",
+    ),
+    # ── Moine ─────────────────────────────────────────────────────────────────
+    "patient defense": (
+        "monk", "Patient Defense",
+        "Action Bonus : {name} prend l'action Esquiver. "
+        "Les attaques le ciblant ont désavantage jusqu'au prochain tour.",
+    ),
+    "stunning strike": (
+        "monk", "Stunning Strike",
+        "Après avoir touché — la cible sauvegarde (Con). "
+        "Aucun jet de {name} : le MJ gère la sauvegarde de la cible.",
+    ),
+}
+
+
+def get_no_roll_feature(intention: str, regle: str) -> "tuple | None":
+    """
+    Détecte si intention ou regle correspond à une capacité sans jet.
+
+    Priorité à regle (source de vérité mécanique), puis intention.
+    Retourne (class_name, feature_name, narrative_hint) ou None.
+    """
+    # Cherche d'abord dans regle seul (plus fiable)
+    r_low = regle.lower()
+    for kw, val in NO_ROLL_FEATURES.items():
+        if kw in r_low:
+            return val
+    # Puis dans intention (moins prioritaire)
+    i_low = intention.lower()
+    for kw, val in NO_ROLL_FEATURES.items():
+        if kw in i_low:
+            return val
+    return None

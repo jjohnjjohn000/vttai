@@ -1432,13 +1432,15 @@ FORMAT DE RÉPONSE : JSON pur, sans markdown, sans texte avant ou après.
             for act in rnd.get("actions", []):
                 attacker_name = act.get("attacker") or "?"
                 target_name   = act.get("target")   or "?"
-                roll          = act.get("roll",    0)
-                bonus         = act.get("bonus",   0)
-                total         = act.get("total",   roll + bonus)
-                target_ac     = act.get("target_ac", 0)
+                roll          = act.get("roll",    0) or 0
+                bonus         = act.get("bonus",   0) or 0
+                total         = act.get("total",   None)
+                if total is None:
+                    total     = roll + bonus
+                target_ac     = act.get("target_ac", 0) or 0
                 hit           = act.get("hit",    False)
                 crit          = act.get("crit",   False)
-                dmg           = act.get("damage", 0)
+                dmg           = act.get("damage", 0) or 0
                 hp_after      = act.get("target_hp_after", None)
                 note          = act.get("note",   "")
 

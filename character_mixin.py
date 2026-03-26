@@ -194,13 +194,18 @@ class CharacterMixin:
                  font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=14)
         def _get_actual_llm() -> str:
             """Retourne le modèle réellement utilisé par le moteur.
-            Priorité identique à autogen_engine.py :
-              1. campaign_state (characters.<nom>.llm)  ← source de vérité
-              2. app_config (agents.<nom>.model)         ← fallback
+            Priorité :
+              1. campaign_state (characters.<nom>.llm_session_override)  ← override UI de session
+              2. campaign_state (characters.<nom>.llm)                   ← source de vérité
+              3. app_config (agents.<nom>.model)                         ← fallback
             """
             try:
                 from state_manager import load_state as _ls
-                cs_model = _ls().get("characters", {}).get(char_name, {}).get("llm", "")
+                cs = _ls().get("characters", {}).get(char_name, {})
+                override = cs.get("llm_session_override", "")
+                if override:
+                    return override
+                cs_model = cs.get("llm", "")
                 if cs_model:
                     return cs_model
             except Exception:
@@ -215,11 +220,165 @@ class CharacterMixin:
             return data.get("llm", "?")
 
         def _fmt_llm(model: str) -> str:
-            return model.replace("gemini-", "G:").replace("groq/", "Q:").replace("openrouter/", "OR:")
+            return (model
+                    .replace("gemini-", "G:")
+                    .replace("groq/", "Q:")
+                    .replace("openrouter/", "OR:")
+                    .replace("deepseek/", "DS:"))
 
         llm_label = tk.Label(hdr, text=_fmt_llm(_get_actual_llm()), bg=color, fg="#333333",
-                             font=("Consolas", 8))
-        llm_label.pack(side=tk.RIGHT, padx=10)
+                             font=("Consolas", 8), cursor="hand2",
+                             relief="flat", padx=2)
+        llm_label.pack(side=tk.RIGHT, padx=6)
+
+        # ── Tooltip helper ────────────────────────────────────────────────────
+        _tip_win = [None]
+        def _show_tip(event=None):
+            if _tip_win[0]:
+                return
+            tw = tk.Toplevel(win)
+            tw.wm_overrideredirect(True)
+            tw.attributes("-topmost", True)
+            tw.geometry(f"+{event.x_root + 4}+{event.y_root + 16}")
+            tk.Label(tw, text="Cliquer pour changer le modèle LLM",
+                     bg="#333344", fg="#ccccff", font=("Arial", 8),
+                     padx=6, pady=3, relief="solid", bd=1).pack()
+            _tip_win[0] = tw
+        def _hide_tip(event=None):
+            if _tip_win[0]:
+                try:
+                    _tip_win[0].destroy()
+                except Exception:
+                    pass
+                _tip_win[0] = None
+        llm_label.bind("<Enter>", _show_tip)
+        llm_label.bind("<Leave>", _hide_tip)
+
+        def _apply_llm_override(new_model: str):
+            """
+            Applique le nouveau modèle pour cet agent :
+              1. Sauvegarde llm_session_override dans campaign_state (clé séparée de 'llm').
+              2. Met à jour l'agent AutoGen en mémoire (llm_config + client).
+              3. Rafraîchit le label.
+              4. Si un LLM tourne, l'interrompt et reprend avec le nouveau modèle.
+            """
+            _hide_tip()
+
+            # ── 1. Persistance (clé séparée — ne touche pas à 'llm') ──────────
+            try:
+                from state_manager import load_state as _ls2, save_state as _ss2
+                _s2 = _ls2()
+                _s2.setdefault("characters", {}).setdefault(char_name, {})["llm_session_override"] = new_model
+                _ss2(_s2)
+            except Exception as _e1:
+                print(f"[LLM Override] Erreur sauvegarde state pour {char_name}: {_e1}")
+
+            # ── 2. Mise à jour de l'agent en mémoire ─────────────────────────
+            try:
+                import autogen as _ag2
+                _agent = self._agents.get(char_name) if hasattr(self, "_agents") else None
+                if _agent is not None:
+                    from app_config import get_agent_config as _gac
+                    from llm_config import build_llm_config as _blc
+                    _temp = _gac(char_name).get("temperature", 0.7)
+                    _new_cfg = _blc(new_model, temperature=_temp)
+                    _agent.llm_config = _new_cfg
+                    _agent.client = _ag2.OpenAIWrapper(
+                        **{k: v for k, v in _new_cfg.items() if k != "functions"}
+                    )
+                    print(f"[LLM Override] {char_name} → {new_model} (agent mis à jour en mémoire)")
+            except Exception as _e2:
+                print(f"[LLM Override] Erreur mise à jour agent {char_name}: {_e2}")
+
+            # ── 3. Rafraîchir le label ────────────────────────────────────────
+            try:
+                llm_label.config(text=_fmt_llm(new_model))
+            except Exception:
+                pass
+
+            # ── 4. Interruption + reprise — seulement si c'est CET agent qui parle ──
+            _is_running  = getattr(self, "_llm_running",    False)
+            _is_waiting  = getattr(self, "_waiting_for_mj", True)
+            # Vérifie que c'est bien char_name qui génère en ce moment.
+            # AutoGen met à jour groupchat.last_speaker avant chaque génération,
+            # donc last_speaker.name == char_name ↔ cet agent est actif.
+            _gc = getattr(self, "groupchat", None)
+            _last_speaker = getattr(_gc, "last_speaker", None)
+            _is_this_agent_speaking = (
+                _last_speaker is not None
+                and getattr(_last_speaker, "name", None) == char_name
+            )
+            if _is_running and not _is_waiting and _is_this_agent_speaking:
+                # Interruption silencieuse — le moteur reprend avec la continuation.
+                # On précise que c'est le tour de cet agent et que sa réponse
+                # précédente (encore en historique) est annulée : il doit
+                # re-déclarer son tour complet avec tous les blocs [ACTION].
+                self._pending_interrupt_input = (
+                    f"[SYSTÈME — CONTINUATION — TOUR DE {char_name}] "
+                    f"Le modèle LLM de {char_name} vient d'être remplacé en cours de génération. "
+                    f"Sa réponse précédente est annulée et doit être ignorée. "
+                    f"C'est toujours le tour de {char_name} : "
+                    f"il doit re-déclarer son tour complet depuis le début, "
+                    f"y compris tous les blocs [ACTION] requis."
+                )
+                self._pending_interrupt_display = None
+                self._inject_stop()
+                self.msg_queue.put({
+                    "sender": "🔄 Système",
+                    "text":   f"{char_name} : modèle basculé → {new_model}\nLLM interrompu — reprise en cours.",
+                    "color":  "#aaaaff",
+                })
+            else:
+                self.msg_queue.put({
+                    "sender": "🔄 Système",
+                    "text":   f"{char_name} : modèle basculé → {new_model}\n(Actif dès le prochain appel LLM.)",
+                    "color":  "#aaaaff",
+                })
+
+        def _show_llm_dropdown(event=None):
+            """Affiche un menu de sélection de modèle LLM."""
+            _hide_tip()
+            from app_config import KNOWN_MODELS as _KM
+            current = _get_actual_llm()
+
+            menu = tk.Menu(win, tearoff=0,
+                           bg="#1a1a2e", fg="#e0e0ff",
+                           activebackground="#3a3a6a", activeforeground="white",
+                           font=("Consolas", 9))
+
+            # Sections groupées par fournisseur
+            _sections = [
+                ("🌐 Gemini",      lambda m: not any(m.startswith(p) for p in ("groq/","openrouter/","deepseek/"))),
+                ("🧠 DeepSeek",    lambda m: m.startswith("deepseek/")),
+                ("⚡ Groq",        lambda m: m.startswith("groq/")),
+                ("🔀 OpenRouter",  lambda m: m.startswith("openrouter/")),
+            ]
+            first_section = True
+            for section_label, predicate in _sections:
+                models_in_section = [m for m in _KM if predicate(m)]
+                if not models_in_section:
+                    continue
+                if not first_section:
+                    menu.add_separator()
+                first_section = False
+                menu.add_command(label=f"── {section_label} ──",
+                                 state="disabled",
+                                 foreground="#888899")
+                for m in models_in_section:
+                    prefix = "✓  " if m == current else "    "
+                    short  = _fmt_llm(m)
+                    display = f"{prefix}{short}"
+                    # Pour les noms longs, afficher aussi le slug complet
+                    if len(m) > 30:
+                        display += f"  [{m.split('/')[-1][:28]}]"
+                    menu.add_command(
+                        label=display,
+                        command=lambda _m=m: _apply_llm_override(_m),
+                    )
+
+            menu.post(event.x_root, event.y_root)
+
+        llm_label.bind("<Button-1>", _show_llm_dropdown)
 
         # ── Barre d'onglets ───────────────────────────────────────────────────
         tabs_bar = tk.Frame(win, bg="#12121e")
@@ -562,7 +721,7 @@ class CharacterMixin:
                 lbl.pack_forget()
                 spx.config(fg=fg_fn(get_fn()) if fg_fn else color)
                 spx.delete(0, tk.END); spx.insert(0, str(get_fn()))
-                spx.pack(side=tk.RIGHT); spx.focus_set(); spx.select_range(0, tk.END)
+                spx.pack(side=tk.RIGHT); spx.focus_set(); spx.selection_range(0, tk.END)
 
             def _end(e=None):
                 try:
@@ -746,7 +905,8 @@ class CharacterMixin:
                 hd_lbl.config(text=str(avail))
                 ac_lbl.config(text=str(d2.get("ac", ac)))
                 _rebuild_slots()
-                # ── Mise à jour du label LLM si le modèle a changé (ex: fallback quota) ──
+                # ── Mise à jour du label LLM si le modèle a changé ──────────────
+                # (ex: fallback quota automatique, ou changement via dropdown)
                 current_short = _fmt_llm(_get_actual_llm())
                 if llm_label.cget("text") != current_short:
                     llm_label.config(text=current_short)

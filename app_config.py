@@ -22,12 +22,14 @@ _lock = threading.Lock()
 
 # ─── Modèles disponibles (pour les dropdowns) ─────────────────────────────────
 KNOWN_MODELS = [
-    # Gemini
+    # Gemini — modèles actifs
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-flash-preview",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash",
+    "gemini-2.5-flash-lite",
+    # gemini-2.0-flash — DÉPRÉCIÉ, retiré
+    # Gemini 1.5 — DÉPRÉCIÉS, retirés
     # DeepSeek direct (DEEPSEEK_API_KEY)
     "deepseek/deepseek-chat",       # V3.2 — outil calls, 128K ctx, pas cher
     "deepseek/deepseek-reasoner",   # V3.2 thinking — CoT, ignorer temperature
@@ -35,11 +37,13 @@ KNOWN_MODELS = [
     "groq/meta-llama/llama-4-scout-17b-16e-instruct",
     "groq/llama-3.3-70b-versatile",
     "groq/llama-3.1-70b-versatile",
-    "groq/mixtral-8x7b-32768",
-    # OpenRouter gratuits
-    "openrouter/meta-llama/llama-3.3-70b-instruct:free",
-    "openrouter/google/gemma-3-27b-it:free",
-    "openrouter/mistralai/mistral-7b-instruct:free",
+    # groq/mixtral-8x7b-32768 — DÉPRÉCIÉ, retiré
+    # OpenRouter — modèles moins restrictifs, adaptés au jeu de rôle
+    "openrouter/nousresearch/hermes-3-llama-3.1-70b",        # Hermes 3 — roleplay, peu restrictif
+    "openrouter/nousresearch/hermes-3-llama-3.1-405b",       # Hermes 3 large — plus puissant
+    "openrouter/qwen/qwen-2.5-72b-instruct",                 # Qwen 2.5 72B — permissif, multilingue
+    "openrouter/mistralai/mistral-small-3.1-24b-instruct",   # Mistral Small 3.1 — rapide, peu restrictif
+    "openrouter/meta-llama/llama-3.3-70b-instruct",          # LLaMA 3.3 70B — non censuré
 ]
 
 # ─── Valeurs par défaut ────────────────────────────────────────────────────────
@@ -77,7 +81,7 @@ DEFAULTS: dict = {
         ),
     },
     "groupchat": {
-        "max_round":            100,
+        "max_round":            9999,
         "allow_repeat_speaker": False,
     },
     "memories": {
@@ -87,6 +91,7 @@ DEFAULTS: dict = {
     "voice": {
         "enabled": True,
         "backend": "edge-tts",          # "edge-tts" (en ligne) | "piper" (local, hors-ligne)
+        "volume":  100,                 # 0–100 : volume global de toutes les sorties audio
     },
     "piper": {
         "models_dir": "piper_models",   # dossier de cache des modèles .onnx

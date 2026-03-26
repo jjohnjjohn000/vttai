@@ -26,7 +26,7 @@
   "char_Lyra": {
     "w": 300,
     "h": 575,
-    "x": 3540,
+    "x": 3539,
     "y": 1540
   },
   "modal_skill_check": {
@@ -85,7 +85,7 @@
   },
   "modal_config": {
     "w": 893,
-    "h": 954,
+    "h": 972,
     "x": 2581,
     "y": 1137
   },
@@ -2614,7 +2614,7 @@
       }
     ]
   },
-  "active_map_name": "Barovie",
+  "active_map_name": "Tser Falls",
   "campaign_log_viewer": {
     "w": 1016,
     "h": 614,
@@ -2646,8 +2646,15 @@
   "monster_Ezmerelda": {
     "w": 660,
     "h": 840,
-    "x": 2011,
+    "x": 2164,
+    "y": 1157
+  },
+  "monster_Van Richten": {
+    "w": 660,
+    "h": 840,
+    "x": 2111,
     "y": 0
   },
-  "_open_combat_map": true
+  "_open_combat_map": true,
+  "_open_combat_tracker": true
 }

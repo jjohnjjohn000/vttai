@@ -64,6 +64,7 @@ from llm_control_mixin     import LLMControlMixin        # stop_llms, send_text,
 from autogen_engine        import AutogenEngineMixin     # run_autogen — moteur principal
 from campaign_log_mixin    import CampaignLogMixin       # journal long terme + archivage
 from quest_tracker_mixin   import QuestTrackerMixin      # analyse IA des quêtes
+from volume_mixin          import VolumeControlMixin     # slider volume audio global
 
 # ── Imports des modules métier ─────────────────────────────────────────────────
 from state_manager import (
@@ -116,6 +117,7 @@ class DnDApp(
     AutogenEngineMixin,     # autogen_engine.py       — moteur AutoGen complet
     CampaignLogMixin,       # campaign_log_mixin.py   — journal long terme
     QuestTrackerMixin,      # quest_tracker_mixin.py  — analyse IA des quêtes
+    VolumeControlMixin,     # volume_mixin.py         — slider volume audio global
 ):
     """Moteur de l'Aube Brisée — Interface du Maître de Jeu."""
 
@@ -226,6 +228,8 @@ class DnDApp(
         """S'exécute dans mainloop() via root.after(0).
         Garantit que setup_ui tourne sous contrôle exclusif de Xlib par Tk.
         """
+        from voice_interface import load_volume_from_config
+        load_volume_from_config()   # charge le volume sauvegardé avant setup_ui
         self.setup_ui()
         threading.Thread(target=self.audio_worker, daemon=True).start()
         self.root.after(100, self.process_queue)

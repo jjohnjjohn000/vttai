@@ -692,6 +692,475 @@ def _tab_voice_ui(nb, cfg, vars_):
     return tab
 
 
+def _tab_llm_resources(nb, cfg):
+    """Onglet : état des clés API, modèles configurés vs actifs, chaîne de fallback."""
+    import os
+    import threading as _thr
+
+    tab = tk.Frame(nb, bg=BG)
+
+    # ── En-tête ───────────────────────────────────────────────────────────────
+    header = tk.Frame(tab, bg="#0a1520", pady=8)
+    header.pack(fill=tk.X)
+    tk.Label(header, text="🔑 Ressources LLM",
+             bg="#0a1520", fg=GOLD, font=("Arial", 11, "bold")).pack(side=tk.LEFT, padx=16)
+    tk.Label(header, text="Clés API · Modèles configurés vs actifs · Chaîne de fallback",
+             bg="#0a1520", fg=FG_DIM, font=("Arial", 8)).pack(side=tk.RIGHT, padx=16)
+
+    # ── Zone scrollable ───────────────────────────────────────────────────────
+    outer = tk.Frame(tab, bg=BG)
+    outer.pack(fill=tk.BOTH, expand=True)
+
+    canvas = tk.Canvas(outer, bg=BG, highlightthickness=0)
+    sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=sb.set)
+    sb.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    inner = tk.Frame(canvas, bg=BG)
+    win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    inner.bind("<Configure>",
+               lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas.bind("<Configure>",
+                lambda e: canvas.itemconfig(win_id, width=e.width))
+
+    def _on_wheel(e):
+        canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+    canvas.bind("<Enter>",  lambda e: canvas.bind_all("<MouseWheel>", _on_wheel))
+    canvas.bind("<Leave>",  lambda e: canvas.unbind_all("<MouseWheel>"))
+
+    # ── Helpers locaux ────────────────────────────────────────────────────────
+    def _mask(k: str) -> str:
+        if len(k) <= 12:
+            return k[:4] + "****"
+        return k[:8] + "…" + k[-4:]
+
+    def _collect_gemini_keys() -> list[tuple[str, str]]:
+        keys = []
+        k = os.getenv("GEMINI_API_KEY", "")
+        if k:
+            keys.append(("GEMINI_API_KEY", k))
+        for i in range(1, 10):
+            k = os.getenv(f"GEMINI_API_KEY_{i}", "")
+            if k and k not in [v for _, v in keys]:
+                keys.append((f"GEMINI_API_KEY_{i}", k))
+        return keys
+
+    def _collect_groq_keys() -> list[tuple[str, str]]:
+        keys = []
+        k = os.getenv("GROQ_API_KEY", "")
+        if k:
+            keys.append(("GROQ_API_KEY", k))
+        for i in range(1, 10):
+            k = os.getenv(f"GROQ_API_KEY_{i}", "")
+            if k and k not in [v for _, v in keys]:
+                keys.append((f"GROQ_API_KEY_{i}", k))
+        return keys
+
+    def _card(parent, pady=(4, 2)) -> tk.Frame:
+        f = tk.Frame(parent, bg=BG2, relief="flat")
+        f.pack(fill=tk.X, padx=20, pady=pady)
+        return f
+
+    def _key_row(parent, name: str, val: str, test_fn=None) -> tk.StringVar:
+        """Ligne clé : nom | valeur masquée | status | bouton Test."""
+        row = tk.Frame(parent, bg=BG2)
+        row.pack(fill=tk.X, padx=12, pady=3)
+        tk.Label(row, text=f"  {name}", bg=BG2, fg=FG_DIM,
+                 font=FONT, width=20, anchor="w").pack(side=tk.LEFT)
+        tk.Label(row, text=_mask(val), bg=BG2, fg=ACCENT,
+                 font=("Consolas", 9)).pack(side=tk.LEFT, padx=(0, 12))
+        sv = tk.StringVar(value="")
+        sl = tk.Label(row, textvariable=sv, bg=BG2, font=("Consolas", 8),
+                      width=24, anchor="w")
+        sl.pack(side=tk.LEFT)
+        if test_fn:
+            tk.Button(row, text="Tester", bg=BG3, fg=ACCENT,
+                      font=("Arial", 8), relief="flat", padx=6,
+                      command=lambda: test_fn(sv, sl)).pack(side=tk.LEFT, padx=4)
+        return sv
+
+    # ── Fonctions de test réseau ──────────────────────────────────────────────
+    def _test_gemini(key_val: str):
+        def _fn(sv, sl):
+            sv.set("⏳ test en cours…")
+            sl.config(fg=GOLD)
+            def _run():
+                try:
+                    import httpx
+                    r = httpx.post(
+                        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                        headers={"Authorization": f"Bearer {key_val}",
+                                 "Content-Type": "application/json"},
+                        json={"model": "gemini-2.0-flash",
+                              "messages": [{"role": "user", "content": "1+1=?"}],
+                              "max_tokens": 5},
+                        timeout=12.0,
+                    )
+                    if r.status_code == 200:
+                        sv.set("✓ Clé valide")
+                        sl.config(fg=GREEN)
+                    elif r.status_code == 429:
+                        sv.set("⚠ Quota épuisé (429)")
+                        sl.config(fg=GOLD)
+                    elif r.status_code in (401, 403):
+                        sv.set("✗ Clé invalide (401/403)")
+                        sl.config(fg=RED)
+                    else:
+                        sv.set(f"? HTTP {r.status_code}")
+                        sl.config(fg=FG_DIM)
+                except Exception as e:
+                    sv.set(f"✗ Erreur réseau")
+                    sl.config(fg=RED)
+            _thr.Thread(target=_run, daemon=True).start()
+        return _fn
+
+    def _test_groq(key_val: str):
+        def _fn(sv, sl):
+            sv.set("⏳ test en cours…")
+            sl.config(fg=GOLD)
+            def _run():
+                try:
+                    import httpx
+                    r = httpx.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {key_val}",
+                                 "Content-Type": "application/json"},
+                        json={"model": "llama-3.1-8b-instant",
+                              "messages": [{"role": "user", "content": "1+1=?"}],
+                              "max_tokens": 5},
+                        timeout=10.0,
+                    )
+                    if r.status_code == 200:
+                        sv.set("✓ Clé valide")
+                        sl.config(fg=GREEN)
+                    elif r.status_code == 429:
+                        sv.set("⚠ Quota épuisé (429)")
+                        sl.config(fg=GOLD)
+                    elif r.status_code in (401, 403):
+                        sv.set("✗ Clé invalide (401)")
+                        sl.config(fg=RED)
+                    else:
+                        sv.set(f"? HTTP {r.status_code}")
+                        sl.config(fg=FG_DIM)
+                except Exception:
+                    sv.set("✗ Erreur réseau")
+                    sl.config(fg=RED)
+            _thr.Thread(target=_run, daemon=True).start()
+        return _fn
+
+    def _test_deepseek(key_val: str):
+        def _fn(sv, sl):
+            sv.set("⏳ test en cours…")
+            sl.config(fg=GOLD)
+            def _run():
+                try:
+                    import httpx
+                    r = httpx.post(
+                        "https://api.deepseek.com/chat/completions",
+                        headers={"Authorization": f"Bearer {key_val}",
+                                 "Content-Type": "application/json"},
+                        json={"model": "deepseek-chat",
+                              "messages": [{"role": "user", "content": "1+1=?"}],
+                              "max_tokens": 5},
+                        timeout=12.0,
+                    )
+                    if r.status_code == 200:
+                        sv.set("✓ Clé valide")
+                        sl.config(fg=GREEN)
+                    elif r.status_code == 402:
+                        sv.set("⚠ Crédit insuffisant (402)")
+                        sl.config(fg=GOLD)
+                    elif r.status_code in (401, 403):
+                        sv.set("✗ Clé invalide (401)")
+                        sl.config(fg=RED)
+                    else:
+                        sv.set(f"? HTTP {r.status_code}")
+                        sl.config(fg=FG_DIM)
+                except Exception:
+                    sv.set("✗ Erreur réseau")
+                    sl.config(fg=RED)
+            _thr.Thread(target=_run, daemon=True).start()
+        return _fn
+
+    # ── Construction du contenu (rebuildable) ─────────────────────────────────
+    def _build():
+        for w in inner.winfo_children():
+            w.destroy()
+
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+
+        gemini_keys = _collect_gemini_keys()
+        groq_keys   = _collect_groq_keys()
+        or_key      = os.getenv("OPENROUTER_API_KEY", "")
+        ds_key      = os.getenv("DEEPSEEK_API_KEY", "")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 1 — Clés API
+        # ══════════════════════════════════════════════════════════════════════
+        _section(inner, "🔑 CLÉS API DÉTECTÉES", GOLD)
+
+        # ── Gemini ────────────────────────────────────────────────────────────
+        c = _card(inner)
+        h = tk.Frame(c, bg=BG2)
+        h.pack(fill=tk.X, padx=12, pady=(8, 4))
+        ok_g = bool(gemini_keys)
+        tk.Label(h, text="Gemini", bg=BG2, fg=ACCENT,
+                 font=("Arial", 9, "bold"), width=12, anchor="w").pack(side=tk.LEFT)
+        tk.Label(h, text=("✓" if ok_g else "✗"),
+                 bg=BG2, fg=(GREEN if ok_g else RED),
+                 font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        tk.Label(h, text=f"  {len(gemini_keys)} clé(s) dans .env",
+                 bg=BG2, fg=(FG if ok_g else FG_DIM),
+                 font=("Consolas", 8)).pack(side=tk.LEFT, padx=8)
+        if ok_g:
+            tk.Label(h,
+                     text=f"→ rotation automatique · cache_seed=None activé",
+                     bg=BG2, fg=FG_DIM, font=("Consolas", 7)).pack(side=tk.RIGHT, padx=8)
+
+        for key_name, key_val in gemini_keys:
+            _key_row(c, key_name, key_val, _test_gemini(key_val))
+        if not ok_g:
+            tk.Label(c, text="  Aucune clé GEMINI_API_KEY* trouvée dans .env",
+                     bg=BG2, fg=RED, font=("Consolas", 8)).pack(anchor="w", padx=16, pady=4)
+        tk.Frame(c, bg=BG2, height=6).pack()
+
+        # ── Groq ──────────────────────────────────────────────────────────────
+        c2 = _card(inner)
+        h2 = tk.Frame(c2, bg=BG2)
+        h2.pack(fill=tk.X, padx=12, pady=(8, 4))
+        ok_gr = bool(groq_keys)
+        tk.Label(h2, text="Groq", bg=BG2, fg=PURPLE,
+                 font=("Arial", 9, "bold"), width=12, anchor="w").pack(side=tk.LEFT)
+        tk.Label(h2, text=("✓" if ok_gr else "—"),
+                 bg=BG2, fg=(GREEN if ok_gr else FG_DIM),
+                 font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        tk.Label(h2, text=f"  {len(groq_keys)} clé(s) dans .env",
+                 bg=BG2, fg=(FG if ok_gr else FG_DIM),
+                 font=("Consolas", 8)).pack(side=tk.LEFT, padx=8)
+
+        for key_name, key_val in groq_keys:
+            _key_row(c2, key_name, key_val, _test_groq(key_val))
+        if not ok_gr:
+            tk.Label(c2, text="  GROQ_API_KEY non définie — Groq désactivé dans le fallback",
+                     bg=BG2, fg=FG_DIM, font=("Consolas", 8)).pack(anchor="w", padx=16, pady=4)
+        tk.Frame(c2, bg=BG2, height=6).pack()
+
+        # ── OpenRouter ────────────────────────────────────────────────────────
+        c3 = _card(inner)
+        h3 = tk.Frame(c3, bg=BG2)
+        h3.pack(fill=tk.X, padx=12, pady=(8, 4))
+        ok_or = bool(or_key)
+        tk.Label(h3, text="OpenRouter", bg=BG2, fg="#80cbc4",
+                 font=("Arial", 9, "bold"), width=12, anchor="w").pack(side=tk.LEFT)
+        tk.Label(h3, text=("✓" if ok_or else "—"),
+                 bg=BG2, fg=(GREEN if ok_or else FG_DIM),
+                 font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        if ok_or:
+            tk.Label(h3, text=f"  {_mask(or_key)}", bg=BG2, fg=ACCENT,
+                     font=("Consolas", 9)).pack(side=tk.LEFT, padx=8)
+            bal_var = tk.StringVar(value="")
+            bal_lbl = tk.Label(h3, textvariable=bal_var, bg=BG2,
+                               fg=GOLD, font=("Consolas", 8))
+            bal_lbl.pack(side=tk.LEFT, padx=4)
+
+            def _fetch_or_balance(sv=bal_var, sl=bal_lbl):
+                sv.set("⏳ chargement…")
+                def _run():
+                    try:
+                        from llm_config import fetch_openrouter_key_status, format_openrouter_status
+                        data = fetch_openrouter_key_status()
+                        if data:
+                            txt = format_openrouter_status(data)
+                            sv.set(txt.split("\n")[0] if txt else "OK")
+                            sl.config(fg=GREEN)
+                        else:
+                            sv.set("✗ Clé invalide ou erreur")
+                            sl.config(fg=RED)
+                    except Exception as e:
+                        sv.set(f"✗ {e}")
+                        sl.config(fg=RED)
+                _thr.Thread(target=_run, daemon=True).start()
+
+            tk.Button(h3, text="Solde", bg=BG3, fg=ACCENT,
+                      font=("Arial", 8), relief="flat", padx=6,
+                      command=_fetch_or_balance).pack(side=tk.LEFT, padx=6)
+        else:
+            tk.Label(h3, text="  OPENROUTER_API_KEY non définie",
+                     bg=BG2, fg=FG_DIM, font=("Consolas", 8)).pack(side=tk.LEFT, padx=8)
+        tk.Frame(c3, bg=BG2, height=6).pack()
+
+        # ── DeepSeek ──────────────────────────────────────────────────────────
+        c4 = _card(inner, pady=(4, 8))
+        h4 = tk.Frame(c4, bg=BG2)
+        h4.pack(fill=tk.X, padx=12, pady=(8, 6))
+        ok_ds = bool(ds_key)
+        tk.Label(h4, text="DeepSeek", bg=BG2, fg="#64b5f6",
+                 font=("Arial", 9, "bold"), width=12, anchor="w").pack(side=tk.LEFT)
+        tk.Label(h4, text=("✓" if ok_ds else "—"),
+                 bg=BG2, fg=(GREEN if ok_ds else FG_DIM),
+                 font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        if ok_ds:
+            tk.Label(h4, text=f"  {_mask(ds_key)}", bg=BG2, fg=ACCENT,
+                     font=("Consolas", 9)).pack(side=tk.LEFT, padx=8)
+            sv_ds = tk.StringVar(value="")
+            sl_ds = tk.Label(h4, textvariable=sv_ds, bg=BG2,
+                             font=("Consolas", 8), width=24, anchor="w")
+            sl_ds.pack(side=tk.LEFT, padx=4)
+            tk.Button(h4, text="Tester", bg=BG3, fg=ACCENT,
+                      font=("Arial", 8), relief="flat", padx=6,
+                      command=lambda: _test_deepseek(ds_key)(sv_ds, sl_ds)
+                      ).pack(side=tk.LEFT)
+        else:
+            tk.Label(h4, text="  DEEPSEEK_API_KEY non définie",
+                     bg=BG2, fg=FG_DIM, font=("Consolas", 8)).pack(side=tk.LEFT, padx=8)
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 2 — Agents : configuré vs répondu
+        # ══════════════════════════════════════════════════════════════════════
+        _section(inner, "🧙 AGENTS — MODÈLE CONFIGURÉ vs MODÈLE AYANT RÉPONDU", ACCENT)
+
+        agent_card = _card(inner)
+
+        try:
+            import agent_logger as _al
+            last_responded = dict(_al._agent_last_responded_models)
+        except Exception:
+            last_responded = {}
+
+        def _canonical(m: str) -> str:
+            for p in ("groq/", "openrouter/"):
+                if m.startswith(p):
+                    return m[len(p):]
+            return m
+
+        for char, color in [("Kaelen", CHAR_COLORS["Kaelen"]),
+                             ("Elara",  CHAR_COLORS["Elara"]),
+                             ("Thorne", CHAR_COLORS["Thorne"]),
+                             ("Lyra",   CHAR_COLORS["Lyra"])]:
+            configured = (cfg.get("agents", {})
+                          .get(char, DEFAULTS["agents"][char])
+                          .get("model", DEFAULTS["agents"][char]["model"]))
+            responded  = last_responded.get(char, "")
+
+            row = tk.Frame(agent_card, bg=BG2)
+            row.pack(fill=tk.X, padx=12, pady=5)
+
+            # Nom du personnage
+            tk.Label(row, text=char, bg=BG2, fg=color,
+                     font=("Arial", 9, "bold"), width=9, anchor="w").pack(side=tk.LEFT)
+
+            col = tk.Frame(row, bg=BG2)
+            col.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            # Ligne configuré
+            r1 = tk.Frame(col, bg=BG2)
+            r1.pack(fill=tk.X)
+            tk.Label(r1, text="configuré :", bg=BG2, fg=FG_DIM,
+                     font=("Consolas", 8), width=11, anchor="w").pack(side=tk.LEFT)
+            tk.Label(r1, text=configured, bg=BG2, fg=FG,
+                     font=("Consolas", 9)).pack(side=tk.LEFT)
+
+            # Ligne répondu
+            r2 = tk.Frame(col, bg=BG2)
+            r2.pack(fill=tk.X)
+            tk.Label(r2, text="répondu  :", bg=BG2, fg=FG_DIM,
+                     font=("Consolas", 8), width=11, anchor="w").pack(side=tk.LEFT)
+
+            if not responded:
+                tk.Label(r2, text="aucun appel depuis l'ouverture du panneau",
+                         bg=BG2, fg=FG_DIM,
+                         font=("Consolas", 8, "italic")).pack(side=tk.LEFT)
+            else:
+                is_fallback = _canonical(responded) != _canonical(configured)
+                resp_color  = RED if is_fallback else GREEN
+                tk.Label(r2, text=responded, bg=BG2, fg=resp_color,
+                         font=("Consolas", 9, "bold")).pack(side=tk.LEFT)
+                if is_fallback:
+                    tk.Label(r2, text="  ⚠ FALLBACK", bg=BG2, fg=RED,
+                             font=("Arial", 8, "bold")).pack(side=tk.LEFT)
+                else:
+                    tk.Label(r2, text="  ✓", bg=BG2, fg=GREEN,
+                             font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+
+            tk.Frame(agent_card, bg=BG3, height=1).pack(fill=tk.X, padx=12)
+
+        tk.Label(agent_card,
+                 text="  ℹ Les valeurs 'répondu' se mettent à jour dès qu'un agent parle en session.",
+                 bg=BG2, fg=FG_DIM, font=("Consolas", 7)).pack(anchor="w", padx=12, pady=(4, 6))
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 3 — Chaîne de fallback
+        # ══════════════════════════════════════════════════════════════════════
+        _section(inner, "⛓ CHAÎNE DE FALLBACK GEMINI (ordre de tentative)", PURPLE)
+
+        fb_card = _card(inner, pady=(4, 12))
+
+        # En-tête colonnes
+        hdr_fb = tk.Frame(fb_card, bg=BG3)
+        hdr_fb.pack(fill=tk.X, padx=8, pady=(6, 2))
+        for txt, w, anch in [("#", 4, "e"), ("Modèle", 34, "w"),
+                               ("Fournisseur", 14, "w"), ("Clés dispo", 10, "w"), ("Note", 0, "w")]:
+            tk.Label(hdr_fb, text=txt, bg=BG3, fg=FG_DIM,
+                     font=("Arial", 8, "bold"),
+                     width=w, anchor=anch).pack(side=tk.LEFT, padx=4)
+
+        FALLBACK_ROWS = [
+            # (modèle affiché, fournisseur, nb_clés_fn, note, warning?)
+            ("gemini-2.5-flash",               "Gemini",      len(gemini_keys), "stable · recommandé",         False),
+            ("gemini-2.5-pro",                 "Gemini",      len(gemini_keys), "stable · recommandé",         False),
+            ("gemini-2.0-flash",               "Gemini",      len(gemini_keys), "stable",                      False),
+            ("gemini-3-flash-preview",         "Gemini",      len(gemini_keys), "preview — 404 possible",      True),
+            ("gemini-3.1-flash-lite-preview",  "Gemini",      len(gemini_keys), "preview — 404 possible",      True),
+            ("groq/llama-4-scout-17b-16e-…",   "Groq",        len(groq_keys),   "cross-provider",              False),
+            ("openrouter/llama-3.3-70b:free",  "OpenRouter",  1 if or_key else 0, "dernier recours",           False),
+            ("openrouter/mistral-small:free",  "OpenRouter",  1 if or_key else 0, "dernier recours",           False),
+            ("openrouter/arcee-trinity:free",  "OpenRouter",  1 if or_key else 0, "dernier recours",           False),
+        ]
+
+        for i, (model, provider, n_keys, note, warn) in enumerate(FALLBACK_ROWS, 1):
+            row = tk.Frame(fb_card, bg=BG2 if i % 2 == 0 else BG)
+            row.pack(fill=tk.X, padx=8, pady=1)
+
+            tk.Label(row, text=f"{i:2d}.", bg=row["bg"], fg=FG_DIM,
+                     font=("Consolas", 9), width=4, anchor="e").pack(side=tk.LEFT, padx=4)
+            tk.Label(row, text=model, bg=row["bg"], fg=FG,
+                     font=("Consolas", 9), width=34, anchor="w").pack(side=tk.LEFT, padx=4)
+            p_colors = {"Gemini": GOLD, "Groq": PURPLE, "OpenRouter": "#80cbc4"}
+            tk.Label(row, text=provider, bg=row["bg"],
+                     fg=p_colors.get(provider, FG),
+                     font=("Consolas", 8), width=14, anchor="w").pack(side=tk.LEFT, padx=4)
+
+            clé_color = (GREEN if n_keys > 0 else RED)
+            clé_txt = (f"{n_keys} clé(s)" if n_keys > 0 else "✗ manquante")
+            tk.Label(row, text=clé_txt, bg=row["bg"], fg=clé_color,
+                     font=("Consolas", 8), width=10, anchor="w").pack(side=tk.LEFT, padx=4)
+            note_color = GOLD if warn else FG_DIM
+            tk.Label(row, text=note, bg=row["bg"], fg=note_color,
+                     font=("Consolas", 7)).pack(side=tk.LEFT, padx=4)
+
+        tk.Label(fb_card,
+                 text=(
+                     "\n  ℹ  cache_seed=None : AutoGen repart de l'index 0 à chaque appel "
+                     "→ toutes les clés sont tentées dans l'ordre.\n"
+                     "  ⚠  Les modèles 'preview' renvoient parfois HTTP 404 (modèle inexistant) "
+                     "au lieu de 429 — le fallback les ignore correctement."
+                 ),
+                 bg=BG2, fg=FG_DIM, font=("Consolas", 7), justify=tk.LEFT,
+                 ).pack(anchor="w", padx=12, pady=(4, 8))
+
+    # ── Bouton Actualiser ─────────────────────────────────────────────────────
+    tk.Button(header, text="↺ Actualiser", bg=BG3, fg=ACCENT,
+              font=("Arial", 8), relief="flat", padx=8,
+              command=_build).pack(side=tk.LEFT, padx=12)
+
+    _build()
+    return tab
+
+
 # ─── Fonction principale ───────────────────────────────────────────────────────
 
 def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
@@ -742,18 +1211,20 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
         "memories": {}, "voice": {}, "ui": {}, "piper": {}, "ptt": {},
     }
 
-    # Créer les 5 onglets
+    # Créer les 6 onglets
     tab_agents  = _tab_agents(nb, cfg, vars_)
     tab_chron   = _tab_chronicler(nb, cfg, vars_)
     tab_gc      = _tab_groupchat(nb, cfg, vars_)
     tab_mem     = _tab_memories(nb, cfg, vars_)
     tab_voice   = _tab_voice_ui(nb, cfg, vars_)
+    tab_llm     = _tab_llm_resources(nb, cfg)
 
     nb.add(tab_agents, text=" 🧙 Agents ")
     nb.add(tab_chron,  text=" 📜 Chroniqueur ")
     nb.add(tab_gc,     text=" ⚙️ GroupChat ")
     nb.add(tab_mem,    text=" 🧠 Mémoires ")
     nb.add(tab_voice,  text=" 🎤 Voix & UI ")
+    nb.add(tab_llm,    text=" 🔑 Ressources LLM ")
 
     # ── Barre du bas ──
     bar = tk.Frame(win, bg="#060d18", pady=8)

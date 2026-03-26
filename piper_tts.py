@@ -378,10 +378,15 @@ def _play_wav_aplay(path: str) -> bool:
     try:
         use_registry = False
         try:
-            from voice_interface import _active_processes, _proc_lock
+            from voice_interface import _active_processes, _proc_lock, _GLOBAL_VOLUME
             use_registry = True
         except ImportError:
-            pass
+            _GLOBAL_VOLUME = 100
+
+        # aplay ne gère pas le volume nativement.
+        # Si le volume est réduit, on retourne None pour forcer le fallback ffplay.
+        if _GLOBAL_VOLUME < 100:
+            return None
 
         proc = subprocess.Popen(
             ["aplay", "-q", path],
@@ -422,12 +427,13 @@ def _play_file(path: str) -> bool:
 
     try:
         try:
-            from voice_interface import _AUDIO_PAUSE_EVENT, _active_processes, _proc_lock
+            from voice_interface import _AUDIO_PAUSE_EVENT, _active_processes, _proc_lock, _GLOBAL_VOLUME
             if not _AUDIO_PAUSE_EVENT.is_set():
                 return False
             use_registry = True
         except ImportError:
             use_registry = False
+            _GLOBAL_VOLUME = 100
 
         if is_wav:
             dur_s = _wav_duration_s(path)
@@ -435,14 +441,15 @@ def _play_file(path: str) -> bool:
             dur_s = sz / 16_000
         play_timeout = max(dur_s * 1.5 + 5.0, 8.0)
 
-        # Essai aplay pour les WAV
+        # Essai aplay pour les WAV (retourne None si volume < 100 → bascule ffplay)
         if is_wav and shutil.which("aplay"):
             result = _play_wav_aplay(path)
             if result is not None:
                 return result
 
-        # ffplay (fallback ou MP3)
-        ffplay_cmd = ["ffplay", "-nodisp", "-autoexit", path]
+        # ffplay (fallback ou MP3) avec contrôle du volume
+        ffplay_cmd = ["ffplay", "-nodisp", "-autoexit",
+                      "-volume", str(_GLOBAL_VOLUME), path]
         if not PIPER_DEBUG:
             ffplay_cmd += ["-loglevel", "quiet"]
 

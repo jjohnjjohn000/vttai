@@ -16,6 +16,7 @@ import re as _re
 
 from state_manager import roll_dice, use_spell_slot
 from engine_spell_mj import can_ritual_cast
+from class_data import get_no_roll_feature, get_feature_details
 
 
 # ─── Stats mécaniques D&D 5e 2014, niveau 15 ──────────────────────────────────
@@ -231,15 +232,24 @@ def roll_damage_only(char_name: str, cible: str,
                      dn: int, df: int, db: int,
                      is_crit: bool, smite: dict | None,
                      mj_note: str,
-                     char_mechanics: dict) -> str:
+                     char_mechanics: dict) -> tuple:
     """
     Phase 2 d'une attaque : lance les dés de dégâts (+ smite si présent).
-    Retourne le feedback complet prêt à être injecté dans autogen.
+    Retourne (feedback_str, total_damage_int) pour l'hyperlien du chat.
+    Le total additionne tous les composants (dégâts bruts + smite + sournoise).
     """
+    import re as _re_dmg
+
+    def _extract_total(res_str: str) -> int:
+        m = _re_dmg.search(r'Total\s*=\s*(\d+)', res_str)
+        return int(m.group(1)) if m else 0
+
     lines = [f"[RÉSULTAT SYSTÈME — DÉGÂTS CONFIRMÉS PAR MJ]",
              f"⚔️ {char_name} → {cible}"]
     if mj_note:
         lines.append(f"Note MJ : {mj_note}")
+
+    grand_total = 0
 
     if is_crit:
         dmg_res = roll_dice(char_name, f"{dn*2}d{df}", db)
@@ -247,6 +257,7 @@ def roll_damage_only(char_name: str, cible: str,
     else:
         dmg_res = roll_dice(char_name, f"{dn}d{df}", db)
         lines.append(f"  [dégâts] {dmg_res}")
+    grand_total += _extract_total(dmg_res)
 
     if smite:
         sm_res = roll_dice(char_name, smite["dice"], 0)
@@ -254,11 +265,13 @@ def roll_damage_only(char_name: str, cible: str,
             f"  [✨ {smite['label']}] {sm_res}  "
             f"(dégâts {smite['type']} supplémentaires)"
         )
+        grand_total += _extract_total(sm_res)
 
     if char_name == "Thorne":
         sn, sf, sb = char_mechanics.get("Thorne", {}).get("dmg_sneak", (8, 6, 0))
         snk_res = roll_dice("Thorne", f"{sn}d{sf}", sb)
         lines.append(f"  [sournoise] {snk_res}  ← si avantage/allié adjacent")
+        grand_total += _extract_total(snk_res)
 
     lines.append("")
     lines.append("[INSTRUCTION NARRATIVE]")
@@ -267,7 +280,7 @@ def roll_damage_only(char_name: str, cible: str,
         f"Narre en 1-2 phrases vivantes l impact sur {cible}. "
         f"Ne mentionne PAS les chiffres."
     )
-    return "\n".join(lines)
+    return "\n".join(lines), grand_total
 
 
 # ─── execute_action_mechanics ────────────────────────────────────────────────
@@ -302,6 +315,34 @@ def execute_action_mechanics(
 
     if mj_note:
         results.append(f"Note MJ : {mj_note}")
+
+    # ── COURT-CIRCUIT : Capacités de classe sans jet de dés ───────────────────
+    # Vérifier EN PREMIER — avant toute classification is_spell/is_skill.
+    # Ces capacités ont une mécanique fixe décrite dans les JSON de classe.
+    # La description est lue depuis class/<class>.json (format 5etools) via class_data.
+    _no_roll = get_no_roll_feature(intention, regle)
+    if _no_roll is not None:
+        _cls, _feat_name, _narr_hint = _no_roll
+        # Charger la description officielle depuis le JSON de classe
+        _feat_details = None
+        try:
+            _feat_details = get_feature_details(_cls, _feat_name)
+        except Exception:
+            pass
+        results.append(f"✨ {char_name} — {_feat_name}")
+        if _feat_details and _feat_details.get("text"):
+            results.append(f"  [Mécanique officielle]\n{_feat_details['text']}")
+        else:
+            results.append(f"  [Capacité de classe — aucun jet de dés requis]")
+        if cible and cible.lower() not in ("soi-même", "self", "-", ""):
+            results.append(f"  Cible : {cible}")
+        narrative_hint = _narr_hint.format(name=char_name)
+        return (
+            "[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ]\n"
+            + "\n".join(results)
+            + "\n\n[INSTRUCTION NARRATIVE]\n"
+            + narrative_hint
+        )
 
     # Helpers
     def _all_dice(text):
@@ -357,8 +398,14 @@ def execute_action_mechanics(
     _is_smite_boost = any(k in r_low or k in i_low for k in _SMITE_BOOST_KW)
 
     is_spell = any(k in r_low or k in i_low for k in SPELL_KW) and not _is_smite_boost
-    is_atk   = (any(k in r_low or k in i_low for k in ATK_KW) or _is_smite_boost) and not is_spell
-    is_skill = any(k in r_low or k in i_low for k in SKILL_KW) and not is_atk and not is_spell
+    # Garde mouvement : si type_label est explicitement "Mouvement", aucun jet de compétence
+    # ne doit être déclenché — le LLM met parfois "analyser / détecter" dans l'intention
+    # d'un déplacement, ce qui ferait firer is_skill avant la branche mouvement.
+    # Défini AVANT is_atk pour éviter "referenced before assignment".
+    is_move_action = "mouvement" in t_low
+    is_atk   = (any(k in r_low or k in i_low for k in ATK_KW) or _is_smite_boost) and not is_spell and not is_move_action
+    is_skill = (any(k in r_low or k in i_low for k in SKILL_KW)
+                and not is_atk and not is_spell and not is_move_action)
 
     # ── ATTAQUE ──────────────────────────────────────────────────────
     if is_atk:

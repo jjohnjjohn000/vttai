@@ -1,5 +1,5 @@
 {
-    "session_summary": "### Chroniques de la Barovie : L'Éveil de l'Abîme\n\n**La Fracture du Réel : Au-delà du Gué de la Tser**\nLe groupe, désormais épaulé par **Rudolph van Richten** et **Ezmerelda d'Avenir**, a atteint le foyer de la « dépressurisation cosmique » au Gué de la Tser. Là, le « Mur Noir » s'est révélé être une plaie béante dans le tissu de la réalité : une paroi d'obsidienne liquide, franchissable mais mortelle, qui a littéralement sectionné une portion de la vallée, emportant avec elle le campement de Madam Eva et des Vistani. Les analyses croisées d'**Elara** et de **Van Richten** confirment l'impensable : la mort de Strahd n'était qu'un catalyseur. La destruction d'un « Verrou » planaire antique — une fondation mystique dont la nature exacte reste à définir — a permis à des entités des plans inférieurs, notamment des diables, de s'infiltrer pour préparer une invasion.\n\n**L'Heure du Sacrifice et de la Science**\nFace à cette entropie, la coalition a dû composer avec la fragilité du monde. **Kaelen**, au prix d'une blessure sévère par le froid surnaturel, a confirmé que la faille exerce une succion active sur l'âme des vivants. Pour stabiliser leur position, **Lyra** a consacré une zone de sanctuaire, bien que cette intervention arcanique et divine menace de perturber davantage une réalité déjà exsangue. Le groupe navigue désormais dans une urgence absolue : trianguler l'origine géographique de la détonation qui a brisé le Verrou pour espérer stopper l'hémorragie avant que la Barovie ne soit totalement déstructurée.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : Progression critique. La menace est identifiée comme une « invasion coordonnée » facilitée par la brisure d'un Verrou antique. La faille est confirmée comme une structure « ancrée » et non naturelle.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En pause stratégique. Les travaux de Gil et Mart continuent, mais la survie du domaine dépend désormais de la fermeture de cette brèche qui menace la stabilité de toute la région.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Priorité maintenue. L'urgence de restaurer les fondations spirituelles du pays est renforcée par la découverte de la destruction des Verrous antiques.\n*   🗺️ **[Secondaire] Les sorcières du vieux moulin** : Statut inchangé.\n\n**Objets Majeurs :**\n*   **Échantillon de liane cristalline** : Conservé par Elara (en cours d'analyse pour isoler la signature fréquentielle de la faille).\n\n*Note du Chroniqueur : La Barovie n'est plus un royaume isolé sous la coupe d'un vampire ; elle est devenue un champ de bataille entre les plans. Le groupe est désormais le dernier rempart entre l'effacement total de la réalité et l'invasion des ténèbres extérieures.*",
+    "session_summary": "### Chroniques de la Barovie : L'Éveil de l'Abîme — La Faille de Tser\n\n**La Victoire au Gué de la Tser**\nLe groupe a triomphé d'une incursion de trois diables à épines surgis directement du « Mur Noir », cette cicatrice d'obsidienne qui déchire désormais le tissu de la réalité au Gué de la Tser. Si la menace immédiate a été contenue, la situation demeure critique : le froid surnaturel émanant de la brèche et l'ombre oppressante qui l'entoure à moins de neuf mètres confirment que ce mur n'est plus une frontière étanche, mais une plaie béante laissant s'écouler des énergies infernales dans la vallée.\n\n**Analyse de la Corruption et Intervention**\nFace à la manifestation, **Lyra** a exprimé une inquiétude profonde, qualifiant la brèche de plaie ouverte sur le monde, tandis que les investigations d'**Elara** s'intensifient pour déterminer si cette structure est le cœur de la corruption ou simplement un rempart agonisant. **Thorne**, malgré la tension palpable, a rappelé la nécessité d'une action décisive, soulignant que chaque instant de passivité permet à cette entropie de se propager. Le groupe reste convaincu que cette déchirure n'est qu'un symptôme d'un mal cosmique plus vaste, dont la résolution est le seul espoir de restaurer l'intégrité de la Barovie.\n\n**État de la Situation**\nArgynvostholt, bien que fortifié par l'arrivée des artisans, reste en sursis. Le groupe se trouve à un point de rupture : la défense du bastion est indissociable de la neutralisation du Mur Noir. La priorité est désormais de trianguler l'origine de cette brèche tout en protégeant les réfugiés du manoir.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : Progression constante. Les forces d'invasion immédiates ont été neutralisées, mais la nature du Mur Noir exige une étude approfondie de sa stabilité.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En cours. Les travaux de maçonnerie de Gil et Mart progressent, mais le destin du bastion est désormais lié à l'endiguement de la faille.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Statut inchangé. La quête demeure le pilier symbolique et énergétique de la victoire.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Possession d'Elara ; résonance planaire active).\n*   *Carnet de Van Richten* (Référentiel tactique).\n*   *Objets divers du prêtre Donavich* (Possession de Thorne).\n\n*Note du Chroniqueur : La Barovie n'est plus un royaume isolé, mais un champ de bataille planaire. Le silence après le combat ne signifie pas le retour à la paix, mais une simple respiration avant que le néant ne tente de forcer une nouvelle brèche.*",
     "defense_argynvostholt": 10,
     "characters": {
         "Kaelen": {
@@ -8,12 +8,12 @@
                 "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
             ],
             "llm": "gemini-3.1-flash-lite-preview",
-            "hp": 104,
+            "hp": 55,
             "max_hp": 140,
             "spell_slots": {
-                "1": 2,
-                "2": 3,
-                "3": 2,
+                "1": 0,
+                "2": 0,
+                "3": 1,
                 "4": 2,
                 "5": 1
             },
@@ -91,20 +91,21 @@
             "subclass": "Devotion",
             "level": 15,
             "con_mod": 3,
-            "ac": 20
+            "ac": 20,
+            "llm_session_override": ""
         },
         "Elara": {
             "alt_context_too_large": "openrouter/google/gemini-3.1-pro-preview",
             "llm": "gemini-3.1-flash-lite-preview",
-            "hp": 95,
+            "hp": 91,
             "max_hp": 95,
             "spell_slots": {
                 "1": 0,
                 "2": 2,
                 "3": 1,
                 "4": 3,
-                "5": 2,
-                "6": 1,
+                "5": 0,
+                "6": 0,
                 "7": 1,
                 "8": 1,
                 "9": 1
@@ -241,10 +242,13 @@
                 "openrouter/anthropic/claude-sonnet-4.6"
             ],
             "alt": [
-                "groq/meta-llama/llama-4-scout-17b-16e-instruct"
+                "groq/meta-llama/llama-4-scout-17b-16e-instruct",
+                "openrouter/arcee-ai/trinity-large-preview:free",
+                "mistralai/mistral-small-3.1-24b-instruct:free",
+                "nvidia/nemotron-nano-12b-v2-vl:free DOESNT RP"
             ],
             "llm": "groq/meta-llama/llama-4-scout-17b-16e-instruct",
-            "hp": 105,
+            "hp": 83,
             "max_hp": 105,
             "spell_slots": {},
             "hit_dice_used": 0,
@@ -254,7 +258,8 @@
             "subclass": "Assassin",
             "level": 15,
             "con_mod": 3,
-            "ac": 18
+            "ac": 18,
+            "llm_session_override": ""
         },
         "Lyra": {
             "llm": "gemini-3.1-flash-lite-preview",
@@ -262,8 +267,8 @@
             "max_hp": 110,
             "spell_slots": {
                 "1": 0,
-                "2": 3,
-                "3": 2,
+                "2": 1,
+                "3": 1,
                 "4": 3,
                 "5": 0,
                 "6": 1,
@@ -459,6 +464,24 @@
             "speed": "+0%",
             "bestiary_name": null,
             "hp_current": null,
+            "notes": ""
+        },
+        {
+            "name": "Ezmerelda",
+            "color": "#c77dff",
+            "voice": "fr_FR-siwis-medium",
+            "speed": "+0%",
+            "bestiary_name": "Ezmerelda d'Avenir",
+            "hp_current": 82,
+            "notes": ""
+        },
+        {
+            "name": "Van Richten",
+            "color": "#c77dff",
+            "voice": "fr_FR-gilles-low",
+            "speed": "+0%",
+            "bestiary_name": "Rictavio",
+            "hp_current": 77,
             "notes": ""
         }
     ],
@@ -686,23 +709,22 @@
                 {
                     "text": "Contenir la menace de la colonne d'obscurité",
                     "done": false
+                },
+                {
+                    "text": "Terminer la triangulation du déclencheu de la brèche",
+                    "done": false
                 }
             ],
-            "notes": "La faille est identifiée comme un 'Verrou planaire' brisé suite à une détonation mystérieuse, et non comme un simple portail. Van Richten et le groupe tentent de localiser l'origine de cette rupture pour tenter une stabilisation."
+            "notes": "Le groupe affronte une force d'invasion de diables au Gué de la Tser. La stabilisation arcanique est en cours malgré les assauts directs et la présence d'un 'Chain Devil' qui a engagé Kaelen au corps-à-corps."
         }
     ],
     "scene_context": {
-        "lieu": "Pres du Mur Noir, environ 200 metres.",
+        "lieu": "Pres du Mur Noir",
         "heure": "Apres-midi",
         "meteo": "Brume barovienne habituelle, refoulée par la lueur du phare",
         "ambiance": "Froid intense semble s'échapper du mur noir et tout est dans l'ombre à moins de 9 mètres des parois du mur.",
-        "npcs_presents": [
-            "Ezmerelda",
-            "Van Richten"
-        ],
-        "objets_notables": [
-            "Échantillon de liane cristalline (Elara)"
-        ],
+        "npcs_presents": [],
+        "objets_notables": [],
         "menaces": "Vous venez de combattre facilement 3 diables a epines.",
         "notes_mj": "",
         "location_image": ""
@@ -1010,6 +1032,20 @@
             "importance": 2,
             "session_ajout": 0,
             "visible": true
+        },
+        {
+            "id": "mem_0ef844d8",
+            "categorie": "lieu",
+            "titre": "Le Mur Noir",
+            "contenu": "Une structure monolithique d'obsidienne impénétrable qui sépare les terres civilisées des contrées corrompues. Il est réputé indestructible et dégage une aura de froid surnaturel qui décourage toute tentative d'escalade.",
+            "tags": [
+                "frontière",
+                "obsidienne",
+                "mystère"
+            ],
+            "importance": 3,
+            "session_ajout": 0,
+            "visible": true
         }
     ],
     "calendar": {
@@ -1018,28 +1054,48 @@
         "day": 28,
         "notes": {}
     },
-    "group_npcs": [],
+    "group_npcs": [
+        {
+            "name": "Van Richten",
+            "color": "#c77dff",
+            "bestiary_name": "Rictavio",
+            "hp_current": 77,
+            "notes": ""
+        },
+        {
+            "name": "Ezmerelda",
+            "color": "#c77dff",
+            "bestiary_name": "Ezmerelda d'Avenir",
+            "hp_current": 82,
+            "notes": ""
+        }
+    ],
     "session_logs": [
         {
-            "session": 4,
-            "date": "2026-03-21 22:24",
-            "resume": "### Chroniques de la Barovie : L'Éveil de l'Abîme\n\n**Le Gué de la Tser : La Fracture Réelle**\nLe groupe a poussé son incursion jusqu'au cœur du « Mur Noir », une déchirure spatiale au Gué de la Tser. Après avoir neutralisé une escouade de diables à épines cristallins, les compagnons ont tenté d'analyser la nature de cette faille. L'incursion a révélé une vérité terrifiante : le Mur n'est pas une simple barrière magique, mais une aberration thermodynamique qui dévore l'énergie vitale pour se maintenir. Kaelen, au prix de blessures graves dues à un froid surnaturel, a confirmé que la faille agit comme un siphon planaire actif, capable de puiser dans la chaleur et l'essence de ceux qui osent s'en approcher. \n\nL'analyse arcanique d'Elara, couplée aux tentatives de protection divine de Lyra, a démontré que le Mur Noir n'est ni tangible ni régi par les lois arcaniques classiques ; il s'agit d'une hémorragie de la réalité elle-même, insensible à la lumière du phare d'Argynvost. Après une tentative périlleuse où Kaelen a failli être englouti par le vide, le groupe s'est replié in extremis, conscient que leur simple présence — et leur propre vitalité — alimente l'ouverture de ce portail vers l'inconnu.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : Progression critique. La nature de la faille est identifiée comme un « siphon » planaire. La stratégie de combat direct est abandonnée au profit d'une nécessité de trouver une méthode de scellement plutôt qu'une confrontation physique.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En pause. La priorité reste l'intégrité du bastion, mais l'urgence de la faille menace de rendre tous les efforts de fortification caducs.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Priorité inchangée. La nécessité de libérer la puissance du phare est plus que jamais vitale pour contrer cette entropie cosmique.\n\n**Objets Majeurs :**\n*   **Échantillon de liane cristalline** : Inerte après le combat, confirmant l'absence de réaction magique classique face à l'aberration.\n\n*Note du Chroniqueur : Le groupe a frôlé le point de non-retour. La faille ne se contente plus de menacer la Barovie, elle se nourrit de ceux qui tentent de la combattre. L'unité des compagnons, soudée par le sauvetage in extremis de Kaelen, est la seule chose qui sépare encore cette terre du néant.*"
+            "session": 7,
+            "date": "2026-03-25 21:16",
+            "resume": "### Chroniques de la Barovie : L'Éveil de l'Abîme\n\n**La Fracture du Réel : Au-delà du Gué de la Tser**\nLe groupe, désormais épaulé par **Rudolph van Richten** et **Ezmerelda d'Avenir**, a atteint le foyer de la « dépressurisation cosmique » au Gué de la Tser. Là, le « Mur Noir » s'est révélé être une plaie béante dans le tissu de la réalité : une paroi d'obsidienne liquide, franchissable mais mortelle, qui a littéralement sectionné une portion de la vallée, emportant avec elle le campement de Madam Eva et des Vistani. Les analyses croisées d'**Elara** et de **Van Richten** confirment l'impensable : la mort de Strahd n'était qu'un catalyseur. La destruction d'un « Verrou » planaire antique — une fondation mystique dont la nature exacte reste à définir — a permis à des entités des plans inférieurs, notamment des diables à épines, de s'infiltrer par des failles structurelles pour préparer une invasion.\n\n**Le Sacrifice au Pied du Mur**\nConfrontés à une faille autonome qui efface toute signature magique, le groupe a basculé dans l'action directe. Alors qu'Elara tentait d'isoler les points de tension structurelle de cette « cicatrice planaire », une meute de diables a surgi de l'abîme. **Kaelen**, en première ligne, a maintenu une garde héroïque, soutenu par la puissance divine de **Lyra** et le déluge arcanique d'**Elara**, tandis que **Thorne** et **Ezmerelda** coordonnaient les manœuvres pour empêcher l'encerclement. La découverte que ces entités pourraient provenir de prisons oubliées, telles que celles du **Temple d'Ambre**, a renforcé la conviction du groupe que leur mission dépasse la simple purification de la terre : ils sont devenus les gardiens d'un monde dont les verrous ancestraux cèdent un à un.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : Progression critique. La faille est confirmée comme une plaie auto-entretenue. Le focus se déplace vers le Temple d'Ambre, identifié comme le lieu probable d'origine de la corruption et des verrous brisés.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En pause stratégique. Le manoir demeure un point d'ancrage, mais la survie des réfugiés dépend désormais de leur capacité à colmater la source du mal cosmique à sa racine.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Priorité maintenue. L'urgence de restaurer les fondations spirituelles est devenue vitale face à la montée de l'entropie.\n*   🗺️ **[Secondaire] Les sorcières du vieux moulin** : Statut inchangé.\n\n**Objets Majeurs :**\n*   **Échantillon de liane cristalline** : Conservé par Elara ; son analyse confirme une résonance commune avec la structure de la faille.\n*   **Carnet de Van Richten** : Contient des notes cruciales sur le Temple d'Ambre et les \"Vestiges\" emprisonnés.\n\n*Note du Chroniqueur : La Barovie n'est plus un royaume isolé sous la coupe d'un vampire ; elle est devenue le champ de bataille d'une invasion planaire où chaque cicatrice du passé menace de rouvrir le néant.*"
         },
         {
-            "session": 5,
-            "date": "2026-03-22 20:33",
-            "resume": "### Chroniques de la Barovie : L'Éveil de l'Abîme\n\n**Le Gué de la Tser : La Fracture Réelle et l'Arrivée des Alliés**\nLe groupe, au bord de l'épuisement après avoir neutralisé des diables à épines cristallins, s'est enfoncé plus avant dans la zone d'influence du « Mur Noir ». L'approche de cette aberration thermodynamique a révélé une réalité terrifiante : le froid intense qui émane du site n'est pas une simple manifestation magique, mais une faim insatiable qui désintègre la matière et absorbe toute énergie vitale, menaçant la stabilité même du pont de la Rivière Corbeau.\n\nDans ce moment de crise, les compagnons ont été rejoints par **Ezmerelda d'Avenir** et le célèbre chasseur **Rudolph van Richten**. Leurs expertises croisées ont permis de confirmer les craintes du groupe : la mort de Strahd a provoqué une « dépressurisation cosmique » en brisant le sceau qui isolait la Barovie. Le Mur Noir n'est pas un portail à sceller, mais une plaie ouverte, une hémorragie de la réalité dont la pression menace de dévorer toute la topographie locale. Van Richten a démontré par ses tests que la faille dévore la lumière et l'énergie pure, rendant obsolètes les méthodes d'abjuration classiques. La survie du groupe et de la région dépend désormais d'une compréhension de cette harmonique entropique pour tenter de stabiliser la plaie.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : Progression majeure. La faille est confirmée comme une « dépressurisation cosmique » consécutive à la chute de Strahd. La menace est identifiée comme une hémorragie active, rendant la stratégie de combat inopérante au profit d'une nécessaire stabilisation de la pression planaire.\n*   🗺️ **[Secondaire] Retrouver Ezmerelda d'Avenir** : **Objectif accompli.** Ezmerelda et Rudolph van Richten ont rejoint le groupe au Gué de la Tser. Leur expertise est désormais intégrée à la coalition d'Argynvostholt.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En pause active. La survie immédiate face au siphon planaire a pris le pas sur les travaux de maçonnerie de Gil et Mart, bien que le bastion demeure le point de ralliement stratégique pour la suite des opérations.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Priorité maintenue. La quête demeure essentielle pour libérer la puissance du phare, qui reste le seul rempart symbolique contre l'entropie galopante.\n\n**Objets Majeurs :**\n*   **Échantillon de liane cristalline** : Conservé par Elara, témoin de la mutation environnementale induite par la faille.\n\n*Note du Chroniqueur : Avec l'arrivée de van Richten et Ezmerelda, le groupe dispose désormais des connaissances nécessaires pour affronter l'inconnu, mais le temps est compté. La Barovie ne se contente plus de mourir : elle se dissout.*"
+            "session": 8,
+            "date": "2026-03-25 21:51",
+            "resume": "### Chroniques de la Barovie : L'Éveil de l'Abîme — La Faille de Tser\n\n**La Confrontation au Gué de la Tser**\nLa tension a atteint un point de rupture critique au Gué de la Tser. Le groupe, pris en étau par une force d'invasion de diables à épines et un redoutable *Chain Devil*, a dû engager un combat acharné pour maintenir l'intégrité de la réalité. Alors que la faille planaire menaçait d'engloutir les environs, **Kaelen**, en première ligne, a été violemment pris à partie par les chaînes animées du *Chain Devil*, subissant des blessures sévères tout en refusant de céder le moindre pouce de terrain.\n\n**Tactiques de Survie et Stabilité**\nFace à l'encerclement, la synergie du groupe a été mise à l'épreuve :\n*   **Défense Absolue** : **Elara** a déployé un *Mur de Force* protecteur, créant une enceinte hémisphérique impénétrable pour protéger le groupe de la submersion des entités cristallines, tandis qu'elle continuait d'analyser les fluctuations arcaniques de la faille.\n*   **Ferveur Divine** : **Lyra** a maintenu la protection du *Gardien de la Foi*, purgeant les zones d'approche, tout en prodiguant des soins vitaux à **Kaelen** pour le maintenir debout sous la pression des chaînes.\n*   **Précision Martiale** : **Thorne**, usant de sa mobilité et de sa roublardise, a orchestré des frappes chirurgicales sur les points de fragilité des créatures, forçant les diables à diviser leur attention.\n\n**État de la Situation**\nLe combat contre l'invasion planaire se poursuit. Bien que le groupe soit temporairement sécurisé derrière le mur d'Elara, le *Chain Devil* reste une menace immédiate au contact de Kaelen. La priorité absolue est désormais de neutraliser cette entité dirigeante pour, peut-être, affaiblir la cohésion de la brèche elle-même. \n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : Progression intense. Le combat actuel est l'étape cruciale pour fermer l'accès aux plans inférieurs. L'élimination du *Chain Devil* semble être le verrou immédiat à briser.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En attente. La survie du bastion dépend de la victoire totale sur cette incursion au Gué de la Tser.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Statut inchangé.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Toujours en possession d'Elara ; résonance planaire active).\n*   *Carnet de Van Richten* (Consulté en urgence pour les faiblesses des diables).\n\n*Note du Chroniqueur : Le voile se déchire. La Barovie n'est plus seulement une prison pour les âmes, c'est devenu une porte ouverte sur un chaos que seul le sacrifice du groupe pourra refermer.*"
         },
         {
-            "session": 6,
-            "date": "2026-03-22 21:00",
-            "resume": "### Chroniques de la Barovie : L'Éveil de l'Abîme\n\n**La Fracture du Réel : Au-delà du Gué de la Tser**\nLe groupe, désormais épaulé par **Rudolph van Richten** et **Ezmerelda d'Avenir**, a atteint le foyer de la « dépressurisation cosmique » au Gué de la Tser. Là, le « Mur Noir » s'est révélé être une plaie béante dans le tissu de la réalité : une paroi d'obsidienne liquide, franchissable mais mortelle, qui a littéralement sectionné une portion de la vallée, emportant avec elle le campement de Madam Eva et des Vistani. Les analyses croisées d'**Elara** et de **Van Richten** confirment l'impensable : la mort de Strahd n'était qu'un catalyseur. La destruction d'un « Verrou » planaire antique — une fondation mystique dont la nature exacte reste à définir — a permis à des entités des plans inférieurs, notamment des diables, de s'infiltrer pour préparer une invasion.\n\n**L'Heure du Sacrifice et de la Science**\nFace à cette entropie, la coalition a dû composer avec la fragilité du monde. **Kaelen**, au prix d'une blessure sévère par le froid surnaturel, a confirmé que la faille exerce une succion active sur l'âme des vivants. Pour stabiliser leur position, **Lyra** a consacré une zone de sanctuaire, bien que cette intervention arcanique et divine menace de perturber davantage une réalité déjà exsangue. Le groupe navigue désormais dans une urgence absolue : trianguler l'origine géographique de la détonation qui a brisé le Verrou pour espérer stopper l'hémorragie avant que la Barovie ne soit totalement déstructurée.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : Progression critique. La menace est identifiée comme une « invasion coordonnée » facilitée par la brisure d'un Verrou antique. La faille est confirmée comme une structure « ancrée » et non naturelle.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En pause stratégique. Les travaux de Gil et Mart continuent, mais la survie du domaine dépend désormais de la fermeture de cette brèche qui menace la stabilité de toute la région.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Priorité maintenue. L'urgence de restaurer les fondations spirituelles du pays est renforcée par la découverte de la destruction des Verrous antiques.\n*   🗺️ **[Secondaire] Les sorcières du vieux moulin** : Statut inchangé.\n\n**Objets Majeurs :**\n*   **Échantillon de liane cristalline** : Conservé par Elara (en cours d'analyse pour isoler la signature fréquentielle de la faille).\n\n*Note du Chroniqueur : La Barovie n'est plus un royaume isolé sous la coupe d'un vampire ; elle est devenue un champ de bataille entre les plans. Le groupe est désormais le dernier rempart entre l'effacement total de la réalité et l'invasion des ténèbres extérieures.*"
+            "session": 9,
+            "date": "2026-03-25 22:05",
+            "resume": "### Chroniques de la Barovie : L'Éveil de l'Abîme — La Faille de Tser\n\n**La Victoire au Gué de la Tser**\nAu cœur du chaos planaire, le groupe a terrassé les diables à épines qui menaçaient de submerger le Gué de la Tser. Malgré la retraite tactique d'un dernier adversaire dans la forêt, les analyses arcaniques d'**Elara** et la perception aiguisée de **Kaelen** confirment que cette créature n'est qu'un écho instable, se dissipant à mesure qu'elle s'éloigne de la faille. Le calme est revenu, mais le silence qui pèse sur la forêt est chargé d'une corruption persistante.\n\n**Analyse de la Corruption**\nLe groupe s'interroge désormais sur la nature de cette menace : s'agit-il d'une diversion pour détourner les efforts de la brèche principale, ou d'une propagation entropique incontrôlée ? **Lyra**, en communion avec les énergies sacrées, souligne que la souillure ne provient pas seulement des créatures, mais du sol même de la Barovie, témoignant d'une dégradation structurelle de la réalité. **Thorne**, pragmatique, alerte sur le fait que ces escarmouches ne sont que le prélude à un effondrement total si la faille n'est pas scellée définitivement.\n\n**État de la Situation**\nLe Gué de la Tser reste une zone de haute instabilité. Le groupe, fort de son succès contre les diables, doit maintenant choisir entre poursuivre les résidus de l'incursion ou concentrer ses ressources sur la neutralisation du point focal de la déchirure planaire. Argynvostholt demeure le bastion vital, mais sa survie dépend désormais entièrement de la résolution de cette crise cosmique.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : Progression. Les forces d'invasion immédiates au Gué de la Tser ont été neutralisées, permettant d'envisager une action directe sur le cœur de la brèche.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En attente. La survie du bastion est corrélée à la victoire au Gué de la Tser.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Statut inchangé.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Possession d'Elara ; résonance planaire active).\n*   *Carnet de Van Richten* (Référentiel tactique).\n*   *Objets divers du prêtre Donavich* (Possession de Thorne ; inventaire à compléter).\n\n*Note du Chroniqueur : Le voile se déchire davantage, mais le groupe a prouvé sa capacité à repousser l'invasion. La question n'est plus seulement de survivre à la Barovie, mais de restaurer son intégrité avant qu'elle ne soit dissoute dans le néant.*"
+        },
+        {
+            "session": 10,
+            "date": "2026-03-25 22:07",
+            "resume": "### Chroniques de la Barovie : L'Éveil de l'Abîme — La Faille de Tser\n\n**La Victoire au Gué de la Tser**\nLe groupe a triomphé d'une incursion de trois diables à épines surgis directement du « Mur Noir », cette cicatrice d'obsidienne qui déchire désormais le tissu de la réalité au Gué de la Tser. Si la menace immédiate a été contenue, la situation demeure critique : le froid surnaturel émanant de la brèche et l'ombre oppressante qui l'entoure à moins de neuf mètres confirment que ce mur n'est plus une frontière étanche, mais une plaie béante laissant s'écouler des énergies infernales dans la vallée.\n\n**Analyse de la Corruption et Intervention**\nFace à la manifestation, **Lyra** a exprimé une inquiétude profonde, qualifiant la brèche de plaie ouverte sur le monde, tandis que les investigations d'**Elara** s'intensifient pour déterminer si cette structure est le cœur de la corruption ou simplement un rempart agonisant. **Thorne**, malgré la tension palpable, a rappelé la nécessité d'une action décisive, soulignant que chaque instant de passivité permet à cette entropie de se propager. Le groupe reste convaincu que cette déchirure n'est qu'un symptôme d'un mal cosmique plus vaste, dont la résolution est le seul espoir de restaurer l'intégrité de la Barovie.\n\n**État de la Situation**\nArgynvostholt, bien que fortifié par l'arrivée des artisans, reste en sursis. Le groupe se trouve à un point de rupture : la défense du bastion est indissociable de la neutralisation du Mur Noir. La priorité est désormais de trianguler l'origine de cette brèche tout en protégeant les réfugiés du manoir.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : Progression constante. Les forces d'invasion immédiates ont été neutralisées, mais la nature du Mur Noir exige une étude approfondie de sa stabilité.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En cours. Les travaux de maçonnerie de Gil et Mart progressent, mais le destin du bastion est désormais lié à l'endiguement de la faille.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Statut inchangé. La quête demeure le pilier symbolique et énergétique de la victoire.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Possession d'Elara ; résonance planaire active).\n*   *Carnet de Van Richten* (Référentiel tactique).\n*   *Objets divers du prêtre Donavich* (Possession de Thorne).\n\n*Note du Chroniqueur : La Barovie n'est plus un royaume isolé, mais un champ de bataille planaire. Le silence après le combat ne signifie pas le retour à la paix, mais une simple respiration avant que le néant ne tente de forcer une nouvelle brèche.*"
         }
     ],
     "combat_tracker": {
-        "active": false,
-        "round_num": 0,
-        "current_idx": -1,
+        "active": true,
+        "round_num": 6,
+        "current_idx": 1,
         "reactions_used": [],
         "speech_used": [],
         "combatants": [
@@ -1047,7 +1103,7 @@
                 "name": "Kaelen",
                 "is_pc": true,
                 "max_hp": 140,
-                "hp": 111,
+                "hp": 55,
                 "temp_hp": 0,
                 "ac": 16,
                 "initiative": 19,
@@ -1064,17 +1120,17 @@
                 "reaction_used": false
             },
             {
-                "name": "Thorne",
-                "is_pc": true,
-                "max_hp": 105,
-                "hp": 105,
+                "name": "Ezmerelda d'Av",
+                "is_pc": false,
+                "max_hp": 82,
+                "hp": 82,
                 "temp_hp": 0,
-                "ac": 16,
-                "initiative": 16,
-                "dex_bonus": 6,
-                "color": "#ff9999",
+                "ac": 17,
+                "initiative": 18,
+                "dex_bonus": 4,
+                "color": "#99ffcc",
                 "concentration": false,
-                "bestiary_name": "",
+                "bestiary_name": "Ezmerelda d'Avenir",
                 "conditions": [],
                 "notes": "",
                 "death_saves_success": 0,
@@ -1084,17 +1140,17 @@
                 "reaction_used": false
             },
             {
-                "name": "Spined Devil 3",
-                "is_pc": false,
-                "max_hp": 22,
-                "hp": 7,
+                "name": "Thorne",
+                "is_pc": true,
+                "max_hp": 105,
+                "hp": 83,
                 "temp_hp": 0,
-                "ac": 13,
-                "initiative": 14,
-                "dex_bonus": 2,
-                "color": "#ddbbff",
+                "ac": 16,
+                "initiative": 16,
+                "dex_bonus": 6,
+                "color": "#ff9999",
                 "concentration": false,
-                "bestiary_name": "Spined Devil",
+                "bestiary_name": "",
                 "conditions": [],
                 "notes": "",
                 "death_saves_success": 0,
@@ -1127,7 +1183,7 @@
                 "name": "Elara",
                 "is_pc": true,
                 "max_hp": 95,
-                "hp": 95,
+                "hp": 91,
                 "temp_hp": 0,
                 "ac": 16,
                 "initiative": 14,
@@ -1135,6 +1191,146 @@
                 "color": "#c8b8ff",
                 "concentration": false,
                 "bestiary_name": "",
+                "conditions": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Barbed Devil",
+                "is_pc": false,
+                "max_hp": 110,
+                "hp": 110,
+                "temp_hp": 0,
+                "ac": 15,
+                "initiative": 11,
+                "dex_bonus": 3,
+                "color": "#ddbbff",
+                "concentration": false,
+                "bestiary_name": "Barbed Devil",
+                "conditions": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Chain Devil 1",
+                "is_pc": false,
+                "max_hp": 85,
+                "hp": 85,
+                "temp_hp": 0,
+                "ac": 16,
+                "initiative": 11,
+                "dex_bonus": 2,
+                "color": "#aaffaa",
+                "concentration": false,
+                "bestiary_name": "Chain Devil",
+                "conditions": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Chain Devil 2",
+                "is_pc": false,
+                "max_hp": 85,
+                "hp": 85,
+                "temp_hp": 0,
+                "ac": 16,
+                "initiative": 10,
+                "dex_bonus": 2,
+                "color": "#ff9966",
+                "concentration": false,
+                "bestiary_name": "Chain Devil",
+                "conditions": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Spined Devil 1",
+                "is_pc": false,
+                "max_hp": 22,
+                "hp": 22,
+                "temp_hp": 0,
+                "ac": 13,
+                "initiative": 9,
+                "dex_bonus": 2,
+                "color": "#ffcc66",
+                "concentration": false,
+                "bestiary_name": "Spined Devil",
+                "conditions": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Spined Devil 2",
+                "is_pc": false,
+                "max_hp": 22,
+                "hp": 22,
+                "temp_hp": 0,
+                "ac": 13,
+                "initiative": 6,
+                "dex_bonus": 2,
+                "color": "#99ddff",
+                "concentration": false,
+                "bestiary_name": "Spined Devil",
+                "conditions": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Rictavio",
+                "is_pc": false,
+                "max_hp": 77,
+                "hp": 77,
+                "temp_hp": 0,
+                "ac": 12,
+                "initiative": 4,
+                "dex_bonus": 1,
+                "color": "#ff99bb",
+                "concentration": false,
+                "bestiary_name": "Rictavio",
+                "conditions": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Spined Devil 3",
+                "is_pc": false,
+                "max_hp": 22,
+                "hp": 22,
+                "temp_hp": 0,
+                "ac": 13,
+                "initiative": 3,
+                "dex_bonus": 2,
+                "color": "#cc99ff",
+                "concentration": false,
+                "bestiary_name": "Spined Devil",
                 "conditions": [],
                 "notes": "",
                 "death_saves_success": 0,
@@ -1164,7 +1360,7 @@
                 "description": "Fragment de liane cristalline et mousse luminescente prélevé par Elara après la téléportation arcanique vers Argynvostholt. Réaction directe de la terre barovienne aux forces arcaniques déployées. Lié à la corruption résiduelle de la mort de Strahd.",
                 "attuned": false,
                 "attunement_by": "",
-                "notes": "En cours d'analyse par Elara. Corrélation suspectée entre la croissance cristalline et les cicatrices arcaniques du manoir. Scellé dans un récipient pour prévenir toute interaction magique non contrôlée."
+                "notes": "En cours d'analyse par Elara. Scellé dans un récipient pour prévenir toute interaction magique non contrôlée."
             }
         ]
     }
