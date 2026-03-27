@@ -369,16 +369,32 @@ class DnDApp(
             slots_block = ""
             _char_slots = _slots_state.get(name, {}).get("spell_slots", {})
             if _char_slots:
-                _avail = [(k, v) for k, v in sorted(_char_slots.items(), key=lambda x: int(x[0])) if v > 0]
-                _empty = [k for k, v in sorted(_char_slots.items(), key=lambda x: int(x[0])) if v == 0]
-                lines_slots = ["\n\nEMPLACEMENTS DE SORT ACTUELS (mis a jour en temps reel) :"]
+                _avail = [(int(k), v) for k, v in sorted(_char_slots.items(), key=lambda x: int(x[0])) if v > 0]
+                _empty = [int(k) for k, v in sorted(_char_slots.items(), key=lambda x: int(x[0])) if v == 0]
+                lines_slots = [
+                    "\n\n══════════════════════════════════════════════",
+                    f"⚡ EMPLACEMENTS DE SORT DE {name.upper()} — CONTRAINTE ABSOLUE",
+                    "══════════════════════════════════════════════",
+                ]
                 if _avail:
-                    lines_slots.append("  Disponibles : " + ", ".join(f"niv.{k}x{v}" for k, v in _avail))
+                    lines_slots.append("  ✅ DISPONIBLES : " + ", ".join(f"niv.{k}×{v}" for k, v in _avail))
                 else:
-                    lines_slots.append("  AUCUN emplacement disponible -- sorts a slot IMPOSSIBLES ce tour.")
+                    lines_slots.append("  ❌ AUCUN emplacement disponible — sorts à slot IMPOSSIBLES.")
                 if _empty:
-                    lines_slots.append("  Epuises    : " + ", ".join(f"niv.{k}" for k in _empty))
-                lines_slots.append("  -> Ne declare PAS un sort a slot si le niveau requis est epuise.")
+                    lines_slots.append("  ❌ ÉPUISÉS     : " + ", ".join(f"niv.{k}" for k in _empty))
+                lines_slots += [
+                    "",
+                    "RÈGLE OBLIGATOIRE — AVANT CHAQUE DÉCLARATION DE SORT :",
+                    "  1. Identifie le niveau de base du sort que tu veux lancer.",
+                    "  2. Vérifie dans la liste ✅ ci-dessus si ce niveau est disponible.",
+                    "  3a. Si OUI → déclare [SORT: <Nom> | Niveau: <N> | Cible: ...]",
+                    "  3b. Si NON (niveau épuisé ❌) → DEUX options seulement :",
+                    "        • UPCAST : prends le plus petit niveau ✅ supérieur dispo",
+                    "                   → déclare [SORT: <Nom> | Niveau: <X_sup> | Cible: ...]",
+                    "        • AUTRE ACTION : sort inférieur ✅, tour de magie, ou attaque physique.",
+                    "  ⛔ INTERDIT : déclarer un sort à un niveau ❌ épuisé. Le moteur rejettera l'action.",
+                    "══════════════════════════════════════════════",
+                ]
                 slots_block = "\n".join(lines_slots)
 
             agent.update_system_message(

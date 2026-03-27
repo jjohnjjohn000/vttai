@@ -313,6 +313,7 @@ def _normalize_spell(raw: dict) -> dict:
         "school":        school,
         "school_code":   school_code,
         "cast_time":     _fmt_time(raw.get("time", [])),
+        "cast_time_raw": raw.get("time", []),
         "range":         _fmt_range(raw.get("range", {})),
         "components":    _fmt_components(raw.get("components", {})),
         "duration":      dur_txt,
@@ -320,6 +321,11 @@ def _normalize_spell(raw: dict) -> dict:
         "ritual":        ritual,
         "description":   desc,
         "source":        raw.get("source", "?"),
+        "saving_throw":  raw.get("savingThrow", []),
+        "damage_inflict": raw.get("damageInflict", []),
+        "spell_attack":  raw.get("spellAttack", []),
+        "entries":       entries_raw,
+        "entries_higher": entries_higher,
     }
 
 

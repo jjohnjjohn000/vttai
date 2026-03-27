@@ -275,6 +275,87 @@ def can_ritual_cast(char_name: str, spell_name: str) -> bool:
         return False
 
 
+def validate_bonus_action_rule(char_name: str, spell_name: str, spell_level: int, cast_time_raw: list, turn_spells: list) -> tuple[bool, str]:
+    """
+    Vérifie la règle des actions bonus (PHB 5e) :
+    'You can't cast another spell during the same turn, except for a cantrip with a casting time of 1 action.'
+    """
+    if not cast_time_raw:
+        return True, ""
+    
+    # Extrait l'unité du temps de lancement (ex: 'action', 'bonus', 'reaction')
+    unit = cast_time_raw[0].get("unit", "")
+    
+    is_ba = (unit == "bonus")
+    has_ba = any(s.get("cast_time_unit") == "bonus" for s in turn_spells)
+    
+    if is_ba:
+        for s in turn_spells:
+            if s.get("level", 0) > 0 or s.get("cast_time_unit") != "action":
+                return False, (
+                    f"[RÈGLE 5e] Vous avez déjà lancé le sort {s.get('name')} ce tour-ci. "
+                    f"Si vous lancez un sort en Action Bonus, tous vos autres sorts de ce tour MUST être des tours de magie coûtant 1 action classique."
+                )
+    else:
+        if has_ba:
+            if spell_level > 0 or unit != "action":
+                return False, (
+                    f"[RÈGLE 5e] Vous avez utilisé un sort en Action Bonus ce tour-ci. "
+                    f"Vous ne pouvez plus lancer d'autre sort à ce tour, à l'exception d'un tour de magie coûtant 1 action."
+                )
+                
+    return True, ""
+
+
+# Unités de temps d'incantation compatibles avec le combat (D&D 5e PHB p. 202)
+_COMBAT_CAST_UNITS = frozenset({"action", "bonus", "reaction", "round"})
+
+def validate_cast_time_in_combat(spell_name: str, cast_time_raw: list) -> tuple[bool, str]:
+    """
+    Vérifie que le temps d'incantation d'un sort est compatible avec le combat.
+
+    D&D 5e — seuls les temps suivants sont utilisables pendant un round :
+      • 1 action
+      • 1 action bonus
+      • 1 réaction
+      • 1 round  (ex : Counterspell si pré-déclenché)
+
+    Tout temps exprimé en minutes, heures ou jours est invalide en combat.
+    Cas particuliers :
+      • Les sorts rituels (+10 min) sont également invalides sauf hors-combat
+        — mais la vérification du rituel est déjà gérée ailleurs ; ici on
+        bloque toute unité ≥ minute.
+
+    Retourne (True, "") si le temps est compatible, sinon (False, message_erreur).
+    """
+    if not cast_time_raw:
+        return True, ""          # absence de données → non restrictif
+
+    t    = cast_time_raw[0]
+    unit = t.get("unit", "").lower().strip()
+    n    = t.get("number", 1)
+
+    if unit in _COMBAT_CAST_UNITS:
+        return True, ""
+
+    # Construire un libellé lisible pour l'unité
+    _unit_labels = {
+        "minute": f"{n} minute{'s' if n > 1 else ''}",
+        "hour":   f"{n} heure{'s' if n > 1 else ''}",
+        "day":    f"{n} jour{'s' if n > 1 else ''}",
+    }
+    cast_label = _unit_labels.get(unit, f"{n} {unit}")
+
+    return False, (
+        f"[RÈGLE 5e — TEMPS D'INCANTATION]\n"
+        f"Le sort « {spell_name} » a un temps d'incantation de {cast_label}.\n"
+        f"Il ne peut PAS être lancé pendant un combat (round = 6 secondes).\n"
+        f"Ce sort ne peut être utilisé qu'en dehors d'un round de combat.\n\n"
+        f"Choisis une autre action : attaque, tour de magie, ou un sort "
+        f"dont le temps d'incantation est 1 action / 1 action bonus / 1 réaction."
+    )
+
+
 # ─── PNJ patterns ─────────────────────────────────────────────────────────────
 
 def build_pnj_patterns(PNJ_NAMES: list) -> dict:

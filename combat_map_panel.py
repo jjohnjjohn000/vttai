@@ -349,10 +349,11 @@ class CombatMapWindow:
 
         for t in data.get("tokens", []):
             tok = {k: v for k, v in t.items() if k != "ids"}
-            tok.setdefault("hp",         -1)
-            tok.setdefault("max_hp",     -1)
-            tok.setdefault("size",        1)
-            tok.setdefault("conditions", [])
+            tok.setdefault("hp",          -1)
+            tok.setdefault("max_hp",      -1)
+            tok.setdefault("size",         1)
+            tok.setdefault("conditions",  [])
+            tok.setdefault("altitude_ft",  0)   # 0 = au sol, >0 = en vol (pieds D&D)
             self.tokens.append(tok)
 
         for n in data.get("notes", []):
@@ -1451,6 +1452,7 @@ class CombatMapWindow:
             tok.get("name", ""), tok.get("size", 1),
             tok.get("hp", -1), tok.get("max_hp", -1),
             tuple(tok.get("conditions", [])),
+            tok.get("altitude_ft", 0),
             zoom, cp,
             id(tok) in sel,
         )
@@ -1470,15 +1472,25 @@ class CombatMapWindow:
             tok["_fp"] = fp
 
     def _draw_one_token(self, tok: dict):
+        import math
         style = TOKEN_STYLES.get(tok["type"], TOKEN_STYLES["hero"])
         cp    = self._cp
         size  = float(tok.get("size", 1))
-        # Centre du token (milieu de la zone size×size)
-        cx    = (tok["col"] + size / 2) * cp
-        cy    = (tok["row"] + size / 2) * cp
-        rad   = cp * size * 0.40
-        name  = tok.get("name", "")
+        alt   = int(tok.get("altitude_ft", 0))   # altitude en pieds D&D (0 = sol)
+        flying = alt > 0
 
+        # ── Centre de base du token (case grille) ─────────────────────────────
+        base_cx = (tok["col"] + size / 2) * cp
+        base_cy = (tok["row"] + size / 2) * cp
+        rad     = cp * size * 0.40
+
+        # ── Décalage vertical isométrique-lite ────────────────────────────────
+        # Le token "lévite" au-dessus de son ombre : 0.4px par pied, plafonné à rad*1.2
+        lift_px = min(alt * 0.4 * self.zoom, rad * 1.2) if flying else 0.0
+        cx = base_cx
+        cy = base_cy - lift_px   # token levé vers le haut du canvas
+
+        name  = tok.get("name", "")
         fill_rgb = (HERO_COLORS.get(name, style["fill"])
                     if tok["type"] == "hero" else style["fill"])
         fill    = _rgb_to_hex(fill_rgb)
@@ -1486,31 +1498,61 @@ class CombatMapWindow:
         tag     = f"tok_{id(tok)}"
         ids     = []
 
-        # Anneau de sélection (blanc pointillé si sélectionné)
+        # ── Ombre au sol (projeté sous le token) ──────────────────────────────
+        if flying:
+            sh_rx = rad * 0.85           # ellipse légèrement aplatie
+            sh_ry = rad * 0.30
+            # transparence via stipple : gray25 = très transparent
+            ids.append(self.canvas.create_oval(
+                base_cx - sh_rx, base_cy - sh_ry,
+                base_cx + sh_rx, base_cy + sh_ry,
+                fill="#000000", outline=outline,
+                stipple="gray25", width=1,
+                tags=("token", "tok_shadow", tag)))
+            # Ligne verticale de "fil" reliant l'ombre au token
+            if lift_px > rad * 0.4:
+                ids.append(self.canvas.create_line(
+                    base_cx, base_cy - sh_ry,
+                    cx, cy + rad,
+                    fill=outline, width=1, dash=(3, 4),
+                    tags=("token", tag)))
+
+        # ── Anneau de sélection ────────────────────────────────────────────────
         sel_col = "#ffffff" if id(tok) in self._selected_tokens else ""
         ids.append(self.canvas.create_oval(
             cx-rad-5, cy-rad-5, cx+rad+5, cy+rad+5,
             outline=sel_col, width=2, fill="", dash=(4, 3),
             tags=("token", "sel_ring", tag)))
 
+        # Halo externe (outline ring)
         ids.append(self.canvas.create_oval(
             cx-rad-3, cy-rad-3, cx+rad+3, cy+rad+3,
             outline=outline, width=1, fill="", tags=("token", tag)))
 
+        # ── Corps du token ────────────────────────────────────────────────────
+        # Stipple gray50 si en vol → aspect semi-transparent
+        stipple_val = "gray50" if flying else ""
         sh = style.get("shape", "circle")
         if sh == "circle":
             ids.append(self.canvas.create_oval(
                 cx-rad, cy-rad, cx+rad, cy+rad,
-                fill=fill, outline=outline, width=2, tags=("token", tag)))
+                fill=fill, outline=outline, width=2,
+                stipple=stipple_val,
+                tags=("token", tag)))
         elif sh == "diamond":
             pts = [cx, cy-rad, cx+rad, cy, cx, cy+rad, cx-rad, cy]
             ids.append(self.canvas.create_polygon(
-                pts, fill=fill, outline=outline, width=2, tags=("token", tag)))
+                pts, fill=fill, outline=outline, width=2,
+                stipple=stipple_val,
+                tags=("token", tag)))
         else:
             pts = [cx, cy-rad, cx+rad*0.88, cy+rad*0.75, cx-rad*0.88, cy+rad*0.75]
             ids.append(self.canvas.create_polygon(
-                pts, fill=fill, outline=outline, width=2, tags=("token", tag)))
+                pts, fill=fill, outline=outline, width=2,
+                stipple=stipple_val,
+                tags=("token", tag)))
 
+        # ── Texte du token ────────────────────────────────────────────────────
         fs = max(7, int(10 * self.zoom * size))
         ids.append(self.canvas.create_text(
             cx, cy, text=(name[:3] if name else tok["type"][:1].upper()),
@@ -1522,6 +1564,19 @@ class CombatMapWindow:
                 font=("Consolas", max(6, int(7 * self.zoom * size))),
                 anchor="n", tags=("token", tag)))
 
+        # ── Badge altitude ▲ Nft ──────────────────────────────────────────────
+        if flying and self.zoom >= 0.35:
+            badge_fs = max(6, int(7 * self.zoom))
+            badge_txt = f"▲{alt}ft"
+            # Fond noir semi-transparent derrière le badge
+            ids.append(self.canvas.create_text(
+                cx + rad + 2, cy - rad + 2,
+                text=badge_txt,
+                fill="#00ccff",
+                font=("Consolas", badge_fs, "bold"),
+                anchor="nw",
+                tags=("token", tag)))
+
         # ── Barre de PV ───────────────────────────────────────────────────────
         hp     = tok.get("hp",     -1)
         max_hp = tok.get("max_hp", -1)
@@ -1531,11 +1586,9 @@ class CombatMapWindow:
             bx0   = cx - rad
             by0   = cy - rad - bar_h - 2
             by1   = by0 + bar_h
-            # Fond gris
             ids.append(self.canvas.create_rectangle(
                 bx0, by0, bx0 + bar_w, by1,
                 fill="#333333", outline="", tags=("token", tag)))
-            # Remplissage coloré selon ratio
             ratio = max(0.0, min(1.0, hp / max_hp))
             bar_color = (
                 "#4caf50" if ratio > 0.5 else
@@ -1546,7 +1599,6 @@ class CombatMapWindow:
                 ids.append(self.canvas.create_rectangle(
                     bx0, by0, bx0 + bar_w * ratio, by1,
                     fill=bar_color, outline="", tags=("token", tag)))
-            # Texte PV si assez grand
             if cp >= 28 and self.zoom >= 0.7:
                 ids.append(self.canvas.create_text(
                     cx, by0 + bar_h / 2,
@@ -1558,18 +1610,13 @@ class CombatMapWindow:
         conditions = tok.get("conditions", [])
         if conditions and self.zoom >= 0.4:
             badge_r = max(4, int(cp * 0.13))
-            # Placer les badges en arc sous le token
-            angles = [270 + i * (180 / max(1, len(conditions) - 1 or 1))
-                      for i in range(len(conditions))]
-            if len(conditions) == 1:
-                angles = [270]
-            import math
+            import math as _m
             arc_r = rad + badge_r + 2
-            for i, cond in enumerate(conditions[:8]):  # max 8 badges
+            for i, cond in enumerate(conditions[:8]):
                 angle_deg = 270 + i * 360 / len(conditions) if len(conditions) > 1 else 270
-                angle_rad = math.radians(angle_deg)
-                bx = cx + arc_r * math.cos(angle_rad)
-                by = cy + arc_r * math.sin(angle_rad)
+                angle_rad = _m.radians(angle_deg)
+                bx = cx + arc_r * _m.cos(angle_rad)
+                by = cy + arc_r * _m.sin(angle_rad)
                 cond_col = DND_CONDITIONS.get(cond, "#aaaaaa")
                 ids.append(self.canvas.create_oval(
                     bx - badge_r, by - badge_r, bx + badge_r, by + badge_r,
@@ -1582,7 +1629,6 @@ class CombatMapWindow:
                         tags=("token", tag)))
 
         tok["ids"] = tuple(ids)
-        # Motion + release gérés au niveau canvas (_mb1_move/_mb1_up)
         for iid in ids:
             self.canvas.tag_bind(iid, "<ButtonPress-1>",
                                   lambda e, t=tok: self._tok_press(e, t))
@@ -1993,6 +2039,7 @@ class CombatMapWindow:
         if not self._obstacles:
             return img
         draw = _ID.Draw(img)
+        tx0, ty0 = getattr(self, "_tile_rect", (0, 0, 0, 0))[:2]
         for obs in self._obstacles:
             pts = obs["pts"]
             if len(pts) < 2:
@@ -2006,8 +2053,8 @@ class CombatMapWindow:
                 r, g, b = 180, 60, 0
             fill_rgba    = (r, g, b, 200)
             outline_rgba = (min(255, r+60), min(255, g+60), min(255, b+60), 255)
-            # Convertit les coords monde → pixels
-            scaled = [(px * self.zoom, py * self.zoom) for px, py in pts]
+            # Convertit les coords monde → pixels et applique l'offset de la vue (zoom/scroll)
+            scaled = [(px * self.zoom - tx0, py * self.zoom - ty0) for px, py in pts]
             if len(scaled) >= 3:
                 draw.polygon(scaled, fill=fill_rgba, outline=outline_rgba)
             else:
@@ -2202,6 +2249,12 @@ class CombatMapWindow:
                 label=size_name,
                 command=lambda sv=size_val, sn=size_name: self._set_token_size(tok, sv))
         menu.add_cascade(label="📐  Taille", menu=size_menu)
+
+        # Altitude (vol / 3D)
+        alt = tok.get("altitude_ft", 0)
+        alt_lbl = f"✈  Altitude  [{alt}ft]" if alt > 0 else "✈  Altitude  [sol]"
+        menu.add_command(label=alt_lbl,
+                         command=lambda: self._edit_token_altitude(tok))
 
         menu.add_separator()
         menu.add_command(label="✕  Supprimer",
@@ -2417,6 +2470,67 @@ class CombatMapWindow:
         tok["size"] = size_val
         self._redraw_one_token(tok)
         self._save_state()
+
+    def _edit_token_altitude(self, tok):
+        """Dialogue pour régler l'altitude d'un token (en pieds D&D, 0 = au sol)."""
+        dw = tk.Toplevel(self.win)
+        dw.title(f"Altitude — {tok.get('name','?')}")
+        dw.geometry("300x165")
+        dw.configure(bg="#0d1018")
+        dw.resizable(False, False)
+        dw.wait_visibility()
+        dw.grab_set()
+
+        tk.Label(dw, text=f"✈  Altitude de {tok.get('name','?')}",
+                 bg="#0d1018", fg="#00ccff",
+                 font=("Consolas", 10, "bold")).pack(pady=(12, 2))
+        tk.Label(dw, text="0 = au sol  |  multiples de 5 recommandés (5ft = 1 case)",
+                 bg="#0d1018", fg="#555577",
+                 font=("Consolas", 7)).pack()
+
+        frm = tk.Frame(dw, bg="#0d1018")
+        frm.pack(pady=10)
+        tk.Label(frm, text="Pieds :", bg="#0d1018", fg="#aaaacc",
+                 font=("Consolas", 9)).pack(side=tk.LEFT, padx=(0, 6))
+        spx = tk.Spinbox(frm, from_=0, to=500, increment=5,
+                         width=6, bg="#252538", fg="#00ccff",
+                         font=("Consolas", 12, "bold"),
+                         buttonbackground="#252538", relief="flat",
+                         highlightthickness=1, highlightcolor="#00ccff")
+        spx.delete(0, tk.END)
+        spx.insert(0, str(tok.get("altitude_ft", 0)))
+        spx.pack(side=tk.LEFT)
+        spx.focus_set()
+        spx.selection_range(0, tk.END)
+
+        def _apply(event=None):
+            try:
+                val = max(0, min(500, int(spx.get())))
+            except ValueError:
+                val = 0
+            tok["altitude_ft"] = val
+            dw.destroy()
+            self._redraw_one_token(tok)
+            self._save_state()
+            # Notifier le chat si altitude non nulle
+            if self.msg_queue is not None:
+                name = tok.get("name", "?")
+                alt_txt = (f"▲ {val}ft ({val//5} cases)" if val > 0
+                           else "↓ retour au sol")
+                self.msg_queue.put({
+                    "sender": "🗺️ Carte",
+                    "text":   f"✈ {name} — altitude : {alt_txt}",
+                    "color":  "#00ccff",
+                })
+
+        spx.bind("<Return>", _apply)
+        dw.bind("<Escape>", lambda e: dw.destroy())
+        tk.Button(dw, text="✅ Appliquer",
+                  bg="#003344", fg="#00ccff",
+                  font=("Consolas", 9, "bold"),
+                  relief="flat", padx=12, pady=5,
+                  cursor="hand2",
+                  command=_apply).pack(pady=2)
 
     # ─── Outil Règle ─────────────────────────────────────────────────────────
 
@@ -3199,6 +3313,75 @@ class CombatMapWindow:
             fg="#9999bb"     if self._show_grid else "#555577")
         self._full_redraw()
 
+    def place_new_token(self, name: str, ttype: str = "monster", size: float = 1.0, hp: int = -1, max_hp: int = -1):
+        """Place un nouveau token depuis le tracker au centre du viewport (recherche libre en spirale)."""
+        W, H = self._wh
+        sr_w, sr_h = W + 40, H + 40
+        x0f, x1f = self.canvas.xview()
+        y0f, y1f = self.canvas.yview()
+        vx0 = max(0, int(x0f * sr_w))
+        vy0 = max(0, int(y0f * sr_h))
+        vx1 = min(W, int(x1f * sr_w))
+        vy1 = min(H, int(y1f * sr_h))
+        cx = (vx0 + vx1) / 2
+        cy = (vy0 + vy1) / 2
+        
+        c_col = int(cx / self._cp)
+        c_row = int(cy / self._cp)
+        
+        dirs = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+        r = 1
+        d_idx = 0
+        cur_col, cur_row = c_col, c_row
+        
+        def is_free(c, ro):
+            for t in self.tokens:
+                if int(round(t.get("col", 0))) == c and int(round(t.get("row", 0))) == ro:
+                    return False
+            return True
+            
+        found = False
+        steps = 0
+        
+        if is_free(cur_col, cur_row):
+            found = True
+        else:
+            while steps < 400:
+                for _ in range(2):
+                    for _ in range(r):
+                        cur_col += dirs[d_idx][0]
+                        cur_row += dirs[d_idx][1]
+                        if 0 <= cur_col < self.cols and 0 <= cur_row < self.rows:
+                            if is_free(cur_col, cur_row):
+                                found = True
+                                break
+                    if found: break
+                    d_idx = (d_idx + 1) % 4
+                if found: break
+                r += 1
+                steps += 1
+                
+        if not found:
+            cur_col, cur_row = c_col, c_row
+            
+        cur_col = max(0, min(cur_col, self.cols - 1))
+        cur_row = max(0, min(cur_row, self.rows - 1))
+        
+        tok = {
+            "type":       ttype,
+            "name":       name,
+            "col":        cur_col,
+            "row":        cur_row,
+            "hp":         hp,
+            "max_hp":     max_hp,
+            "size":       size,
+            "conditions": [],
+        }
+        self.tokens.append(tok)
+        self._save_state()
+        self._redraw_all_tokens()
+        self._notify_token_moved(name, ttype, cur_col, cur_row, cur_col, cur_row, source="mj")
+
     def _add_token(self, cx, cy):
         col, row = self._canvas_to_cell(cx, cy)
         if not (0 <= col < self.cols and 0 <= row < self.rows):
@@ -3450,11 +3633,22 @@ class CombatMapWindow:
             })
 
         # ── Injection dans autogen (texte uniquement — compatible tous modèles) ──
-        if self.inject_fn is not None:
+        # Hors-combat uniquement : pendant le combat, les agents ont déjà la carte
+        # dans leur system prompt et une injection ici provoquerait des réponses
+        # non sollicitées hors-tour.
+        try:
+            from combat_tracker import COMBAT_STATE as _CS_desc
+            _combat_active_desc = _CS_desc.get("active", False)
+        except Exception:
+            _combat_active_desc = False
+
+        if self.inject_fn is not None and not _combat_active_desc:
             self.inject_fn(desc)
 
     def _build_map_description(self) -> str:
-        """Description textuelle restreinte à la zone visible à l'écran (zoom + scroll)."""
+        """Description textuelle restreinte à la zone visible à l'écran (zoom + scroll).
+        Inclut les altitudes de vol et les distances 3D pour les agents."""
+        import math as _math
         cp_px  = self.cell_px
         mw, mh = self.cols * cp_px, self.rows * cp_px
         mask   = self._fog_mask if self._fog_mask else Image.new("L", (mw, mh), 255)
@@ -3464,6 +3658,25 @@ class CombatMapWindow:
             px = min(int((c + 0.5) * cp_px), mw - 1)
             py = min(int((r + 0.5) * cp_px), mh - 1)
             return mask_arr[py, px] > 127
+
+        # ── 3D distance helpers (locaux, pieds D&D) ────────────────────────────
+        def _horiz_ft(t1, t2) -> float:
+            c1, r1 = int(t1["col"]), int(t1["row"])
+            c2, r2 = int(t2["col"]), int(t2["row"])
+            return max(abs(c1 - c2), abs(r1 - r2)) * 5.0
+
+        def _d3d_ft(t1, t2) -> float:
+            h = _horiz_ft(t1, t2)
+            v = abs(int(t1.get("altitude_ft", 0)) - int(t2.get("altitude_ft", 0)))
+            return _math.sqrt(h * h + v * v)
+
+        def _tok_label(tok) -> str:
+            name = tok.get("name", tok["type"])
+            alt  = int(tok.get("altitude_ft", 0))
+            pos  = f"Col {int(tok['col'])+1}, Lig {int(tok['row'])+1}"
+            if alt > 0:
+                return f"{name} ({tok['type']}) → {pos}  ✈ EN VOL {alt}ft"
+            return f"{name} ({tok['type']}) → {pos}  [sol]"
 
         col_min, row_min, col_max, row_max = self._viewport_cells_rect()
         vp_cols  = col_max - col_min + 1
@@ -3478,6 +3691,7 @@ class CombatMapWindow:
             f"Viewport : colonnes {col_min+1}–{col_max+1}, lignes {row_min+1}–{row_max+1}"
             f"  ({vp_cols}×{vp_rows} cases)  |  zoom {int(self.zoom*100)}%",
             f"{visible}/{vp_total} cases visibles dans ce cadre  |  {hidden} sous brouillard",
+            "Distances : 3D réelles — dist_3D = √(horiz² + Δalt²). Mêlée ≤5ft 3D. Reach ≤10ft 3D.",
             "",
         ]
 
@@ -3486,20 +3700,62 @@ class CombatMapWindow:
             c, r = int(tok["col"]), int(tok["row"])
             if not (col_min <= c <= col_max and row_min <= r <= row_max):
                 continue
-            label = f"{tok['name']} ({tok['type']}) → Col {c+1}, Lig {r+1}"
+            label = _tok_label(tok)
             if not _cell_covered(c, r):
-                visible_tokens.append(label)
+                visible_tokens.append((tok, label))
             else:
                 hidden_tokens.append(label)
 
         if visible_tokens:
             lines.append("Tokens visibles :")
-            for t in visible_tokens: lines.append(f"  • {t}")
+            for _, lbl in visible_tokens: lines.append(f"  • {lbl}")
         else:
             lines.append("Aucun token visible dans ce cadre.")
         if hidden_tokens:
             lines.append("Tokens sous brouillard dans ce cadre :")
-            for t in hidden_tokens: lines.append(f"  ? {t}")
+            for lbl in hidden_tokens: lines.append(f"  ? {lbl}")
+
+        # ── Bloc distances 3D entre tokens visibles ────────────────────────────
+        vis_toks = [tok for tok, _ in visible_tokens]
+        heroes   = [t for t in vis_toks if t.get("type") == "hero"]
+        enemies  = [t for t in vis_toks if t.get("type") == "monster"]
+
+        if heroes and enemies:
+            lines.append("\n📏 DISTANCES 3D HÉROS → ENNEMIS :")
+            for h in heroes:
+                h_alt = int(h.get("altitude_ft", 0))
+                h_name = h.get("name", "Héros")
+                for e in sorted(enemies, key=lambda m: _d3d_ft(h, m))[:3]:
+                    horiz = _horiz_ft(h, e)
+                    dalt  = abs(h_alt - int(e.get("altitude_ft", 0)))
+                    d3d   = _d3d_ft(h, e)
+                    e_name = e.get("name", "Ennemi")
+                    if dalt == 0:
+                        breakdown = f"{horiz:.0f}ft horiz, même altitude"
+                    else:
+                        breakdown = f"{horiz:.0f}ft horiz + {dalt}ft vertical = {d3d:.0f}ft 3D"
+                    if d3d <= 5:
+                        verdict = "mêlée ✅"
+                    elif d3d <= 10:
+                        verdict = "mêlée Reach ✅"
+                    else:
+                        verdict = "portée distance 🏹"
+                    lines.append(f"  • {h_name} → {e_name} : {breakdown} — {verdict}")
+
+        if len(vis_toks) >= 2:
+            lines.append("\n📏 DISTANCES 3D ENTRE ALLIÉS :")
+            done = set()
+            for i, t1 in enumerate(heroes):
+                for t2 in heroes[i+1:]:
+                    key = (id(t1), id(t2))
+                    if key in done: continue
+                    done.add(key)
+                    horiz = _horiz_ft(t1, t2)
+                    dalt  = abs(int(t1.get("altitude_ft",0)) - int(t2.get("altitude_ft",0)))
+                    d3d   = _d3d_ft(t1, t2)
+                    breakdown = (f"{horiz:.0f}ft horiz + {dalt}ft vertical = {d3d:.0f}ft 3D"
+                                 if dalt else f"{horiz:.0f}ft")
+                    lines.append(f"  • {t1.get('name','?')} ↔ {t2.get('name','?')} : {breakdown}")
 
         lines.append("")
         lines.append("Zones révélées dans le cadre affiché :")
@@ -4150,23 +4406,44 @@ class CombatMapWindow:
             })
 
         # ── Injection autogen (MJ uniquement) ─────────────────────────────────
-        if source == "mj" and self.inject_fn is not None:
-            # Snapshot complet de toutes les positions après le déplacement
+        # Pendant le combat les agents reçoivent déjà la carte à jour via leur
+        # system prompt (get_map_prompt → _rebuild_agent_prompts).  Ré-injecter
+        # dans le chat déclencherait des réponses hors-tour (violations + spam).
+        # On n'injecte que hors-combat.
+        try:
+            from combat_tracker import COMBAT_STATE as _CS_map
+            _combat_active_for_inject = _CS_map.get("active", False)
+        except Exception:
+            _combat_active_for_inject = False
+
+        if source == "mj" and self.inject_fn is not None and not _combat_active_for_inject:
+            # Snapshot complet de toutes les positions après le déplacement (altitude incluse)
+            import math as _math
             positions = []
             for t in self.tokens:
                 tc, tr = int(round(t["col"])), int(round(t["row"]))
+                t_alt  = int(t.get("altitude_ft", 0))
+                alt_s  = f"  ✈ EN VOL {t_alt}ft" if t_alt > 0 else "  [sol]"
                 positions.append(
-                    f"  • {t.get('name','?')} ({t['type']}) → Col {tc+1}, Lig {tr+1}"
+                    f"  • {t.get('name','?')} ({t['type']}) → Col {tc+1}, Lig {tr+1}{alt_s}"
                 )
             positions_txt = "\n".join(positions) if positions else "  (aucun token)"
+
+            # Trouver le token déplacé pour récupérer son altitude courante
+            moved_tok = next((t for t in self.tokens if t.get("name") == name), None)
+            moved_alt = int(moved_tok.get("altitude_ft", 0)) if moved_tok else 0
+            alt_note  = (f"\n  Altitude courante : {moved_alt}ft (EN VOL)"
+                         if moved_alt > 0 else "\n  Altitude courante : 0ft (au sol)")
 
             inject_txt = (
                 f"[MISE À JOUR CARTE — MJ]\n"
                 f"{type_label.capitalize()} {name} vient d'être déplacé par le MJ :\n"
                 f"  Ancienne position : Col {old_col+1}, Lig {old_row+1}\n"
                 f"  Nouvelle position : Col {new_col+1}, Lig {new_row+1} "
-                f"({dist_m:.1f} m vers le {dir_txt})\n\n"
-                f"Positions actuelles de tous les tokens :\n{positions_txt}\n\n"
+                f"({dist_m:.1f} m vers le {dir_txt}){alt_note}\n\n"
+                f"Rappel — distances 3D : dist_3D = √(horiz²+Δalt²). "
+                f"Mêlée possible uniquement si dist_3D ≤ 5ft.\n\n"
+                f"Positions actuelles de tous les tokens (altitude incluse) :\n{positions_txt}\n\n"
                 f"Tenez compte de cette mise à jour pour vos prochaines actions."
             )
             self.inject_fn(inject_txt)
@@ -4772,18 +5049,44 @@ def get_map_prompt(win_state: dict) -> str:
         return int(round(t.get("col", 0))), int(round(t.get("row", 0)))
 
     def _label(t):
-        return t.get("name") or t.get("type", "?")
+        base = t.get("name") or t.get("type", "?")
+        alt  = int(t.get("altitude_ft", 0))
+        return f"{base} [▲{alt}ft]" if alt > 0 else base
 
-    def _dist_m(t1, t2):
-        """Distance Chebyshev en mètres (1 case = 1,5 m)."""
+    import math as _math
+
+    def _dist_horiz_ft(t1, t2) -> float:
+        """Distance horizontale en pieds (Chebyshev 2D — diagonale libre D&D 5e)."""
         c1, r1 = _coord(t1)
         c2, r2 = _coord(t2)
-        return max(abs(c1 - c2), abs(r1 - r2)) * 1.5
+        return max(abs(c1 - c2), abs(r1 - r2)) * 5.0
+
+    def _dist3d_ft(t1, t2) -> float:
+        """Distance 3D vraie en pieds : √(horiz² + Δalt²).
+        C'est la distance utilisée pour les portées de sort, attaques à distance,
+        et pour déterminer si une attaque de mêlée est possible en vol."""
+        horiz = _dist_horiz_ft(t1, t2)
+        dalt  = abs(int(t1.get("altitude_ft", 0)) - int(t2.get("altitude_ft", 0)))
+        return _math.sqrt(horiz ** 2 + dalt ** 2)
+
+    def _reach_verdict(t1, t2) -> str:
+        """Retourne un verdict de portée clair pour deux tokens (incluant altitude)."""
+        d3d   = _dist3d_ft(t1, t2)
+        horiz = _dist_horiz_ft(t1, t2)
+        dalt  = abs(int(t1.get("altitude_ft", 0)) - int(t2.get("altitude_ft", 0)))
+        if d3d <= 5.0:
+            return "mêlée ✅ (≤5ft 3D)"
+        if d3d <= 10.0:
+            return "mêlée Reach ✅ (≤10ft 3D)"
+        return f"portée distance 🏹 ({d3d:.0f}ft 3D)"
 
     lines = [
-        f"\n\n🗺️ ═══ CARTE DE COMBAT ({cols}×{rows} cases — 1 case = 1,5 m) ═══",
+        f"\n\n🗺️ ═══ CARTE DE COMBAT ({cols}×{rows} cases — 1 case = 5ft) ═══",
         "  • L'axe des Colonnes (Col) va de GAUCHE (1) vers la DROITE (est).",
-        "  • L'axe des Rangées/Lignes (Lig) va du HAUT (1) vers le BAS (sud)."
+        "  • L'axe des Rangées/Lignes (Lig) va du HAUT (1) vers le BAS (sud).",
+        "  • Les distances intègrent l'ALTITUDE (vol 3D) : dist_3D = √(horiz²+Δalt²).",
+        "  • Portée de mêlée : ≤5ft en 3D. Reach : ≤10ft en 3D.",
+        "  • Un token en vol ne peut être attaqué en mêlée que si la dist 3D ≤ 5ft (ou 10ft Reach).",
     ]
 
     # ── Positions des héros ────────────────────────────────────────────────────
@@ -4791,41 +5094,67 @@ def get_map_prompt(win_state: dict) -> str:
         lines.append("\n🔵 HÉROS — positions :")
         for h in heroes:
             c, r = _coord(h)
-            lines.append(f"  • {_label(h)} → colonne {c}, rangée {r}")
+            alt   = int(h.get("altitude_ft", 0))
+            if alt > 0:
+                alt_s = f"  ✈ EN VOL — altitude : {alt}ft ({alt//5} cases au-dessus du sol)"
+            else:
+                alt_s = "  [au sol]"
+            lines.append(f"  • {_label(h)} → Col {c+1}, Lig {r+1}{alt_s}")
 
     # ── Positions des monstres ─────────────────────────────────────────────────
     if monsters:
         lines.append("\n🔴 ENNEMIS — positions :")
         for m in monsters:
             c, r = _coord(m)
-            lines.append(f"  • {_label(m)} → colonne {c}, rangée {r}")
+            alt   = int(m.get("altitude_ft", 0))
+            if alt > 0:
+                alt_s = f"  ✈ EN VOL — altitude : {alt}ft ({alt//5} cases au-dessus du sol)"
+            else:
+                alt_s = "  [au sol]"
+            lines.append(f"  • {_label(m)} → Col {c+1}, Lig {r+1}{alt_s}")
 
     # ── Pièges / éléments spéciaux ────────────────────────────────────────────
     if traps:
         lines.append("\n⚠️ PIÈGES / ZONES :")
         for tr in traps:
             c, r = _coord(tr)
-            lines.append(f"  • {_label(tr)} → colonne {c}, rangée {r}")
+            lines.append(f"  • {_label(tr)} → Col {c+1}, Lig {r+1}")
 
-    # ── Distances héros ↔ ennemis les plus proches ────────────────────────────
+    # ── Distances héros ↔ ennemis (3D complètes) ──────────────────────────────
     if heroes and monsters:
-        lines.append("\n📏 DISTANCES (portée de mêlée ≤ 1,5 m = case adjacente) :")
+        lines.append("\n📏 DISTANCES HÉROS → ENNEMIS (distances 3D — altitude incluse) :")
         for h in heroes:
-            nearest = min(monsters, key=lambda m: _dist_m(h, m))
-            d = _dist_m(h, nearest)
-            reach = "portée mêlée ✅" if d <= 1.5 else f"{d:.1f} m"
-            lines.append(f"  • {_label(h)} → {_label(nearest)} : {reach}")
+            # Trier tous les ennemis par distance 3D
+            sorted_monsters = sorted(monsters, key=lambda m: _dist3d_ft(h, m))
+            nearest = sorted_monsters[0]
+            h_alt   = int(h.get("altitude_ft", 0))
 
-    # ── Distances héros ↔ héros ────────────────────────────────────────────────
+            lines.append(f"  ── {_label(h)} ({'vol' if h_alt else 'sol'}) ──")
+            for m in sorted_monsters[:4]:   # max 4 ennemis par héros
+                horiz = _dist_horiz_ft(h, m)
+                dalt  = abs(h_alt - int(m.get("altitude_ft", 0)))
+                d3d   = _dist3d_ft(h, m)
+                verdict = _reach_verdict(h, m)
+                if dalt == 0:
+                    breakdown = f"{horiz:.0f}ft horiz, même altitude"
+                else:
+                    breakdown = f"{horiz:.0f}ft horiz + {dalt}ft vertical = {d3d:.0f}ft 3D"
+                lines.append(f"    → {_label(m)} : {breakdown} — {verdict}")
+
+    # ── Distances héros ↔ héros (3D) ──────────────────────────────────────────
     if len(heroes) >= 2:
-        lines.append("\n🤝 DISTANCES ENTRE ALLIÉS :")
+        lines.append("\n🤝 DISTANCES ENTRE ALLIÉS (3D) :")
         for i, h1 in enumerate(heroes):
             for h2 in heroes[i + 1:]:
-                d = _dist_m(h1, h2)
-                adj = " (adjacents)" if d <= 1.5 else ""
-                lines.append(
-                    f"  • {_label(h1)} ↔ {_label(h2)} : {d:.1f} m{adj}"
-                )
+                horiz = _dist_horiz_ft(h1, h2)
+                dalt  = abs(int(h1.get("altitude_ft", 0)) - int(h2.get("altitude_ft", 0)))
+                d3d   = _dist3d_ft(h1, h2)
+                if dalt == 0:
+                    breakdown = f"{horiz:.0f}ft"
+                else:
+                    breakdown = f"{horiz:.0f}ft horiz + {dalt}ft vertical = {d3d:.0f}ft 3D"
+                verdict = _reach_verdict(h1, h2)
+                lines.append(f"  • {_label(h1)} ↔ {_label(h2)} : {breakdown} — {verdict}")
 
     # ── Notes de carte visibles ────────────────────────────────────────────────
     if notes:

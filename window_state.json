@@ -90,10 +90,10 @@
     "y": 1137
   },
   "combat_tracker": {
-    "w": 1920,
+    "w": 960,
     "h": 1043,
-    "x": 1920,
-    "y": 0
+    "x": 960,
+    "y": 1072
   },
   "combat_map": {
     "w": 1920,
@@ -2655,6 +2655,5 @@
     "x": 2111,
     "y": 0
   },
-  "_open_combat_map": true,
-  "_open_combat_tracker": true
+  "_open_combat_map": true
 }

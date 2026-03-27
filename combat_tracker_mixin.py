@@ -37,6 +37,7 @@ class CombatTrackerMixin:
             chat_queue=self.msg_queue,
             pc_turn_callback=self._on_pc_combat_turn,
             advance_turn_callback=self._on_pc_turn_ended,
+            app=self,
         )
         try:
             self._track_window("combat_tracker", self._combat_tracker.win)
@@ -76,30 +77,52 @@ class CombatTrackerMixin:
             "color":  "#c8a820",
         })
 
-        _slots_summary = ""
+        # ── Résumé des slots : calculé AVANT la rédaction du trigger ──────────
+        _slots_header = ""
+        _slots_detail = ""
         try:
             _s = load_state()
             _slots = _s.get("characters", {}).get(char_name, {}).get("spell_slots", {})
             if _slots:
-                _avail = [(f"niv.{k}", v) for k, v in sorted(_slots.items(), key=lambda x: int(x[0])) if v > 0]
-                _empty = [f"niv.{k}" for k, v in sorted(_slots.items(), key=lambda x: int(x[0])) if v == 0]
+                _avail = [
+                    (int(k), v)
+                    for k, v in sorted(_slots.items(), key=lambda x: int(x[0]))
+                    if v > 0
+                ]
+                _empty = [
+                    int(k)
+                    for k, v in sorted(_slots.items(), key=lambda x: int(x[0]))
+                    if v == 0
+                ]
                 if _avail:
-                    _slots_summary += "\nSlots disponibles : " + ", ".join(f"{n}×{v}" for n, v in _avail)
+                    _avail_str = ", ".join(f"niv.{k}×{v}" for k, v in _avail)
+                    _slots_detail += f"  ✅ DISPONIBLES : {_avail_str}\n"
                 if _empty:
-                    _slots_summary += "  |  ÉPUISÉS : " + ", ".join(_empty)
+                    _empty_str = ", ".join(f"niv.{k}" for k in _empty)
+                    _slots_detail += f"  ❌ ÉPUISÉS    : {_empty_str}\n"
+                if _slots_detail:
+                    _slots_header = (
+                        f"\n📋 SLOTS DE SORT DE {char_name.upper()} — VÉRIFIER AVANT DE DÉCLARER :\n"
+                        + _slots_detail
+                        + f"  → Tu DOIS choisir un niveau de slot présent dans la liste ✅.\n"
+                        + f"  → Si le sort que tu veux est à un niveau ❌ épuisé, déclare-le\n"
+                        + f"    avec un slot supérieur disponible (upcast) ou choisis un autre sort.\n"
+                    )
         except Exception:
             pass
 
         trigger = (
             f"⚔️ [SYSTÈME DE COMBAT — TOUR DE {char_name.upper()}]\n"
             f"C'est le tour de {char_name}. {char_name}, déclare ton économie d'action "
-            f"complète (Action, Action Bonus, Mouvement, Réaction si applicable).\n\n"
+            f"complète (Action, Action Bonus, Mouvement, Réaction si applicable).\n"
+            f"{_slots_header}\n"
             f"RÈGLE ABSOLUE — NARRATION D'ABORD :\n"
             f"1. Narre d'abord ce que ton personnage fait, dit ou ressent (roleplay).\n"
             f"2. Puis déclare chaque action mécanique dans un bloc [ACTION].\n"
             f"3. N'appelle AUCUN outil directement (update_hp, roll_dice, etc.) — "
             f"le MJ les exécute lui-même après validation dans le chat.\n"
-            f"4. Ne modifie jamais tes PV, slots ou état toi-même.\n\n"
+            f"4. Ne modifie jamais tes PV, slots ou état toi-même.\n"
+            f"5. Pour les sorts : vérifie la liste 📋 ci-dessus et indique un niveau ✅ disponible.\n\n"
             f"Format attendu :\n"
             f"  <roleplay narratif>\n"
             f"  [ACTION]\n"
@@ -107,7 +130,6 @@ class CombatTrackerMixin:
             f"  Cible: <cible>\n"
             f"  Règle: <règle D&D 5e applicable>\n\n"
             f"Quand tu as tout déclaré, termine par [FIN_DE_TOUR]."
-            f"{_slots_summary}"
         )
 
         # Toujours stocker dans le buffer — gui_get_human_input le consommera

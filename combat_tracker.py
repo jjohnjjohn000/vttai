@@ -56,6 +56,8 @@ COMBAT_STATE: dict = {
     # Mis à True dans engine_receive quand le MJ envoie [PAROLE_SPONTANEE],
     # remis à False dès que l'agent a répondu.
     "spontaneous_speech_pending": False,
+    # Liste des sorts lancés pendant le tour actif pour vérifier la règle des actions bonus
+    "turn_spells":       [],
 }
 
 
@@ -456,7 +458,7 @@ class CombatTracker:
 
     def __init__(self, root: tk.Tk, state_loader,
                  chat_queue=None, pc_turn_callback=None,
-                 advance_turn_callback=None):
+                 advance_turn_callback=None, app=None):
         """
         root              : tk.Tk principal
         state_loader      : callable → dict (load_state de state_manager)
@@ -466,6 +468,7 @@ class CombatTracker:
                             autogen sans attendre la saisie du MJ.
         """
         self.root              = root
+        self.app               = app
         self._load_state       = state_loader
         self.chat_queue        = chat_queue
         self.pc_turn_callback  = pc_turn_callback
@@ -828,6 +831,28 @@ class CombatTracker:
     def _do_scheduled_save(self):
         self._save_timer = None
         self._save_combat_state()
+
+    def apply_damage_to_npc(self, target_name: str, damage: int):
+        """Recherche un PNJ par nom et applique les dégâts (temp hp inclus)."""
+        target_lower = target_name.lower()
+        hit = False
+        for c in self.combatants:
+            if not c.is_pc:
+                if c.name.lower() in target_lower or target_lower in c.name.lower():
+                    actual_dmg = damage
+                    if c.temp_hp > 0:
+                        absorbed = min(c.temp_hp, actual_dmg)
+                        c.temp_hp -= absorbed
+                        actual_dmg -= absorbed
+                    
+                    c.hp = max(0, c.hp - actual_dmg)
+                    hit = True
+        if hit:
+            try:
+                self.win.after(0, self._refresh_list)
+                self._schedule_save()
+            except Exception:
+                pass
 
     # ── Persistance du combat ─────────────────────────────────────────────────
 
@@ -1275,6 +1300,25 @@ class CombatTracker:
                       cursor="hand2", padx=3,
                       command=lambda cb=c: self._add_to_kill_pool(cb)
                       ).pack(side=tk.LEFT, padx=(3, 0))
+
+        # Bouton Spawn Token (PNJ uniquement)
+        if not c.is_pc:
+            def _spawn_token(cb=c):
+                if getattr(self.app, "_combat_map_win", None):
+                    self.app._combat_map_win.place_new_token(cb.name, "monster")
+                else:
+                    if self.chat_queue:
+                        self.chat_queue.put({
+                            "sender": "⚙️ Système",
+                            "text": "La carte doit être ouverte pour placer un token.",
+                            "color": "#888888"
+                        })
+
+            tk.Button(btn_row, text="[📍]",
+                      bg=_darken(C["green"], 0.45), fg=C["green_bright"],
+                      font=("Consolas", 7, "bold"), bd=0, relief="flat",
+                      cursor="hand2", padx=3,
+                      command=_spawn_token).pack(side=tk.LEFT, padx=(3, 0))
 
         # ── Col 3 : PV ────────────────────────────────────────────────────
         hp_f = _col(162)
@@ -1787,6 +1831,7 @@ class CombatTracker:
         COMBAT_STATE["round_num"] = self.round_num
         active_c = self.combatants[self.current_idx] if self.combatants else None
         COMBAT_STATE["active_combatant"] = active_c.name if active_c else None
+        COMBAT_STATE["turn_spells"] = []
 
         # Mise à jour visuelle chirurgicale — PAS de rebuild complet
         self._update_active_rows(old_idx, self.current_idx)

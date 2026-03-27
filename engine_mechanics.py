@@ -61,12 +61,14 @@ CHAR_MECHANICS: dict = {
 # ─── split_into_subactions ────────────────────────────────────────────────────
 
 def split_into_subactions(type_label: str, intention: str,
-                          regle: str, cible: str) -> list:
+                          regle: str, cible: str,
+                          char_mechanics: dict | None = None) -> list:
     """
     Décompose un bloc [ACTION] en sous-actions individuelles.
 
     • Extra Attack (Attaque × N) → une carte de confirmation par attaque.
     • Bloc attaque + smite combiné → single_attack=True (flow Phase 1/2/3).
+    • Toute autre attaque détectée   → N cartes single_attack=True (N depuis char_mechanics).
     • Tout autre bloc → une seule carte.
 
     Retourne une liste de dict {type_label, intention, regle, cible}.
@@ -79,11 +81,14 @@ def split_into_subactions(type_label: str, intention: str,
     # ── Détection Extra Attack (format structuré ou langage naturel) ──
     is_extra = (
         "extra attack" in combined
-        or bool(_re.search(r'attaque[s]?\s*[×x]\s*\d+', combined))
-        or bool(_re.search(r'\d+\s*attaques?', combined))
+        or bool(_re.search(r'(?:attaque|frappe|coup|tir)[s]?\s*[×x]\s*\d+', combined))
+        or bool(_re.search(r'\d+\s*(?:attaques?|frappes?|coups?|tirs?)', combined))
         or "deux fois" in intent_low
         or "deux attaques" in intent_low
         or "two attacks" in combined
+        or "deux frappes" in intent_low
+        or "deux coups" in intent_low
+        or "deux tirs" in intent_low
     )
 
     if is_extra:
@@ -107,8 +112,8 @@ def split_into_subactions(type_label: str, intention: str,
 
         # Cas 2 : pas de lignes structurées → déduire N depuis le texte
         _n_m = (
-            _re.search(r'attaque[s]?\s*[×x]\s*(\d+)', combined)
-            or _re.search(r'(\d+)\s*(?:fois|attaques?)', intent_low)
+            _re.search(r'(?:attaque|frappe|coup|tir)[s]?\s*[×x]\s*(\d+)', combined)
+            or _re.search(r'(\d+)\s*(?:fois|attaques?|frappes?|coups?|tirs?)', intent_low)
         )
         n_attacks = int(_n_m.group(1)) if _n_m else (
             2 if ("deux" in combined or "2" in type_low) else
@@ -143,6 +148,46 @@ def split_into_subactions(type_label: str, intention: str,
             "cible":         cible,
             "single_attack": True,
         }]
+
+    # ── Attaque simple (ou Sneak Attack, Reckless Attack, etc.) ──────────────
+    # Toute action qui contient un indicateur d'attaque passe en Phase 1/2/3.
+    # On crée N sous-actions distinctes selon char_mechanics["n_attacks"].
+    _GENERIC_ATK = (
+        "attaque", "frappe", "coup", "tir", "poignarde", "tranche",
+        "assaut", "perfore", "lacère", "abat", "sneak attack", "sournoise",
+        "reckless", "téméraire", "deux armes", "dual wield",
+    )
+    _has_generic_atk = any(k in combined for k in _GENERIC_ATK)
+
+    if _has_generic_atk:
+        _n_atk = 1
+        if char_mechanics:
+            # char_mechanics peut être le dict global (clé = char_name) ou le dict du perso
+            _stats = char_mechanics if "n_attacks" in char_mechanics else {}
+            _n_atk = _stats.get("n_attacks", 1)
+        # Sécurité : si le texte mentionne explicitement un nombre
+        _n_m2 = _re.search(r'(\d)\s*(?:attaques?|frappes?|coups?)', combined)
+        if _n_m2:
+            _n_atk = max(_n_atk, int(_n_m2.group(1)))
+        if _n_atk <= 1:
+            return [{
+                "type_label":    type_label or "Action",
+                "intention":     intention,
+                "regle":         regle.strip(),
+                "cible":         cible,
+                "single_attack": True,
+            }]
+        else:
+            return [
+                {
+                    "type_label":    f"Action — Attaque {i+1}/{_n_atk}",
+                    "intention":     intention,
+                    "regle":         regle.strip(),
+                    "cible":         cible,
+                    "single_attack": True,
+                }
+                for i in range(_n_atk)
+            ]
 
     return [{
         "type_label": type_label or "Action",
@@ -524,9 +569,9 @@ def execute_action_mechanics(
         dc_val    = _extract_dc(regle)
 
         # Vérification liste de sorts préparés
-        if not is_cantrip:
-            _spell_name_candidate = extract_spell_name_fn(intention, char_name)
-            if _spell_name_candidate and not is_spell_prepared_fn(char_name, _spell_name_candidate):
+        _spell_name_candidate = extract_spell_name_fn(intention, char_name) if extract_spell_name_fn else ""
+        if not is_cantrip and _spell_name_candidate:
+            if not is_spell_prepared_fn(char_name, _spell_name_candidate):
                 _avail = get_prepared_spell_names_fn(char_name)
                 _avail_str = ", ".join(_avail) if _avail else "aucun sort préparé trouvé"
                 _no_prep_msg = (
@@ -541,7 +586,54 @@ def execute_action_mechanics(
                 )
                 return "[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n" + _no_prep_msg
 
-        results.append(f"✨ {char_name} — {regle} → {cible}")
+        # Injection des mécaniques depuis spell_data.py
+        _sp_data = None
+        if _spell_name_candidate:
+            try:
+                from spell_data import get_spell as _get_spell
+                _sp_data = _get_spell(_spell_name_candidate)
+            except Exception:
+                pass
+
+        if _sp_data:
+            # Jet d'attaque ?
+            if _sp_data.get("spell_attack") and not is_atk_roll:
+                is_atk_roll = True
+
+            # Sauvegarde ?
+            _save = _sp_data.get("saving_throw", [])
+            _dc_stat = stats.get("save_dc")
+            if _save and not dc_val and _dc_stat:
+                dc_val = _dc_stat  # On assigne la stat de DC du perso
+                # On force la mention du jet de sauvegarde dans results plus tard
+
+            # Dégâts/Soins dynamiques depuis le tag {@damage XdY} ou {@dice XdY}
+            if not _all_dice(regle):
+                import json as _json_parser
+                _entries_str = _json_parser.dumps(_sp_data.get("entries", []))
+                _dmg_matches = _re.findall(r"\{@(damage|dice)\s+(\d+d\d+)[^}]*\}", _entries_str)
+                if _dmg_matches:
+                    _base_dice = _dmg_matches[0][1]
+                    _base_lvl = _sp_data.get("level", 0)
+                    if lvl and lvl > _base_lvl and _sp_data.get("entries_higher"):
+                        _higher_str = _json_parser.dumps(_sp_data["entries_higher"])
+                        _scale_m = _re.search(r"\{@scaledamage\s+[^|]+\|[^|]+\|(\d+d\d+)\}", _higher_str)
+                        if _scale_m:
+                            _diff = lvl - _base_lvl
+                            _scale_dice = _scale_m.group(1)
+                            _sm_m = _re.match(r"(\d+)d(\d+)", _scale_dice)
+                            if _sm_m:
+                                _ext_dn = int(_sm_m.group(1)) * _diff
+                                _ext_df = _sm_m.group(2)
+                                _base_m = _re.match(r"(\d+)d(\d+)", _base_dice)
+                                if _base_m and _base_m.group(2) == _ext_df:
+                                    _new_dn = int(_base_m.group(1)) + _ext_dn
+                                    _base_dice = f"{_new_dn}d{_ext_df}"
+                                else:
+                                    regle += f" + {_ext_dn}d{_ext_df}"
+                    regle += f" {_base_dice} "
+
+        results.append(f"✨ {char_name} — {intention.strip()} (niv.{lvl or 0}) → {cible}")
 
         # ── Smite spells → détection EN PREMIER, AVANT consommation de slot ──
         _SMITE_TABLE = {
@@ -732,9 +824,11 @@ def execute_action_mechanics(
                     pass
 
         if dc_val and not is_atk_roll:
+            _save_stat = _save[0].upper() if (_sp_data and _sp_data.get("saving_throw")) else ""
+            _save_hint = f" {_save_stat}" if _save_stat else ""
             results.append(
-                f"  → Cibles : jet de sauvegarde DC {dc_val}. "
-                f"Le MJ gère la réussite/échec."
+                f"  → Cibles : jet de sauvegarde{_save_hint} DC {dc_val}. "
+                f"Le MJ gère la réussite/échec (dégâts divisés par 2 si réussi)."
             )
 
         narrative_hint = (

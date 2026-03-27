@@ -39,6 +39,7 @@ from engine_spell_mj   import (
     DIRECTIVE_PREFILTER, PARSER_SYSTEM,
     get_prepared_spell_names, extract_spell_name_llm, is_spell_prepared,
     can_ritual_cast, build_pnj_patterns, parse_mj_directives,
+    validate_bonus_action_rule, validate_cast_time_in_combat
 )
 
 
@@ -722,13 +723,61 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                     f"Ne tente PAS de lancer {spell_name} — déclare une nouvelle action avec [ACTION]."
                 )
                 _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_prepared_msg, "color": "#cc4444"})
+                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
                 _original_receive(
                     self_mgr,
                     {"role": "user", "content": _not_prepared_msg, "name": "Alexis_Le_MJ"},
-                    sender, request_reply=False, silent=True,
+                    sender, request_reply=request_reply, silent=silent,
                 )
-                _original_receive(self_mgr, message, sender, request_reply, silent)
                 return
+
+            # Vérification de la règle des Actions Bonus (D&D 5e)
+            from spell_data import get_spell as _get_sp
+            _sp_data = _get_sp(spell_name)
+            if _sp_data:
+                _valid_ba, _err_ba = validate_bonus_action_rule(
+                    name, spell_name, spell_level, _sp_data.get("cast_time_raw", []), COMBAT_STATE.get("turn_spells", [])
+                )
+                if not _valid_ba:
+                    _not_ba_msg = (
+                        f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                        f"{_err_ba}\n\n"
+                        f"[INSTRUCTION]\nAnnule cette tentative. "
+                        f"Choisis une action valide (attaque, esquive, sort permis) "
+                        f"et déclare tes intentions."
+                    )
+                    _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_ba_msg, "color": "#cc4444"})
+                    _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                    _original_receive(
+                        self_mgr,
+                        {"role": "user", "content": _not_ba_msg, "name": "Alexis_Le_MJ"},
+                        sender, request_reply=request_reply, silent=silent,
+                    )
+                    return
+
+            # Vérification du temps d'incantation (combat only)
+            if _sp_data is None:
+                from spell_data import get_spell as _get_sp
+                _sp_data = _get_sp(spell_name)
+            if _sp_data:
+                _valid_ct, _err_ct = validate_cast_time_in_combat(
+                    spell_name, _sp_data.get("cast_time_raw", [])
+                )
+                if not _valid_ct:
+                    _not_ct_msg = (
+                        f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                        f"{_err_ct}\n\n"
+                        f"[INSTRUCTION]\nAnnule cette tentative. "
+                        f"Choisis une action valide et déclare-la avec [ACTION]."
+                    )
+                    _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_ct_msg, "color": "#cc4444"})
+                    _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                    _original_receive(
+                        self_mgr,
+                        {"role": "user", "content": _not_ct_msg, "name": "Alexis_Le_MJ"},
+                        sender, request_reply=request_reply, silent=silent,
+                    )
+                    return
 
             if spell_level and spell_level > 0:
                 _state_check = load_state()
@@ -768,12 +817,12 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             f"Déclare une nouvelle action avec [ACTION]."
                         )
                         _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_slot_msg, "color": "#cc4444"})
+                        _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
                         _original_receive(
                             self_mgr,
                             {"role": "user", "content": _no_slot_msg, "name": "Alexis_Le_MJ"},
-                            sender, request_reply=False, silent=True,
+                            sender, request_reply=request_reply, silent=silent,
                         )
-                        _original_receive(self_mgr, message, sender, request_reply, silent)
                         return
 
             ctx.spell_confirm_event.clear()
@@ -803,6 +852,59 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
             ctx.spell_confirm_event.wait(timeout=300)
             _app._unregister_approval_event(ctx.spell_confirm_event)
 
+            _final_level = ctx.spell_confirm_result.get("actual_level", spell_level)
+            if ctx.spell_confirm_result.get("confirmed", False):
+                if _final_level > 0 and not can_ritual_cast(name, spell_name):
+                    # Consume slot
+                    use_spell_slot(name, str(_final_level))
+                    _app._update_agent_combat_prompts()
+                
+                if _sp_data:
+                    _unit = _sp_data.get("cast_time_raw", [{}])[0].get("unit", "") if _sp_data.get("cast_time_raw") else ""
+                    COMBAT_STATE.setdefault("turn_spells", []).append({
+                        "name": spell_name, "level": _final_level, "cast_time_unit": _unit
+                    })
+                
+                # Exécution des mécaniques dynamiques du sort
+                try:
+                    _fb = execute_action_mechanics(
+                        name, "Action — Sort", f"Lancer {spell_name}", "", target or "Ennemi", COMBAT_STATE["characters"], ctx,
+                        lvl=_final_level,
+                        single_attack=False,
+                        type_label="Action — Sort",
+                        char_mechanics=COMBAT_STATE["characters"],
+                        pending_smite=ctx.pending_smite,
+                        pending_skill_narrators=ctx.pending_skill_narrators,
+                        app=_app,
+                        extract_spell_name_fn=extract_spell_name_llm,
+                        is_spell_prepared_fn=is_spell_prepared,
+                        get_prepared_spell_names_fn=get_prepared_spell_names,
+                    )
+                    _app.msg_queue.put({"sender": "⚙️ Système", "text": _fb, "color": "#a89f91"})
+                    _original_receive(
+                        self_mgr,
+                        {"role": "user", "content": _fb, "name": "Alexis_Le_MJ"},
+                        sender, request_reply=False, silent=True,
+                    )
+                except Exception as _exec_err:
+                    print(f"Erreur exec sort auto: {_exec_err}")
+                
+                _original_receive(self_mgr, message, sender, request_reply, silent)
+                return
+            else:
+                _app.msg_queue.put({
+                    "sender": "❌ MJ",
+                    "text": f"[SORT] Le sort {spell_name} de {name} a été refusé par le MJ.",
+                    "color": "#ef9a9a"
+                })
+                _original_receive(
+                    self_mgr,
+                    {"role": "user", "content": f"[SORT] Le sort {spell_name} de {name} a été refusé par le MJ.", "name": "Alexis_Le_MJ"},
+                    sender, request_reply=False, silent=True,
+                )
+                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                return
+
             _original_receive(self_mgr, message, sender, request_reply, silent)
             return
 
@@ -830,10 +932,14 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                 _regle     = _m_a.group("regle").strip()
                 _cible     = _m_a.group("cible").strip()
                 _all_subactions.extend(
-                    split_into_subactions(_type_lbl, _intention, _regle, _cible)
+                    split_into_subactions(
+                        _type_lbl, _intention, _regle, _cible,
+                        _CM.get(name, {}),   # stats du perso → n_attacks correct
+                    )
                 )
 
             _sub_total = len(_all_subactions)
+            _turn_aborted = False
 
             for _sub_idx, _sub in enumerate(_all_subactions, start=1):
                 # ── Pré-vérification slots sort ──────────────────────────────
@@ -848,6 +954,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                     )
                 )
                 _pre_lvl = None
+                _pre_spell_candidate = None   # initialisé ici — assigned plus tard si _pre_lvl > 0
                 if _pre_is_spell:
                     for _pat in (r"niv(?:eau)?\.?\s*(\d+)", r"niveau\s*(\d+)", r"\bniv(\d+)",
                                  r"slot\s+(?:de\s+)?(?:niveau\s+)?(\d)",
@@ -902,34 +1009,84 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 f"sort de niveau inférieur, tour de magie, ou attaque physique."
                             )
                             _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_slot_fb, "color": "#cc4444"})
+                            # Insert the original message first so that the agent hasn't theoretically responded to the feedback
+                            _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
                             _original_receive(
                                 self_mgr,
                                 {"role": "user", "content": _no_slot_fb, "name": "Alexis_Le_MJ"},
-                                sender, request_reply=False, silent=True,
+                                sender, request_reply=request_reply, silent=silent,
                             )
                             _sub_ev.set()
-                            continue
+                            return
 
                     # Vérification sorts préparés (pré-check)
                     _pre_spell_candidate = extract_spell_name_llm(_sub["intention"], name)
-                    if _pre_spell_candidate and not is_spell_prepared(name, _pre_spell_candidate):
-                        _avail2 = get_prepared_spell_names(name)
-                        _avail2_str = ", ".join(_avail2) if _avail2 else "aucun sort préparé trouvé"
-                        _no_prep_fb = (
-                            f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
-                            f"« {_pre_spell_candidate} » n'est pas dans la liste de sorts "
-                            f"préparés de {name}. Ce sort ne peut pas être lancé aujourd'hui.\n\n"
-                            f"[SORTS AUTORISÉS POUR {name.upper()}]\n{_avail2_str}\n\n"
-                            f"[INSTRUCTION]\nChoisis UNIQUEMENT parmi les sorts listés ci-dessus."
-                        )
-                        _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_prep_fb, "color": "#cc4444"})
-                        _original_receive(
-                            self_mgr,
-                            {"role": "user", "content": _no_prep_fb, "name": "Alexis_Le_MJ"},
-                            sender, request_reply=False, silent=True,
-                        )
-                        _sub_ev.set()
-                        continue
+                    if _pre_spell_candidate:
+                        if not is_spell_prepared(name, _pre_spell_candidate):
+                            _avail2 = get_prepared_spell_names(name)
+                            _avail2_str = ", ".join(_avail2) if _avail2 else "aucun sort préparé trouvé"
+                            _no_prep_fb = (
+                                f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                                f"« {_pre_spell_candidate} » n'est pas dans la liste de sorts "
+                                f"préparés de {name}. Ce sort ne peut pas être lancé aujourd'hui.\n\n"
+                                f"[SORTS AUTORISÉS POUR {name.upper()}]\n{_avail2_str}\n\n"
+                                f"[INSTRUCTION]\nChoisis UNIQUEMENT parmi les sorts listés ci-dessus."
+                            )
+                            _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_prep_fb, "color": "#cc4444"})
+                            _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                            _original_receive(
+                                self_mgr,
+                                {"role": "user", "content": _no_prep_fb, "name": "Alexis_Le_MJ"},
+                                sender, request_reply=request_reply, silent=silent,
+                            )
+                            _sub_ev.set()
+                            return
+                        
+                        # Vérification de la règle des Actions Bonus (D&D 5e)
+                        from spell_data import get_spell as _get_sp
+                        _sp_data_sub = _get_sp(_pre_spell_candidate)
+                        if _sp_data_sub:
+                            _eff_lvl = _pre_lvl or _sp_data_sub.get("level", 0)
+                            _valid_ba_sub, _err_ba_sub = validate_bonus_action_rule(
+                                name, _pre_spell_candidate, _eff_lvl, _sp_data_sub.get("cast_time_raw", []), COMBAT_STATE.get("turn_spells", [])
+                            )
+                            if not _valid_ba_sub:
+                                _not_ba_fb2 = (
+                                    f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                                    f"{_err_ba_sub}\n\n"
+                                    f"[INSTRUCTION]\nAnnule cette tentative. "
+                                    f"Choisis une action valide (attaque, esquive, ou un tour de magie coûtant 1 action si applicable)."
+                                )
+                                _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_ba_fb2, "color": "#cc4444"})
+                                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                                _original_receive(
+                                    self_mgr,
+                                    {"role": "user", "content": _not_ba_fb2, "name": "Alexis_Le_MJ"},
+                                    sender, request_reply=request_reply, silent=silent,
+                                )
+                                _sub_ev.set()
+                                return
+
+                            # Vérification du temps d'incantation (combat only)
+                            _valid_ct_sub, _err_ct_sub = validate_cast_time_in_combat(
+                                _pre_spell_candidate, _sp_data_sub.get("cast_time_raw", [])
+                            )
+                            if not _valid_ct_sub:
+                                _not_ct_fb2 = (
+                                    f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                                    f"{_err_ct_sub}\n\n"
+                                    f"[INSTRUCTION]\nAnnule cette tentative. "
+                                    f"Choisis une action valide et déclare-la avec [ACTION]."
+                                )
+                                _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_ct_fb2, "color": "#cc4444"})
+                                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                                _original_receive(
+                                    self_mgr,
+                                    {"role": "user", "content": _not_ct_fb2, "name": "Alexis_Le_MJ"},
+                                    sender, request_reply=request_reply, silent=silent,
+                                )
+                                _sub_ev.set()
+                                return
 
                 def _sub_cb(confirmed, mj_note="", _ev=_sub_ev, _res=_sub_res):
                     _app._unregister_approval_event(_ev)
@@ -1125,6 +1282,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                             "text": f"[Slot niv.{_sm_slot_lvl}] {_slot_result}",
                                             "color": "#8888cc",
                                         })
+                                        _app._update_agent_combat_prompts()
                                 except Exception as _sse:
                                     print(f"[Smite slot] Erreur : {_sse}")
 
@@ -1210,6 +1368,13 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
 
                         _final_dmg = _dmg_res.get("amount", _dmg_total)
 
+                        # ── Appliquer les dégâts si la cible est un PNJ dans le tracker ────────
+                        try:
+                            if _app._combat_tracker is not None:
+                                _app._combat_tracker.apply_damage_to_npc(_sub["cible"], _final_dmg)
+                        except Exception as _npc_dmg_err:
+                            print(f"[DamageApply PNJ] {_npc_dmg_err}")
+
                         # ── Appliquer les dégâts si la cible est un PJ ───────────────
                         try:
                             from state_manager import load_state as _ls_d, save_state as _ss_d
@@ -1275,6 +1440,17 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                     else:
                         # ── FLOW NON-ATTAQUE ──────────────────────────────────
                         try:
+                            # Ajout aux turn_spells si c'est un sort validé
+                            if _pre_is_spell and _pre_spell_candidate:
+                                from spell_data import get_spell as _get_sp_fi
+                                _sp_fi = _get_sp_fi(_pre_spell_candidate)
+                                if _sp_fi:
+                                    _fi_unit = _sp_fi.get("cast_time_raw", [{}])[0].get("unit", "") if _sp_fi.get("cast_time_raw") else ""
+                                    _fi_lvl = _pre_lvl or _sp_fi.get("level", 0)
+                                    COMBAT_STATE.setdefault("turn_spells", []).append({
+                                        "name": _pre_spell_candidate, "level": _fi_lvl, "cast_time_unit": _fi_unit
+                                    })
+                                    
                             feedback = execute_action_mechanics(
                                 name, _sub["intention"], _sub["regle"],
                                 _sub["cible"], _mj_note,
@@ -1399,21 +1575,35 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
 
                 else:
                     _note_txt = f" {_mj_note}" if _mj_note else ""
-                    feedback  = f"[MJ → {name}] ❌ [{_sub['type_label']}] refusé.{_note_txt}"
+                    feedback  = (f"[MJ → {name}] ❌ [{_sub['type_label']}] refusé.{_note_txt}\n\n"
+                                 f"[INSTRUCTION SYSTÈME]\n"
+                                 f"L'action de {name} a été refusée. Les ressources (Action, Bonus, etc.) pour cette action "
+                                 f"n'ont pas été consommées. Repense ton tour avec tes actions restantes et "
+                                 f"re-déclare tes intentions, en terminant par un nouveau [FIN_DE_TOUR].")
                     _app.msg_queue.put({"sender": "❌ MJ", "text": feedback, "color": "#ef9a9a"})
+                    _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
                     _original_receive(
                         self_mgr,
                         {"role": "user", "content": feedback, "name": "Alexis_Le_MJ"},
-                        sender, request_reply=False, silent=True,
+                        sender, request_reply=request_reply, silent=silent,
                     )
+                    return
 
-            # [FIN_DE_TOUR] avec [ACTION]
-            if (COMBAT_STATE["active"]
+            # End of action subaction loop
+            if _turn_aborted:
+                pass
+            else:
+                _app._update_agent_combat_prompts()
+
+            # FIN DE TOUR optionnel
+            if (not _turn_aborted
+                    and COMBAT_STATE["active"]
                     and name == COMBAT_STATE.get("active_combatant")
                     and "[FIN_DE_TOUR]" in str(content)):
                 _app.root.after(0, lambda n=name: _app._on_pc_turn_ended(n))
-
+                
             _original_receive(self_mgr, message, sender, request_reply, silent)
+
             return
 
         # ── [FIN_DE_TOUR] sans bloc [ACTION] ────────────────────────────────

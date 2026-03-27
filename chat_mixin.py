@@ -657,7 +657,13 @@ class ChatMixin:
         self.chat_display.tag_config(tag_header, foreground=color,
                                       font=("Arial", 9, "bold"))
         self.chat_display.config(state=tk.DISABLED)
-        self.chat_display.after(0, lambda: self.chat_display.see(tk.END))
+        def _force_scroll():
+            try:
+                self.chat_display.update_idletasks()
+                self.chat_display.see(tk.END)
+            except Exception: pass
+        self.chat_display.after(50, _force_scroll)
+        self.chat_display.after(250, _force_scroll)
 
         def _remove_spell_lines():
             try:
@@ -821,7 +827,13 @@ class ChatMixin:
                                       foreground=type_color,
                                       font=("Consolas", 9, "bold"))
         self.chat_display.config(state=tk.DISABLED)
-        self.chat_display.after(50, lambda: self.chat_display.see(tk.END))
+        def _force_scroll():
+            try:
+                self.chat_display.update_idletasks()
+                self.chat_display.see(tk.END)
+            except Exception: pass
+        self.chat_display.after(50, _force_scroll)
+        self.chat_display.after(250, _force_scroll)
 
         def _cleanup_header():
             try:
@@ -998,7 +1010,13 @@ class ChatMixin:
         # laisse suffisamment de temps au geometry manager pour finaliser la taille
         # du frame avant de scroller — sinon see(tk.END) arrive trop tôt et la
         # carte d'action reste hors de la vue.
-        self.chat_display.after(50, lambda: self.chat_display.see(tk.END))
+        def _force_scroll():
+            try:
+                self.chat_display.update_idletasks()
+                self.chat_display.see(tk.END)
+            except Exception: pass
+        self.chat_display.after(50, _force_scroll)
+        self.chat_display.after(250, _force_scroll)
 
         def _cleanup_header():
             try:
