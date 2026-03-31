@@ -2309,4 +2309,5 @@ class PanelsMixin:
                 self.msg_queue.put({"sender": "Carte de Combat", "text": text, "color": "#64b5f6"}),
                 self.input_event.set(),
             ),
+            update_sys_prompt_fn = lambda: self._rebuild_agent_prompts(),
         )

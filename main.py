@@ -37,36 +37,61 @@ import threading
 import queue
 import types
 import ctypes
+import time as _time_dbg
 import tkinter as tk
 from tkinter import scrolledtext
 from dotenv import load_dotenv
 
+def _dbg(msg):
+    print(f"[STARTUP {_time_dbg.time():.3f}] {msg}", flush=True)
+
+_dbg("stdlib importé")
+
 # ── Imports des modules du projet ─────────────────────────────────────────────
+_dbg("import tk_widgets...")
 from tk_widgets import apply_safe_patches          # FIX C — patches Tk avant tout widget
+_dbg("import llm_config...")
 from llm_config import (build_llm_config, llm_config, _default_model,
                         StopLLMRequested, DND_SKILLS, ABILITY_COLORS)
+_dbg("import app_config...")
 from app_config import (APP_CONFIG, get_agent_config, get_chronicler_config,
                         get_groupchat_config, get_memories_config, reload_app_config)
+_dbg("import config_panel...")
 from config_panel import open_config_panel
+_dbg("import window_state...")
 from window_state import (WindowManagerMixin, _load_window_state, _save_window_state,
                           _get_win_geometry, _apply_win_geometry)
+_dbg("import ui_setup_mixin...")
 from ui_setup_mixin    import UISetupMixin
+_dbg("import chat_mixin...")
 from chat_mixin        import ChatMixin
+_dbg("import character_mixin...")
 from character_mixin   import CharacterMixin
+_dbg("import panels_mixin...")
 from panels_mixin      import PanelsMixin
 
 # ── Imports des mixins issus du découpage de main.py ──────────────────────────
+_dbg("import session_mixin...")
 from session_mixin         import SessionMixin           # trigger_save, résumé session, reset
+_dbg("import session_pause_mixin...")
 from session_pause_mixin   import SessionPauseMixin      # pause/reprise globale de la session
+_dbg("import combat_tracker_mixin...")
 from combat_tracker_mixin  import CombatTrackerMixin     # open_combat_tracker, callbacks de tour
+_dbg("import image_broadcast_mixin...")
 from image_broadcast_mixin import ImageBroadcastMixin    # _broadcast_location_image
+_dbg("import llm_control_mixin...")
 from llm_control_mixin     import LLMControlMixin        # stop_llms, send_text, vote, skill check
+_dbg("import autogen_engine...")
 from autogen_engine        import AutogenEngineMixin     # run_autogen — moteur principal
+_dbg("import campaign_log_mixin...")
 from campaign_log_mixin    import CampaignLogMixin       # journal long terme + archivage
+_dbg("import quest_tracker_mixin...")
 from quest_tracker_mixin   import QuestTrackerMixin      # analyse IA des quêtes
+_dbg("import volume_mixin...")
 from volume_mixin          import VolumeControlMixin     # slider volume audio global
 
 # ── Imports des modules métier ─────────────────────────────────────────────────
+_dbg("import state_manager (big)...")
 from state_manager import (
     roll_dice, use_spell_slot, update_hp, load_state, save_state, update_summary,
     get_npcs, save_npcs, AVAILABLE_VOICES,
@@ -80,14 +105,22 @@ from state_manager import (
     save_session_log, get_session_logs_prompt,
     get_active_characters,
     get_spells_prompt,
+    get_inventory_prompt,
     get_campaign_log_toc_prompt, get_campaign_log_prompt,
 )
+_dbg("import voice_interface...")
 from voice_interface   import record_audio_and_transcribe, play_voice
+_dbg("import agent_logger...")
 from agent_logger      import log_llm_start, log_llm_end, log_tts_start, log_tts_end
+_dbg("import character_faces...")
 from character_faces   import create_character_faces, CharacterFaceWindow, CHARACTER_DATA
+_dbg("import combat_tracker...")
 from combat_tracker    import CombatTracker, COMBAT_STATE, get_combat_prompt, _is_fully_silenced
+_dbg("import combat_simulator...")
 from combat_simulator  import CombatSimulator
+_dbg("import combat_map_panel...")
 from combat_map_panel  import get_map_prompt
+_dbg("TOUS LES IMPORTS TERMINÉS")
 
 # ─── Variables .env requises selon les fournisseurs utilisés ─────────────────
 # GEMINI_API_KEY=...          → https://aistudio.google.com/app/apikey
@@ -123,10 +156,10 @@ class DnDApp(
 
     CHAR_COLORS = {"Kaelen": "#e57373", "Elara": "#64b5f6", "Thorne": "#ce93d8", "Lyra": "#81c784"}
 
-    # Modificateurs de compétence / sauvegardes par personnage (niveau 15)
+    # Modificateurs de compétence / sauvegardes par personnage (niveau 11)
     # Clés normalisées en minuscules sans accents pour la comparaison
     _SKILL_MODIFIERS: dict = {
-        "Kaelen": {   # Paladin 15 — STR20 DEX10 CON16 INT10 WIS14 CHA18 — Prof+5
+        "Kaelen": {   # Paladin 11 — STR20 DEX10 CON16 INT10 WIS14 CHA18 — Prof+4
             "skills": {"athlétisme": +10, "perspicacité": +7, "perception": +7,
                        "médecine": +7, "persuasion": +9, "intimidation": +9,
                        "religion": +5, "histoire": +5},
@@ -135,7 +168,7 @@ class DnDApp(
             "default_ability": {"Force": +5, "Dextérité": +0, "Constitution": +3,
                                 "Intelligence": +0, "Sagesse": +2, "Charisme": +4},
         },
-        "Elara": {    # Magicienne 15 — STR8 DEX14 CON14 INT20 WIS12 CHA10 — Prof+5
+        "Elara": {    # Magicienne 11 — STR8 DEX14 CON14 INT20 WIS12 CHA10 — Prof+4
             "skills": {"arcanes": +15, "histoire": +15, "investigation": +12,
                        "perception": +6, "perspicacité": +6, "médecine": +6,
                        "nature": +10, "religion": +10},
@@ -144,7 +177,7 @@ class DnDApp(
             "default_ability": {"Force": -1, "Dextérité": +2, "Constitution": +2,
                                 "Intelligence": +5, "Sagesse": +1, "Charisme": +0},
         },
-        "Thorne": {   # Roublard 15 — STR10 DEX20 CON14 INT14 WIS12 CHA14 — Prof+5
+        "Thorne": {   # Roublard 11 — STR10 DEX20 CON14 INT14 WIS12 CHA14 — Prof+4
             "skills": {"discrétion": +15, "acrobaties": +10, "escamotage": +15,
                        "perception": +11, "perspicacité": +6, "acrobaties": +10,
                        "investigation": +8, "athlétisme": +6, "intimidation": +7},
@@ -153,7 +186,7 @@ class DnDApp(
             "default_ability": {"Force": +0, "Dextérité": +5, "Constitution": +2,
                                 "Intelligence": +2, "Sagesse": +1, "Charisme": +2},
         },
-        "Lyra": {     # Clerc Vie 15 — STR14 DEX12 CON14 INT12 WIS20 CHA16 — Prof+5
+        "Lyra": {     # Clerc Vie 11 — STR14 DEX12 CON14 INT12 WIS20 CHA16 — Prof+4
             "skills": {"médecine": +15, "perspicacité": +10, "religion": +6,
                        "persuasion": +8, "perception": +10, "histoire": +6},
             "saves":  {"force": +7, "dextérité": +6, "constitution": +7,
@@ -168,12 +201,13 @@ class DnDApp(
         self.root.title("⚔️ Moteur de l'Aube Brisée - Interface du MJ")
         self.root.configure(bg="#1e1e1e")
 
-        # ── Restauration géométrie fenêtre principale ─────────────────────────
+        # ── Etat fenêtres chargé en mémoire ─────────────────────────
         self._win_state: dict = _load_window_state()
-        _apply_win_geometry(self.root, self._win_state.get("main"), "1100x750")
-        # Polling toutes les 2s pour sauvegarder la géométrie principale
-        # (pas de <Configure> : se propage depuis tous les widgets enfants)
-        self.root.after(2000, self._poll_main_geometry)
+        
+        # 1. Avant mainloop(), on n'applique QUE la taille hardcodée 
+        # (1100x750) pour empêcher catégoriquement le deadlock GNOME XWayland.
+        # On ne transmet JAMAIS les tailles variables de window_state ici !
+        self.root.geometry("1100x750")
 
         self.msg_queue = queue.Queue()
         self.audio_queue = queue.Queue()
@@ -213,7 +247,7 @@ class DnDApp(
 
         # --- VISAGES & COMBAT ---
         self.face_windows: dict = {}
-        self._combat_tracker = None
+        self._combat_tracker_win = None   # référence à la fenêtre Toplevel du tracker
         self._agents: dict = {}              # {name: AssistantAgent} pour MAJ des prompts
         self._base_system_msgs: dict = {}    # system_message de base sans combat
         # Mémoires activées dynamiquement au fil de la conversation
@@ -222,15 +256,33 @@ class DnDApp(
 
         # FIX D — Tout différé dans mainloop() via after(0).
         # Aucun widget ni thread C lancé depuis __init__.
+        _dbg("DnDApp.__init__ terminé, scheduling _deferred_init")
         self.root.after(0, self._deferred_init)
 
     def _deferred_init(self):
         """S'exécute dans mainloop() via root.after(0).
         Garantit que setup_ui tourne sous contrôle exclusif de Xlib par Tk.
         """
+        _dbg("_deferred_init START")
+        
+        # 2. Après mainloop() (fenêtre mappée avec succès), on force les offsets +X+Y
+        _apply_win_geometry(self.root, self._win_state.get("main"), "1100x750")
+        self.root.after(2000, self._poll_main_geometry)
+        
+        try:
+            self._deferred_init_inner()
+        except Exception as _e:
+            import traceback
+            print(f"[STARTUP CRASH] _deferred_init a planté :", flush=True)
+            traceback.print_exc()
+
+    def _deferred_init_inner(self):
+        _dbg("_deferred_init START")
         from voice_interface import load_volume_from_config
         load_volume_from_config()   # charge le volume sauvegardé avant setup_ui
+        _dbg("volume chargé, lancement setup_ui...")
         self.setup_ui()
+        _dbg("setup_ui terminé")
         threading.Thread(target=self.audio_worker, daemon=True).start()
         self.root.after(100, self.process_queue)
         self.root.after(1000, self.update_stats_panel)
@@ -240,10 +292,12 @@ class DnDApp(
         # Démarrer immédiatement créait une race entre les threads C de gRPC
         # et le notifier Tcl/Tk → segfault Xlib.
         def _start_autogen():
+            _dbg("_start_autogen called")
             t = threading.Thread(target=self.run_autogen, daemon=True, name="autogen-worker")
             self._autogen_thread = t
             t.start()
         self.root.after(500, _start_autogen)
+        _dbg("_deferred_init END")
 
     # --- Accès thread-safe à user_input ---
     @property
@@ -331,9 +385,6 @@ class DnDApp(
           - les entrées pertinentes du journal long terme (selon la scène)
         Appele apres chaque message joueur et apres toute activation de memoire contextuelle."""
         combat_block_fn = get_combat_prompt  # importe depuis combat_tracker
-        # Carte de combat : toujours injectée si elle contient des tokens
-        # (exploration ET combat — la carte est utilisée en permanence)
-        map_block = get_map_prompt(self._win_state)
 
         # Snapshot live des spell slots (source de verite : campaign_state)
         try:
@@ -349,21 +400,15 @@ class DnDApp(
             _scene_context = ""
 
         for name, agent in self._agents.items():
-            base          = self._base_system_msgs.get(name, "")
-            scene_block   = get_scene_prompt()
-            quest_block   = get_active_quests_prompt()
-            mem_compact   = get_memories_prompt_compact(importance_min=get_memories_config().get("compact_importance_min", 2))
-            cal_block     = get_calendar_prompt()
-            ctx_block     = self._contextual_mem_block
-            sessions_block= get_session_logs_prompt(max_sessions=3)
-            toc_block     = get_campaign_log_toc_prompt()
-            # Entrées long terme pertinentes pour la scène courante (max 2, par agent)
-            log_block     = get_campaign_log_prompt(
-                context_text = _scene_context,
-                char_name    = name,
-                max_entries  = 2,
-            )
+            # Règles dynamiques : HORS COMBAT ou EN COMBAT selon l'état actuel
+            from engine_agents import build_regle_outils as _bro
+            _rules = _bro(combat_mode=COMBAT_STATE["active"])
+            _char_only = getattr(self, "_base_char_msgs", {}).get(name, "")
+            base          = _rules + _char_only
             combat_block  = combat_block_fn(name)
+
+            # Carte de combat : personnalisée par agent (distances propres uniquement)
+            map_block = get_map_prompt(self._win_state, for_hero=name)
 
             # Bloc spell slots dynamique - relit campaign_state a chaque rebuild
             slots_block = ""
@@ -397,12 +442,40 @@ class DnDApp(
                 ]
                 slots_block = "\n".join(lines_slots)
 
-            agent.update_system_message(
-                base + scene_block + quest_block + mem_compact + cal_block
-                + sessions_block + toc_block + log_block
-                + get_spells_prompt(name)
-                + ctx_block + slots_block + combat_block + map_block
-            )
+            # ── MODE COMBAT : prompt minimal — contexte lore supprimé ────────
+            # Seuls les blocs mécaniquement utiles pendant un round sont injectés.
+            # Tout le lore (scène, quêtes, mémoires, calendrier, journal) est élidé :
+            # il alourdit le contexte sans aider à décider d'une action tactique.
+            if COMBAT_STATE["active"]:
+                agent.update_system_message(
+                    base
+                    + get_spells_prompt(name)
+                    + get_inventory_prompt()
+                    + slots_block
+                    + combat_block
+                    + map_block
+                )
+            # ── MODE EXPLORATION : prompt complet ────────────────────────────
+            else:
+                scene_block   = get_scene_prompt()
+                quest_block   = get_active_quests_prompt()
+                mem_compact   = get_memories_prompt_compact(importance_min=get_memories_config().get("compact_importance_min", 2))
+                cal_block     = get_calendar_prompt()
+                ctx_block     = self._contextual_mem_block
+                sessions_block= get_session_logs_prompt(max_sessions=3)
+                toc_block     = get_campaign_log_toc_prompt()
+                log_block     = get_campaign_log_prompt(
+                    context_text = _scene_context,
+                    char_name    = name,
+                    max_entries  = 2,
+                )
+                agent.update_system_message(
+                    base + scene_block + quest_block + mem_compact + cal_block
+                    + sessions_block + toc_block + log_block
+                    + get_spells_prompt(name)
+                    + get_inventory_prompt()
+                    + ctx_block + slots_block + combat_block + map_block
+                )
 
     # Alias conservé pour compatibilité avec les appels existants depuis le combat
     def _update_agent_combat_prompts(self):
@@ -438,6 +511,45 @@ class DnDApp(
                 delay += 400   # 400 ms entre chaque popout pour éviter les races gRPC/Tk
                 self.root.after(delay, lambda n=name: self.open_char_popout(n))
 
+    # ── Callback tour héros (CombatTracker → AutoGen) ────────────────────────
+
+    def _on_pc_turn(self, char_name: str):
+        """Déclenché par le CombatTracker au début du tour d'un héros (PJ vivant).
+
+        Double rôle :
+          1. Reconstruire les system_messages de tous les agents avec l'état
+             de combat à jour (PV, CA, positions, slots restants…).
+          2. Injecter dans le flow AutoGen un message de déclenchement de tour
+             adressé au héros concerné, afin qu'il déclare son action.
+
+        Le message est stocké dans _pending_combat_trigger (buffer thread-safe).
+        Si gui_get_human_input attend déjà une entrée MJ, on débloque
+        immédiatement via user_input + input_event.set().
+        Si AutoGen n'est pas encore en attente, le buffer sera consommé dès
+        que gui_get_human_input sera appelé (race condition évitée).
+        """
+        # 1. L'indicateur de tour est maintenant affiché par _log_turn du tracker pour tout le monde (PJ et PNJ).
+        
+        # 2. Mettre à jour les system prompts (blocs combat + carte + slots)
+        self._rebuild_agent_prompts()
+
+        # 3. Construire le message de déclenchement de tour
+        trigger = (
+            f"[TOUR DE COMBAT — {char_name.upper()}]\n"
+            f"C'est maintenant le tour de {char_name}. "
+            f"{char_name}, décris et déclare ton action de combat "
+            f"(attaque, sort, déplacement, action bonus…). "
+            f"Termine par [FIN_DE_TOUR] quand tu as terminé."
+        )
+
+        # 4. Stocker dans le buffer (consommé par gui_get_human_input)
+        self._pending_combat_trigger = trigger
+
+        # 5. Si le moteur attend déjà une entrée MJ → débloquer immédiatement
+        if self._waiting_for_mj:
+            self.user_input = trigger
+            self.input_event.set()
+
     def _update_contextual_memories(self, text: str):
         """Détecte les mémoires pertinentes dans text et les injecte dans les agents si nouvelles."""
         if not text or not self._agents:
@@ -465,8 +577,11 @@ class DnDApp(
 
 
 if __name__ == "__main__":
+    _dbg("Création de tk.Tk()...")
     root = tk.Tk()
+    _dbg("tk.Tk() créé, instanciation DnDApp...")
     app = DnDApp(root)
+    _dbg("DnDApp instancié")
 
     def _on_app_close():
         import copy
@@ -488,4 +603,5 @@ if __name__ == "__main__":
             pass
 
     root.protocol("WM_DELETE_WINDOW", _on_app_close)
+    _dbg(">>> root.mainloop() ENTRY <<<")
     root.mainloop()

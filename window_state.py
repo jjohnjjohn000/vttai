@@ -61,9 +61,33 @@ def _get_win_geometry(win) -> dict | None:
         pass
     return None
 
-def _apply_win_geometry(win, saved: dict | None, default: str):
+def _apply_win_geometry(win, saved: dict | None, default: str, size_only: bool = False):
     if saved and all(k in saved for k in ("w","h","x","y")):
-        win.geometry(f"{saved['w']}x{saved['h']}+{saved['x']}+{saved['y']}")
+        # Clamp geometry to prevent X11 MapNotify deadlocks on off-screen windows
+        try:
+            sw = win.winfo_screenwidth()
+            sh = win.winfo_screenheight()
+            # Marge de sécurité pour éviter les deadlocks XWayland/GNOME
+            # (Si W/H égale la zone de travail max, Mutter et Tkinter
+            # se battent sur les bordures avant MapNotify -> freeze mainloop)
+            w = min(saved['w'], sw - 20)
+            h = min(saved['h'], sh - 70)
+            
+            if size_only:
+                win.geometry(f"{w}x{h}")
+                return
+
+            # Ensure the window fits ENTIRELY on screen if possible,
+            # or at least is strictly bounded by (0,0) and (sw-w, sh-h)
+            x = max(0, min(saved['x'], sw - w))
+            y = max(0, min(saved['y'], sh - h))
+            win.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception as e:
+            print(f"[WinState] ERROR in geometry clamping: {repr(e)}")
+            if size_only:
+                win.geometry(f"{saved['w']}x{saved['h']}")
+            else:
+                win.geometry(f"{saved['w']}x{saved['h']}+{saved['x']}+{saved['y']}")
     else:
         win.geometry(default)
 

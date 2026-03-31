@@ -2,10 +2,17 @@
 engine_agents.py — Création des agents AutoGen, règles D&D, outils, speaker selector.
 
 Exporte :
-  build_regle_outils()          — construit la string de règles communes à tous les agents
-  build_agents_and_tools()      — crée tous les agents, enregistre les outils, retourne un dict
-  combat_speaker_selector()     — sélecteur de speaker déterministe (fonc. standalone)
-  make_thinking_wrapper()       — wrapping generate_reply pour bulle de pensée + interruption
+  build_regle_outils(combat_mode)  — règles communes à tous les PJ, deux modes :
+                                       combat_mode=False → HORS COMBAT (défaut au démarrage)
+                                       combat_mode=True  → EN COMBAT   (appelé par _update_agent_combat_prompts)
+  build_agents_and_tools()         — crée tous les agents, enregistre les outils, retourne un dict
+  combat_speaker_selector()        — sélecteur de speaker déterministe (fonc. standalone)
+  make_thinking_wrapper()          — wrapping generate_reply pour bulle de pensée + interruption
+
+Usage dans _update_agent_combat_prompts() :
+  from engine_agents import build_regle_outils
+  _regle = build_regle_outils(combat_mode=COMBAT_STATE["active"])
+  # Remplacer le préfixe de règles dans agent.system_message
 """
 
 import threading as _threading_mod
@@ -25,124 +32,262 @@ from combat_tracker import COMBAT_STATE, _is_fully_silenced
 from agent_logger   import log_llm_model_used, set_agent_configured_model
 
 
+# ─── SSL hardening global (anti-segfault OpenSSL multithreading) ──────────────
+# Deux causes de segfault OpenSSL en contexte multithread :
+#
+#  1. session tickets TLS (RFC 5077) : reprise de session via un SSL_CTX partagé
+#     → corruption mémoire si deux threads utilisent le même contexte.
+#     Fix : OP_NO_TICKET désactive les tickets, forçant une handshake complète.
+#
+#  2. ssl.create_default_context() appelle ctx.load_default_certs() en interne,
+#     qui exécute SSL_CTX_set_default_verify_paths() — non thread-safe sous
+#     Python 3.10 / OpenSSL 3.x quand plusieurs threads l'appellent en parallèle.
+#     Fix : sérialiser tous les appels via _SSL_CREATE_LOCK.
+#
+# Le patch est appliqué une seule fois au chargement du module (idempotent).
+try:
+    import ssl as _ssl_patch
+
+    _SSL_CREATE_LOCK = _threading_mod.Lock()   # sérialiseur création contexte SSL
+
+    _orig_create_default_ctx = _ssl_patch.create_default_context
+
+    def _safe_create_default_ctx(*args, **kwargs):
+        with _SSL_CREATE_LOCK:
+            ctx = _orig_create_default_ctx(*args, **kwargs)
+        ctx.options |= getattr(_ssl_patch, "OP_NO_TICKET", 0)
+        return ctx
+
+    _ssl_patch.create_default_context = _safe_create_default_ctx
+    del _safe_create_default_ctx   # garder le namespace propre
+except Exception:
+    pass   # ne jamais bloquer le démarrage pour une optimisation SSL
+# ──────────────────────────────────────────────────────────────────────────────
+
+
 # ─── Règles anti-hallucination communes à tous les joueurs ───────────────────
 
-def build_regle_outils() -> str:
+# Bloc [ACTION] canonique — format unique partagé par les deux modes
+_ACTION_FORMAT = (
+    "  ⛔ STRICTEMENT UNE SEULE ACTION PAR MESSAGE :\n"
+    "    • Ne déclare JAMAIS ton déplacement ET ton attaque en même temps.\n"
+    "    • Si tu as plusieurs attaques (Extra Attack / combat à deux armes), déclare-les TOUTES dans le MÊME bloc[ACTION].\n"
+    "    • Fais 1 Déplacement OR 1 Action (Attaque/Sort) OR 1 Action Bonus, attends le résultat, puis fais la suite.\n"
+    "    • Ne mets JAMAIS [FIN_DE_TOUR] dans le même message qu'un bloc [ACTION].\n"
+    "    • Quand tu n'as plus rien à faire, ton action OBLIGATOIRE est de terminer en envoyant UNIQUEMENT : [FIN_DE_TOUR].\n\n"
+    "  [ACTION]\n"
+    "  Type      : <Action / Action Bonus / Réaction / Mouvement / Fin de tour>\n"
+    "  Intention : <ce que ton personnage fait, en une phrase claire>\n"
+    "  Règle 5e  : <mécanique exacte : sort + niveau, attaque + bonus + dégâts, etc.>\n"
+    "  Cible     : <sur qui ou quoi>\n\n"
+)
+
+# Version allégée du bloc [ACTION] pour le mode HORS COMBAT.
+# Ne mentionne PAS Fin de tour ni [FIN_DE_TOUR] — ces concepts
+# n'existent qu'en combat et confondent les agents sinon.
+_ACTION_FORMAT_HORS_COMBAT = (
+    "  ⛔ UNE SEULE ACTION PAR MESSAGE :\n"
+    "    • Fais 1 Déplacement OU 1 Action OU 1 Action Bonus — jamais plusieurs à la fois.\n\n"
+    "  [ACTION]\n"
+    "  Type      : <Action / Action Bonus / Réaction / Mouvement>\n"
+    "  Intention : <ce que ton personnage fait, en une phrase claire>\n"
+    "  Règle 5e  : <mécanique exacte : sort + niveau, compétence + bonus, etc.>\n"
+    "  Cible     : <sur qui ou quoi>\n\n"
+    "  ⛔ INTERDIT HORS COMBAT : le Type 'Fin de tour' n'existe PAS en dehors du combat.\n"
+    "     Ne l'écris jamais hors combat — le système l'ignorera et te corrigera.\n\n"
+)
+
+_ACTION_MOUVEMENT_FORMAT = (
+    "  [ACTION]\n"
+    "  Type      : Mouvement\n"
+    "  Intention : <description narrative du déplacement>\n"
+    "  Règle 5e  : <N cases (M m)> vers <nord/sud/est/ouest/nord-est…>\n"
+    "              OU vers Col X, Lig Y  OU vers <nom d un allié/ennemi>\n"
+    "  Cible     : <destination>\n"
+)
+
+# Règles immuables communes aux deux modes
+_REGLES_COMMUNES = (
+    "\n\n═══════════════════════════════════════════"
+    "\nRÈGLES ABSOLUES — LIRE ET APPLIQUER À CHAQUE MESSAGE"
+    "\n═══════════════════════════════════════════"
+    "\n\n⛔ RÈGLE N°1 — ABSOLUE ET SANS EXCEPTION : TU N'ES PAS LE MJ"
+    "\nTu joues UNIQUEMENT ton personnage. Tu n'as aucune autorité sur :"
+    "\n  • Les PNJ (Van Richten, Ezmerelda, Ismark, Ireena, tout PNJ sans exception)"
+    "\n  • Leurs gestes, expressions, paroles, pensées, réactions, déplacements"
+    "\n  • L'environnement, les objets, les sons, les odeurs, la météo"
+    "\n  • Ce qui se passe dans le monde autour de toi"
+    "\nEXEMPLES INTERDITS ABSOLUS :"
+    "\n  ✗ 'Van Richten ajuste son appareil...'"
+    "\n  ✗ 'Ezmerelda se retourne vers moi...'"
+    "\n  ✗ 'Le mur vibre sous l'effet de...'"
+    "\n  ✗ 'On entend un grondement au loin...'"
+    "\nEXEMPLES CORRECTS :"
+    "\n  ✓ 'Je pose une main sur mon symbole sacré.'"
+    "\n  ✓ 'Mes yeux scrutent la faille.'"
+    "\n  ✓ 'Van Richten, qu'indique l'appareil ?' — et tu t'arrêtes là."
+    "\nSi tu décris un PNJ ou l'environnement, ton message sera rejeté.\n"
+    "\n▶ CONTRAT SYSTÈME :"
+    "\n  1. Le SYSTÈME exécute les dés — tu ne lances rien toi-même."
+    "\n  2. Tu reçois un [RÉSULTAT SYSTÈME] avec les valeurs exactes."
+    "\n  3. Après un [RÉSULTAT SYSTÈME], tu narres UNIQUEMENT l'EFFORT physique ou mental"
+    "\n     de ton personnage (la tension de ses muscles, sa concentration, sa sensation)."
+    "\n     TU NE DÉCRIS JAMAIS CE QUE TU TROUVES, DÉCOUVRES OU PERÇOIS DANS L'ENVIRONNEMENT."
+    "\n     C'est le MJ seul qui décrit ce qui existe dans le monde."
+    "\n     Exemple INTERDIT : 'Je trouve une brique sur pivot dissimulée par la suie.'"
+    "\n     Exemple CORRECT  : 'Mes doigts s'arrêtent. Quelque chose cloche ici.'"
+    "\n  4. NE JAMAIS appeler roll_dice, use_spell_slot, update_hp, add_temp_hp de ta propre initiative."
+    "\n     EXCEPTION : si tu reçois une [DIRECTIVE SYSTÈME — JET] ou [DIRECTIVE SYSTÈME — DÉGÂTS]"
+    "\n     avec ton nom, tu DOIS appeler l'outil indiqué IMMÉDIATEMENT, AVANT tout texte."
+    "\n  5. NE JAMAIS inventer un résultat différent de celui donné par le système.\n"
+    "\n▶ SORTS — RÈGLE ABSOLUE"
+    "\nPour lancer un sort, tu DOIS utiliser ce tag exact APRÈS ton roleplay :"
+    "\n  [SORT: Nom du sort | Niveau: X | Cible: nom ou description]"
+    "\nExemple : [SORT: Soins | Niveau: 3 | Cible: Kaelen]"
+    "\nCe tag déclenche automatiquement la boîte de confirmation du MJ."
+    "\nTu N'APPELLES JAMAIS use_spell_slot directement — le système s'en charge après confirmation."
+    "\nSi tu n'as plus de slot au niveau voulu, le système te le signalera — choisis un niveau inférieur.\n"
+    "\n▶ DÉGÂTS REÇUS"
+    "\nQuand le MJ annonce que tu prends des dégâts, le SYSTÈME met tes PV à jour."
+    "\nTon seul rôle : narrer en 1-2 phrases comment ton personnage encaisse le coup."
+    "\nPas de chiffres — décris la douleur, le choc, ta posture. Reste dans l'action.\n"
+    "\n▶ PNJ — RÈGLE ABSOLUE EN DEUX PARTIES"
+    "\n1. Tu ne DÉCRIS JAMAIS les actions, expressions ou réactions d'un PNJ"
+    " (il soupire, il répond, il échange un regard…) — seul le MJ décrit les PNJ."
+    "\n2. Tu ne INVENTES JAMAIS leurs paroles. Si tu t'adresses à un PNJ"
+    " (ex: 'Gil, de combien de temps aurais-tu besoin ?'), tu ARRÊTES"
+    " IMMÉDIATEMENT après la question. Une seule phrase d'adresse maximum."
+    " Tu n'élabores PAS, tu n'anticipes PAS leur réponse, tu n'imagines PAS"
+    " leurs besoins. Tu poses la question et tu te tais — c'est au MJ de répondre."
+    "\n\n▶ MONDE & UNICITÉ — RÈGLE ABSOLUE"
+    "\nTu n'existes QUE dans ta tête et ton corps. Le monde extérieur a ses propres règles et appartient au MJ."
+    "\nNe décide JAMAIS du résultat de tes actes (succès ou échec), Alexis seul le valide."
+    "\nN'invente JAMAIS : un objet, une texture, une odeur, un mécanisme, un passage,"
+    "\nune inscription, une créature, une réaction de PNJ — rien de ce qui existe hors"
+    "\nde toi. Si ton jet de dés réussit, dis ce que TON CORPS ressent (une anomalie,"
+    "\nun doute, une intuition) — PAS ce que tu trouves. Attends qu'Alexis décrive."
+    "\nNe répète jamais une question ou idée déjà exprimée — apporte un angle nouveau."
+    "\nEnfin, tu connais bien la vallée de Barovie à présent, mais son aberration continue de heurter ta nature."
+    "\n\n▶ IDENTITÉ — RÈGLE ABSOLUE"
+    "\nTu es UN SEUL personnage. Tu connais ton propre nom."
+    "\nINTERDIT ABSOLU :"
+    "\n  ✗ Attribuer à toi-même les paroles d'un autre personnage"
+    "\n  ✗ Dire 'Excellente question, [TON PROPRE NOM]' — tu ne te félicites pas toi-même"
+    "\n  ✗ Parler à la troisième personne de toi-même"
+    "\n  ✗ Confondre ce que TU as dit avec ce qu'un autre a dit"
+    "\nSi le message précédent vient d'Elara, c'est Elara qui a parlé — pas toi."
+    "\nSi le message précédent vient de Kaelen, c'est Kaelen — pas toi."
+    "\nLis attentivement le nom de l'auteur de chaque message avant de répondre.\n"
+    "\n\n▶ INTERDICTION DE COPIE — RÈGLE ABSOLUE"
+    "\nNe reproduis JAMAIS, même partiellement, le contenu du message précédent."
+    "\nSi un autre personnage vient de dire ou faire quelque chose, tu ne le répètes pas,"
+    "\nne le paraphrases pas, ne le reformules pas. Chaque personnage a sa propre voix,"
+    "\nses propres actes."
+    "\n\n▶ [SILENCE] — USAGE TRÈS RESTREINT"
+    "\n[SILENCE] n'est autorisé QUE si tu es physiquement incapable de parler"
+    "\n(inconscient, bâillonné) ou si parler trahirait immédiatement ta position tactique."
+    "\nDans TOUS les autres cas, contribue quelque chose — même une seule phrase :"
+    "\n  une pensée interne, une réaction émotionnelle, un doute, une question au MJ."
+    "\nL'hésitation EST du jeu. [SILENCE] ne l'est presque jamais."
+    "\n\n▶ FORMAT & LONGUEUR — RÈGLE ABSOLUE"
+    "\nChaque message = 1 réplique dialoguée (1-2 phrases MAX) + 1 bloc [ACTION] si nécessaire."
+    "\nINTERDIT ABSOLU :"
+    "\n  • Pas de blocs de mise en scène entre parenthèses (Lyra s'approche..., Kaelen observe...)."
+    "\n    Tes gestes et postures peuvent figurer dans ta réplique, pas en paragraphe séparé."
+    "\n  • Pas de plusieurs questions dans un même message. UNE seule question si tu en poses."
+    "\n  • Pas de tirade, pas de monologue, pas de discours en plusieurs paragraphes."
+    "\n  • Pas de résumé de ce qu'un autre vient de dire avant de répondre."
+    "\nSi tu veux décrire ton attitude : glisse-la dans ta réplique en une incise courte."
+    "\nExemple INTERDIT : (Kaelen se tourne lentement.) « Question ? »"
+    "\nExemple CORRECT  : « Question ? » — sa voix porte dans le hall."
+    "\n═══════════════════════════════════════════\n"
+)
+
+
+def build_regle_outils(combat_mode: bool = False) -> str:
+    """
+    Retourne le bloc de règles absolues injecté dans le system_message de chaque PJ.
+
+    combat_mode=False  → règles HORS COMBAT (exploration, roleplay, dialogue)
+    combat_mode=True   → règles EN COMBAT   (actions obligatoires, initiative, tactique)
+
+    Appelé avec combat_mode=False au démarrage (build_agents_and_tools).
+    Appelé avec combat_mode=True  par _update_agent_combat_prompts() dès que
+    COMBAT_STATE["active"] passe à True, puis avec False à la fin du combat.
+    """
+    if combat_mode:
+        return _build_regle_en_combat()
+    else:
+        return _build_regle_hors_combat()
+
+
+def _build_regle_hors_combat() -> str:
     return (
-        "\n\n═══════════════════════════════════════════"
-        "\nRÈGLES ABSOLUES — LIRE ET APPLIQUER À CHAQUE MESSAGE"
-        "\n═══════════════════════════════════════════"
-        "\n\n⛔ RÈGLE N°1 — ABSOLUE ET SANS EXCEPTION : TU N'ES PAS LE MJ"
-        "\nTu joues UNIQUEMENT ton personnage. Tu n'as aucune autorité sur :"
-        "\n  • Les PNJ (Van Richten, Ezmerelda, Ismark, Ireena, tout PNJ sans exception)"
-        "\n  • Leurs gestes, expressions, paroles, pensées, réactions, déplacements"
-        "\n  • L'environnement, les objets, les sons, les odeurs, la météo"
-        "\n  • Ce qui se passe dans le monde autour de toi"
-        "\nEXEMPLES INTERDITS ABSOLUS :"
-        "\n  ✗ 'Van Richten ajuste son appareil...'"
-        "\n  ✗ 'Ezmerelda se retourne vers moi...'"
-        "\n  ✗ 'Le mur vibre sous l'effet de...'"
-        "\n  ✗ 'On entend un grondement au loin...'"
-        "\nEXEMPLES CORRECTS :"
-        "\n  ✓ 'Je pose une main sur mon symbole sacré.'"
-        "\n  ✓ 'Mes yeux scrutent la faille.'"
-        "\n  ✓ 'Van Richten, qu'indique l'appareil ?' — et tu t'arrêtes là."
-        "\nSi tu décris un PNJ ou l'environnement, ton message sera rejeté.\n"
-        "\n\n▶ HORS COMBAT"
+        _REGLES_COMMUNES
+        # ── Section spécifique HORS COMBAT ──────────────────────────────────
+        + "\n▶ HORS COMBAT — MODE ACTIF"
         "\nTu joues ton rôle : roleplay, dialogue, exploration, réflexion."
+        "\nAgis et déclare tes actions de façon autonome — n'attends pas qu'on te liste les choix."
         "\nNe déclare PAS d'action d'attaque, ne lance PAS de dés, ne prends PAS d'initiative de combat"
-        "\nsauf si le MJ l'indique explicitement ou si COMBAT EN COURS apparaît dans tes instructions."
-        "\nException : le MOUVEMENT est toujours autorisé hors combat via un bloc [ACTION] Type: Mouvement.\n"
-        "\n▶ ACTIONS MÉCANIQUES (uniquement sur demande du MJ ou si le combat est actif)"
-        "\nSi le MJ te demande une action mécanique, termine ton message par un bloc [ACTION] :\n\n"
-        "  [ACTION]\n"
-        "  Type      : <Action / Action Bonus / Réaction>\n"
-        "  Intention : <ce que ton personnage fait, en une phrase claire>\n"
-        "  Règle 5e  : <mécanique exacte : sort + niveau, attaque + bonus + dégâts, etc.>\n"
-        "  Cible     : <sur qui ou quoi>\n\n"
-        "▶ CONTRAT SYSTÈME :"
-        "\n  1. Le SYSTÈME exécute les dés — tu ne lances rien toi-même."
-        "\n  2. Tu reçois un [RÉSULTAT SYSTÈME] avec les valeurs exactes."
-        "\n  3. Après un [RÉSULTAT SYSTÈME], tu narres UNIQUEMENT l'EFFORT physique ou mental"
-        "\n     de ton personnage (la tension de ses muscles, sa concentration, sa sensation)."
-        "\n     TU NE DÉCRIS JAMAIS CE QUE TU TROUVES, DÉCOUVRES OU PERÇOIS DANS L'ENVIRONNEMENT."
-        "\n     C'est le MJ seul qui décrit ce qui existe dans le monde."
-        "\n     Exemple INTERDIT : 'Je trouve une brique sur pivot dissimulée par la suie.'"
-        "\n     Exemple CORRECT  : 'Mes doigts s'arrêtent. Quelque chose cloche ici.'"
-        "\n  4. NE JAMAIS appeler roll_dice, use_spell_slot, update_hp, add_temp_hp de ta propre initiative."
-        "\n     EXCEPTION : si tu reçois une [DIRECTIVE SYSTÈME — JET] ou [DIRECTIVE SYSTÈME — DÉGÂTS]"
-        "\n     avec ton nom, tu DOIS appeler l'outil indiqué IMMÉDIATEMENT, AVANT tout texte."
-        "\n  5. NE JAMAIS inventer un résultat différent de celui donné par le système.\n"
-        "\n▶ SORTS — RÈGLE ABSOLUE"
-        "\nPour lancer un sort, tu DOIS utiliser ce tag exact APRÈS ton roleplay :"
-        "\n  [SORT: Nom du sort | Niveau: X | Cible: nom ou description]"
-        "\nExemple : [SORT: Soins | Niveau: 3 | Cible: Kaelen]"
-        "\nCe tag déclenche automatiquement la boîte de confirmation du MJ."
-        "\nTu N'APPELLES JAMAIS use_spell_slot directement — le système s'en charge après confirmation."
-        "\nSi tu n'as plus de slot au niveau voulu, le système te le signalera — choisis un niveau inférieur.\n"
-        "\n▶ MOUVEMENT SUR LA CARTE (combat ET exploration)"
-        "\nDès que ton personnage se déplace narrativement, utilise un bloc [ACTION] Type: Mouvement."
-        "\nCela fonctionne EN PERMANENCE — en combat et hors combat."
-        "\nLe système déplacera automatiquement ton token sur la carte.\n"
-        "  [ACTION]\n"
-        "  Type      : Mouvement\n"
-        "  Intention : <description narrative du déplacement>\n"
-        "  Règle 5e  : <N cases (M m)> vers <nord/sud/est/ouest/nord-est…>\n"
-        "              OU vers Col X, Lig Y  OU vers <nom d un allié/ennemi>\n"
-        "  Cible     : <destination>\n"
-        "\n▶ DÉGÂTS REÇUS"
-        "\nQuand le MJ annonce que tu prends des dégâts, le SYSTÈME met tes PV à jour."
-        "\nTon seul rôle : narrer en 1-2 phrases comment ton personnage encaisse le coup."
-        "\nPas de chiffres — décris la douleur, le choc, ta posture. Reste dans l'action.\n"
-        "\n▶ PNJ"
-        "\n▶ PNJ — RÈGLE ABSOLUE EN DEUX PARTIES"
-        "\n1. Tu ne DÉCRIS JAMAIS les actions, expressions ou réactions d'un PNJ"
-        " (il soupire, il répond, il échange un regard…) — seul le MJ décrit les PNJ."
-        "\n2. Tu ne INVENTES JAMAIS leurs paroles. Si tu t'adresses à un PNJ"
-        " (ex: 'Gil, de combien de temps aurais-tu besoin ?'), tu ARRÊTES"
-        " IMMÉDIATEMENT après la question. Une seule phrase d'adresse maximum."
-        " Tu n'élabores PAS, tu n'anticipes PAS leur réponse, tu n'imagines PAS"
-        " leurs besoins. Tu poses la question et tu te tais — c'est au MJ de répondre."
-        "\n\n▶ MONDE & UNICITÉ — RÈGLE ABSOLUE"
-        "\nTu n'existes QUE dans ta tête et ton corps. Le monde extérieur appartient au MJ."
-        "\nN'invente JAMAIS : un objet, une texture, une odeur, un mécanisme, un passage,"
-        "\nune inscription, une créature, une réaction de PNJ — rien de ce qui existe hors"
-        "\nde toi. Si ton jet de dés réussit, dis ce que TON CORPS ressent (une anomalie,"
-        "\nun doute, une intuition) — PAS ce que tu trouves. Attends qu'Alexis décrive."
-        "\nNe répète jamais une question ou idée déjà exprimée — apporte un angle nouveau."
-        "\n\n▶ IDENTITÉ — RÈGLE ABSOLUE"
-        "\nTu es UN SEUL personnage. Tu connais ton propre nom."
-        "\nINTERDIT ABSOLU :"
-        "\n  ✗ Attribuer à toi-même les paroles d'un autre personnage"
-        "\n  ✗ Dire 'Excellente question, [TON PROPRE NOM]' — tu ne te félicites pas toi-même"
-        "\n  ✗ Parler à la troisième personne de toi-même"
-        "\n  ✗ Confondre ce que TU as dit avec ce qu'un autre a dit"
-        "\nSi le message précédent vient d'Elara, c'est Elara qui a parlé — pas toi."
-        "\nSi le message précédent vient de Kaelen, c'est Kaelen — pas toi."
-        "\nLis attentivement le nom de l'auteur de chaque message avant de répondre.\n"
-        "\n\n▶ INTERDICTION DE COPIE — RÈGLE ABSOLUE"
-        "\nNe reproduis JAMAIS, même partiellement, le contenu du message précédent."
-        "\nSi un autre personnage vient de dire ou faire quelque chose, tu ne le répètes pas,"
-        "\nne le paraphrases pas, ne le reformules pas. Chaque personnage a sa propre voix,"
-        "\nses propres actes."
-        "\n\n▶ [SILENCE] — USAGE TRÈS RESTREINT"
-        "\n[SILENCE] n'est autorisé QUE si tu es physiquement incapable de parler"
-        "\n(inconscient, bâillonné) ou si parler trahirait immédiatement ta position tactique."
-        "\nDans TOUS les autres cas, contribue quelque chose — même une seule phrase :"
-        "\n  une pensée interne, une réaction émotionnelle, un doute, une question au MJ."
-        "\nL'hésitation EST du jeu. [SILENCE] ne l'est presque jamais."
-        "\n\n▶ FORMAT & LONGUEUR — RÈGLE ABSOLUE"
-        "\nChaque message = 1 réplique dialoguée (1-2 phrases MAX) + 1 bloc [ACTION] si nécessaire."
-        "\nINTERDIT ABSOLU :"
-        "\n  • Pas de blocs de mise en scène entre parenthèses (Lyra s'approche..., Kaelen observe...)."
-        "\n    Tes gestes et postures peuvent figurer dans ta réplique, pas en paragraphe séparé."
-        "\n  • Pas de plusieurs questions dans un même message. UNE seule question si tu en poses."
-        "\n  • Pas de tirade, pas de monologue, pas de discours en plusieurs paragraphes."
-        "\n  • Pas de résumé de ce qu'un autre vient de dire avant de répondre."
-        "\nSi tu veux décrire ton attitude : glisse-la dans ta réplique en une incise courte."
-        "\nExemple INTERDIT : (Kaelen se tourne lentement.) « Question ? »"
-        "\nExemple CORRECT  : « Question ? » — sa voix porte dans le hall."
-        "\n═══════════════════════════════════════════\n"
+        "\nsauf si le MJ l'indique explicitement.\n"
+        "\n▶ ACTIONS MÉCANIQUES"
+        "\nSi le MJ te demande une action mécanique, ou si tu crois pertinent de le demander, termine ton message par :\n\n"
+        + _ACTION_FORMAT_HORS_COMBAT
+        + "\n▶ MOUVEMENT SUR LA CARTE — HORS COMBAT"
+        "\nLe bloc [ACTION] Type: Mouvement est réservé aux déplacements de 6 cases (9 m / 30 ft) ou plus."
+        "\nEn dessous de ce seuil, décris simplement ton mouvement en roleplay — le système l'ignorera."
+        "\nExemples INTERDITS (trop courts) : faire un pas vers quelqu'un, se retourner,"
+        "\nse rapprocher légèrement pour entendre, ajuster sa position."
+        "\nExemples VALIDES (≥ 6 cases) : traverser une salle, rejoindre un autre groupe,"
+        "\nquitter une zone, s'éloigner délibérément du groupe.\n\n"
+        + _ACTION_MOUVEMENT_FORMAT
+    )
+
+
+def _build_regle_en_combat() -> str:
+    return (
+        _REGLES_COMMUNES
+        # ── Section spécifique EN COMBAT ─────────────────────────────────────
+        + "\n▶ COMBAT EN COURS — RÈGLES D'INITIATIVE"
+        "\nChaque round tu disposes de :"
+        "\n  • 1 Action       (attaque, sort, Dash, Disengage, Ready/Se tenir prêt, Help, Hide, etc.)"
+        "\n  • 1 Action Bonus (si ta classe ou un sort t'en donne une)"
+        "\n  • 1 Déplacement  (≤ ta vitesse — peut être fractionné avant/après l'action)"
+        "\n  • 1 Réaction     (par round, uniquement hors de ton tour)\n"
+        "\n▶ SE TENIR PRÊT (READY ACTION) — RÈGLE STRICTE"
+        "\nPréparer une action (ex: préparer un sort pour plus tard, préparer une attaque)"
+        "\nCOÛTE TON ACTION NORMALE. Cela ne peut JAMAIS être fait avec une Action Bonus."
+        "\nLe déclenchement ultérieur de cette action préparée coûtera ta Réaction.\n"
+        "\n▶ RÈGLE FONDAMENTALE — UNE ACTION À LA FOIS"
+        "\nDéclare UN SEUL bloc [ACTION] par message — jamais plusieurs à la fois."
+        "\nINTERDIT ABSOLU : combiner un tag [SORT: ...] avec un bloc [ACTION] dans le même message."
+        "\n  ✗ Exemple interdit : [SORT: Sacred Flame | ...] suivi de [ACTION] Type: Mouvement"
+        "\n  ✓ Message 1 : roleplay + [SORT: Sacred Flame | Niveau: 0 | Cible: Diable]"
+        "\n  ✓ Message 2 (si ressources restantes) : [ACTION] Type: Mouvement …"
+        "\nAprès chaque action confirmée, le système t'envoie un [TOUR EN COURS]"
+        "\nqui liste tes ressources restantes. Tu déclares alors ta prochaine action."
+        "\nQuand tu n'as plus rien à faire, envoie simplement [FIN_DE_TOUR]."
+        "\nINTERDIT : écrire plusieurs blocs [ACTION] dans le même message."
+        "\nINTERDIT : déclarer une action dont le champ Règle 5e est vide.\n"
+        "\n▶ ACTIONS EN COMBAT — FORMAT OBLIGATOIRE\n\n"
+        + _ACTION_FORMAT
+        + "\n▶ MOUVEMENT SUR LA CARTE — EN COMBAT"
+        "\n⛔ RÈGLE FONDAMENTALE : ta distance de déplacement par tour est STRICTEMENT LIMITÉE"
+        "\n   à ta vitesse de base (généralement 30 ft = 6 cases). Tu ne peux PAS te déplacer plus loin."
+        "\n   • SANS Dash : max 30 ft (6 cases)"
+        "\n   • AVEC Dash (coûte ton Action) : max 60 ft (12 cases)"
+        "\n   Tout mouvement dépassant cette limite sera AUTOMATIQUEMENT REJETÉ par le système."
+        "\n   Consulte toujours le [TOUR EN COURS] pour connaître tes ft restants."
+        "\nTout déplacement, même d'une seule case, DOIT être déclaré via [ACTION] Type: Mouvement."
+        "\nLe système mettra ton token à jour automatiquement.\n\n"
+        "\n⚔️ PORTÉE DE MÊLÉE — VÉRIFIE AVANT D'ATTAQUER"
+        "\n   Consulte la section 📏 DISTANCES HÉROS → ENNEMIS dans ton prompt."
+        "\n   • Mêlée standard : tu dois être à ≤ 5 ft (1 case adjacente) de l'ennemi. Au-delà → IMPOSSIBLE."
+        "\n   • Arme à allonge (Reach) : ≤ 10 ft."
+        "\n   • Si l'ennemi est marqué 🏹 (portée distance) → tu dois D'ABORD te DÉPLACER"
+        "\n     avec [ACTION] Type: Mouvement pour te mettre à portée, AVANT d'attaquer."
+        "\n   ⛔ INTERDICTION : déclarer une attaque corps-à-corps sur un ennemi hors portée.\n\n"
+        + _ACTION_MOUVEMENT_FORMAT
     )
 
 
@@ -181,6 +326,134 @@ def _build_roll_dice_safe():
     return roll_dice_safe
 
 
+def _log_full_prompt(agent, sender, messages):
+    import os
+    import time
+    
+    log_dir = "logs/prompts"
+    os.makedirs(log_dir, exist_ok=True)
+    
+    msgs = messages if messages is not None else agent.chat_messages.get(sender, [])
+    
+    try:
+        sys_msg = agent.system_message
+    except Exception:
+        # Fallback pour récupérer le system_message interne d'AutoGen
+        sys_msg = str(getattr(agent, "_oai_system_message", ""))
+    
+    prompt_text = f"=== SYSTEM MESSAGE ({agent.name}) ===\n{sys_msg}\n\n=== CHAT HISTORY ===\n"
+    for m in msgs:
+        prompt_text += f"[{m.get('name', m.get('role', 'unknown'))}]: {m.get('content', '')}\n\n"
+        
+    filename = f"{log_dir}/prompt_{agent.name}_{int(time.time()*1000)}.txt"
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(prompt_text)
+    except Exception:
+        pass
+        
+    # Ne garder que les 5 logs les plus récents (globalement)
+    all_logs = sorted([os.path.join(log_dir, x) for x in os.listdir(log_dir) if x.endswith(".txt")], 
+                      key=os.path.getmtime)
+    while len(all_logs) > 5:
+        oldest = all_logs.pop(0)
+        try:
+            os.remove(oldest)
+        except Exception:
+            pass
+
+
+def _close_agent_connections(agent):
+    """
+    Ferme proprement les connexions httpx/httpcore de l'agent après un appel LLM.
+
+    But : empêcher qu'un thread daemon abandonné (après StopLLMRequested) continue
+    de lire sur un socket SSL partagé avec le prochain appel — ce qui provoque
+    une corruption mémoire et un segfault OpenSSL.
+
+    On itère sur tous les clients httpx connus de l'OpenAIWrapper d'AutoGen et on
+    appelle close() pour fermer les connexions persistantes (keep-alive).
+    L'opération est entièrement silencieuse : si le client n'existe pas ou que
+    close() échoue, on ignore l'erreur.
+    """
+    try:
+        clients = getattr(agent.client, "_clients", None) or {}
+        for c in clients.values():
+            try:
+                c.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+# ─── Filtre des messages de tour privés ──────────────────────────────────────
+
+def _filter_turn_private_messages(msgs: list, agent_name: str) -> list:
+    """
+    Retire du contexte de l'agent les messages de gestion de tour qui
+    appartiennent à d'autres personnages.
+
+    Ces messages sont injectés dans le GroupChat (partagé par tous les agents)
+    par engine_receive.py, mais leur contenu est exclusivement destiné au
+    personnage dont c'est le tour. Les autres agents n'en ont pas besoin et
+    les voir pollue leur raisonnement tactique.
+
+    FILTRÉS (quand le destinataire n'est PAS agent_name) :
+      • [TOUR EN COURS — AutrePerso] … ressources/directives de tour
+      • [MJ → AutrePerso] ❌ …          action refusée / directive privée
+      • Tu as encore des actions disponibles. Continue ton tour, AutrePerso.
+
+    CONSERVÉS pour tous les agents :
+      • Narrations / roleplay de chaque personnage
+      • [RÉSULTAT SYSTÈME — ATTAQUE/SOIN/SORT…] — résultats observables par tous
+      • Messages MJ normaux (contexte, description, questions)
+      • Tout message adressé à agent_name lui-même
+    """
+    import re as _re_f
+    _n = _re_f.escape(agent_name)
+
+    # Chaque alternative capture un type de message de gestion de tour
+    # appartenant à un personnage AUTRE que agent_name.
+    # La partie (?!{_n}…) est un lookahead négatif : si le nom qui suit
+    # est celui de l'agent courant, le message est conservé.
+    _private_re = _re_f.compile(
+        # Statut des ressources de tour d'un autre personnage
+        r'\[TOUR EN COURS\s*[—\-]\s*(?!' + _n + r'[\s\]])'
+        # Refus d'action ou directive interne dirigée vers un autre personnage
+        r'|\[MJ\s*[→>]\s*(?!' + _n + r'[\]\s,»])'
+        # Message d'auto-continue dirigé vers un autre personnage
+        r'|Tu as encore des actions disponibles\. Continue ton tour,\s*(?!' + _n + r'[\s\.,])',
+        _re_f.IGNORECASE,
+    )
+    
+    _action_block_re = _re_f.compile(
+        r'\s*\[ACTION\].*?(?=\[ACTION\]|\Z)', 
+        _re_f.IGNORECASE | _re_f.DOTALL
+    )
+
+    filtered_msgs = []
+    for m in msgs:
+        content = str(m.get("content", ""))
+        sender = str(m.get("name", ""))
+        
+        # 1. Retirer complètement le message s'il correspond aux regex privées (MJ -> autre)
+        if _private_re.search(content):
+            continue
+            
+        # 2. Si le message vient d'un AUTRE joueur et contient un bloc [ACTION], on retire le bloc
+        # pour ne garder que la narration / roleplay.
+        if sender and sender != agent_name and sender not in ("Alexis_Le_MJ", "MJ"):
+            content = _action_block_re.sub('', content).strip()
+            
+        if content:
+            new_m = dict(m)
+            new_m["content"] = content
+            filtered_msgs.append(new_m)
+            
+    return filtered_msgs
+
+
 # ─── Thinking wrapper (bulle de pensée + interruption fiable) ─────────────────
 
 def make_thinking_wrapper(agent, name: str, app_ref):
@@ -193,6 +466,16 @@ def make_thinking_wrapper(agent, name: str, app_ref):
          thread autogen IMMÉDIATEMENT — même si le sous-thread est encore
          bloqué dans un appel C (HTTP/gRPC). Ce sous-thread finit sa
          requête en tâche de fond (daemon → pas de fuite à l'arrêt de l'app).
+
+    Fix segfault SSL (3 niveaux) :
+      A. _SSL_LOCK englobe tout le corps de _llm_call (pas seulement _orig_gr),
+         y compris la fermeture des connexions httpx — garantissant qu'aucun
+         socket SSL ne reste ouvert quand le verrou est relâché.
+      B. _close_agent_connections() est appelé DANS le verrou avant release,
+         pour que le prochain thread ne récupère pas une connexion corrompue.
+      C. En cas d'interruption (StopLLMRequested côté thread principal),
+         on tente également de fermer les connexions depuis le thread principal
+         (best-effort) pour accélérer la mort du thread daemon.
     """
     _orig_gr = agent.generate_reply.__func__
 
@@ -224,45 +507,81 @@ def make_thinking_wrapper(agent, name: str, app_ref):
         done_evt  = _threading_mod.Event()
 
         def _llm_call():
-            try:
-                _usage_before = dict(
-                    getattr(self_agent.client, "actual_usage_summary", None) or {}
-                )
-
-                # Reset du sticky-fallback d'AutoGen
+            # FIX A+B : _SSL_LOCK englobe tout le corps de _llm_call.
+            # On acquiert le verrou en premier, AVANT tout I/O SSL, et on ne
+            # le relâche qu'après avoir fermé les connexions httpx.
+            # Cela garantit qu'aucun socket ne peut être partagé entre deux
+            # threads simultanément, éliminant la race condition OpenSSL.
+            with _SSL_LOCK:
                 try:
-                    self_agent.client._last_config_idx = 0
-                except Exception:
-                    pass
+                    try:
+                        # Logger les messages filtrés — c'est ce que le LLM reçoit réellement
+                        _msgs_to_log = (
+                            _filter_turn_private_messages(messages, name)
+                            if messages is not None
+                            else messages
+                        )
+                        _log_full_prompt(self_agent, sender, _msgs_to_log)
+                    except Exception:
+                        pass
 
-                with _SSL_LOCK:
-                    result[0] = _orig_gr(
-                        self_agent, messages=messages, sender=sender, **kwargs
+                    _usage_before = dict(
+                        getattr(self_agent.client, "actual_usage_summary", None) or {}
                     )
 
-                # Log du modèle ayant effectivement répondu
-                try:
-                    _usage_after = getattr(self_agent.client, "actual_usage_summary", None) or {}
-                    _new = [
-                        m for m in _usage_after
-                        if m != "total_cost"
-                        and _usage_after[m] != _usage_before.get(m)
-                    ]
-                    actual = _new[0] if _new else None
-                    if actual:
-                        _cs = load_state().get("characters", {}).get(name, {})
-                        configured = (_cs.get("llm", "")
-                                      or get_agent_config(name).get("model", "")
-                                      or "")
-                        log_llm_model_used(name, actual, configured)
-                except Exception:
-                    pass
-            except StopLLMRequested:
-                exc_box[0] = StopLLMRequested()
-            except BaseException as _e:
-                exc_box[0] = _e
-            finally:
-                done_evt.set()
+                    # Reset du sticky-fallback d'AutoGen
+                    try:
+                        self_agent.client._last_config_idx = 0
+                    except Exception:
+                        pass
+
+                    # Filtrer les kwargs internes (__*) que generate_reply() n'accepte pas
+                    _safe_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("__")}
+
+                    # ── Cloisonnement des messages de tour ────────────────────
+                    # Les messages [TOUR EN COURS — X], [MJ → X] et auto-continue
+                    # sont injectés dans le GroupChat partagé par tous les agents.
+                    # On les retire ici pour que chaque agent ne voie que les
+                    # messages qui le concernent — les résultats d'actions
+                    # observables (ATTAQUE, SOIN, SORT…) restent visibles par tous.
+                    _msgs_for_llm = (
+                        _filter_turn_private_messages(messages, name)
+                        if messages is not None
+                        else messages
+                    )
+
+                    result[0] = _orig_gr(
+                        self_agent, messages=_msgs_for_llm, sender=sender, **_safe_kwargs
+                    )
+
+                    # Log du modèle ayant effectivement répondu
+                    try:
+                        _usage_after = getattr(self_agent.client, "actual_usage_summary", None) or {}
+                        _new = [
+                            m for m in _usage_after
+                            if m != "total_cost"
+                            and _usage_after[m] != _usage_before.get(m)
+                        ]
+                        actual = _new[0] if _new else None
+                        if actual:
+                            _cs = load_state().get("characters", {}).get(name, {})
+                            configured = (_cs.get("llm", "")
+                                          or get_agent_config(name).get("model", "")
+                                          or "")
+                            log_llm_model_used(name, actual, configured)
+                    except Exception:
+                        pass
+
+                except StopLLMRequested:
+                    exc_box[0] = StopLLMRequested()
+                except BaseException as _e:
+                    exc_box[0] = _e
+                finally:
+                    # FIX B : fermer les connexions httpx DANS le verrou, avant
+                    # de le relâcher. Le prochain thread ne récupèrera donc jamais
+                    # un socket SSL encore actif depuis un appel précédent.
+                    _close_agent_connections(self_agent)
+                    done_evt.set()
 
         llm_thread = _threading_mod.Thread(target=_llm_call, daemon=True,
                                            name=f"llm-call-{name}")
@@ -276,6 +595,13 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                         face.set_thinking(False)
                     except Exception:
                         pass
+                # FIX C : best-effort close depuis le thread principal pour
+                # accélérer la mort du thread daemon abandonné. Le daemon
+                # peut déjà tenir _SSL_LOCK — on ne bloque pas ici.
+                try:
+                    _close_agent_connections(self_agent)
+                except Exception:
+                    pass
                 raise StopLLMRequested()
 
         if face:
@@ -292,9 +618,44 @@ def make_thinking_wrapper(agent, name: str, app_ref):
 
             # 400 BadRequestError — tool_use_failed
             if type(_e).__name__ == "BadRequestError" and "tool_use_failed" in _err_str:
-                _log_end(name, error="BadRequestError (400): tool_use_failed")
-                app_ref.msg_queue.put({"sender": "Systeme", "color": "#cc4422",
-                    "text": "Agent " + name + " : demande invalide (tool_use_failed). Replique ignoree."})
+                if not kwargs.get("__is_fallback_retry"):
+                    _log_end(name, error="BadRequestError (400): tool_use_failed (Tentative de Récupération)")
+                    app_ref.msg_queue.put({"sender": "⚙️ Système", "color": "#ff9800",
+                        "text": f"Agent {name} : erreur de formatage (tool_use_failed). Tentative de récupération avec gemini-2.0-flash-exp..."})
+                    
+                    _old_client = getattr(self_agent, "client", None)
+                    if _old_client is not None:
+                        try:
+                            from llm_config import build_llm_config
+                            import autogen
+                            # FIX 4 : "gemini-3.1-flash-preview" n'existe pas → 404 garanti.
+                            # Remplacé par "gemini-2.0-flash-exp" (modèle réel avec tool use).
+                            _fallback_cfg = build_llm_config("gemini-2.0-flash-exp", temperature=0.0)
+                            self_agent.client = autogen.OpenAIWrapper(config_list=_fallback_cfg["config_list"])
+                            
+                            _fallback_notice = (
+                                "[RÈGLE SYSTÈME TEMPORAIRE — RÉCUPÉRATION D'ERREUR]\n"
+                                "Ta précédente tentative de réponse a échoué car tu as mal formaté "
+                                "l'appel d'outil ou as utilisé un outil inexistant (tool_use_failed).\n"
+                                "Analyse tes intentions, corrige ton formatage, et réponds de nouveau correctement."
+                            )
+                            _fallback_messages = list(messages) if messages else []
+                            _fallback_messages.append({"role": "system", "content": _fallback_notice, "name": "Systeme"})
+                            
+                            kwargs_copy = dict(kwargs)
+                            kwargs_copy["__is_fallback_retry"] = True
+                            
+                            # Relance de l'appel via la fonction wrapper
+                            return _wrapped(self_agent, messages=_fallback_messages, sender=sender, **kwargs_copy)
+                        except Exception as _fe:
+                            print(f"[Fallback Error] {_fe}")
+                        finally:
+                            self_agent.client = _old_client
+
+                # Échec du fallback ou deuxième erreur 400 consécutive
+                _log_end(name, error="BadRequestError (400): tool_use_failed (Échec définitif)")
+                app_ref.msg_queue.put({"sender": "⚙️ Système", "color": "#cc4422",
+                    "text": "Agent " + name + " : demande invalide persistante (tool_use_failed). Réplique ignorée."})
                 return "[Erreur systeme: capacite invalide (400).]"
 
             # 404 NotFoundError — modele introuvable ou sans tool use
@@ -643,12 +1004,12 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
         name="Kaelen",
         system_message=(
             _regle +
-            "Tu es Kaelen, un Paladin Humain de niveau 15, hanté par un serment passé.\n"
+            "Tu es Kaelen, un Paladin Humain de niveau 11, hanté par un serment passé.\n"
             "PERSONNALITÉ : Tu es économe en mots, fier et grave. Tes préoccupations sont toujours liées "
             "à l'honneur, aux serments, à qui mérite protection et à ce qui constitue une cause juste. "
             "Quand tu interviens, c'est pour évaluer la valeur morale de la mission ou jurer ta protection. "
             "Tu n'es pas curieux des mécaniques — tu veux savoir SI ça vaut le coup de mourir pour ça.\n"
-            + _get_combat_prompt("paladin", "Devotion", 15) + "\n"
+            + _get_combat_prompt("paladin", "Devotion", 11) + "\n"
             "FORMAT SMITE OBLIGATOIRE — n'utilise JAMAIS un bloc [ACTION] séparé pour le smite :\n"
             "  [ACTION]\n"
             "  Type      : Action — Attaque × 2 (Extra Attack)\n"
@@ -657,26 +1018,6 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
             "              Attaque 2 : corps-à-corps +11, 2d6+8\n"
             "  Cible     : [la cible]\n"
             "Ne déclare PAS le smite comme Action Bonus séparé — il doit toujours être dans le même bloc que l'attaque.\n"
-            "RÈGLES ABSOLUES :\n"
-            "0. LONGUEUR STRICTE : 1 réplique (1-2 phrases) maximum par message hors combat. "
-            "Pas de paragraphes entre parenthèses. Pas de plusieurs questions. Une seule idée, dite une seule fois.\n"
-            "1. Alexis est le seul Maître du Jeu. Il a l'autorité exclusive sur le monde, les PNJs et l'environnement.\n"
-            "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste.\n"
-            "3. Ne décide pas si tu touches ou si tu tues — c'est Alexis qui valide.\n"
-            "4. INTERDIT ABSOLU : ne parle JAMAIS à la place d'un PNJ (Gil, Mart, Ireena, Ismark, ou tout autre personnage non joueur). "
-            "Ne décris JAMAIS leurs gestes, leurs réactions, leurs émotions ni leurs paroles. "
-            "Tu ne peux décrire QUE ce que Kaelen fait, dit ou ressent. "
-            "Si tu veux qu'un PNJ réagisse, tu lui adresses la parole — et c'est Alexis qui joue sa réponse.\n"
-            "5. N'invente pas l'environnement : ne décris pas ce qui se passe dans le monde, les changements de décor, "
-            "la météo, les bruits ambiants ou tout élément non établi par Alexis.\n"
-            "6. Tu ne connais pas la vallée de Barovie, tout est nouveau ici pour toi."
-            + get_scene_prompt()
-            + get_active_quests_prompt()
-            + get_memories_prompt_compact(importance_min=_mem_min)
-            + get_calendar_prompt()
-            + get_session_logs_prompt(max_sessions=3)
-            + get_spells_prompt("Kaelen")
-            + get_inventory_prompt()
         ),
         llm_config=cfg_fn("Kaelen"),
     )
@@ -686,33 +1027,13 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
         name="Elara",
         system_message=(
             _regle +
-            "Tu es Elara, une Magicienne de niveau 15, froide et méthodique.\n"
+            "Tu es Elara, une Magicienne de niveau 11, froide et méthodique.\n"
             "PERSONNALITÉ : Tu analyses, tu quantifies, tu cherches les failles logiques. Tes questions portent "
             "toujours sur la mécanique précise des choses : comment fonctionne la magie du phare, quelle est "
             "la source du pouvoir, y a-t-il des données concrètes, des artefacts, des textes. "
             "Tu t'ennuies des généralités et tu coupes court aux discours flous. "
             "Tu ne poses JAMAIS une question qu'Elara a déjà posée, ni une que quelqu'un d'autre vient de poser.\n"
-            + _get_combat_prompt("wizard", "", 15) + "\n"
-            "RÈGLES ABSOLUES :\n"
-            "0. LONGUEUR STRICTE : 1 réplique (1-2 phrases) maximum par message hors combat. "
-            "Pas de paragraphes entre parenthèses. Pas de plusieurs questions. Une seule idée, dite une seule fois.\n"
-            "1. Alexis est le seul Maître du Jeu. Il a l'autorité exclusive sur le monde, les PNJs et l'environnement.\n"
-            "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste.\n"
-            "3. Ne décide pas du résultat de tes actions — c'est Alexis qui valide.\n"
-            "4. INTERDIT ABSOLU : ne parle JAMAIS à la place d'un PNJ (tout personnage non joueur). "
-            "Ne décris JAMAIS leurs gestes, leurs réactions, leurs émotions ni leurs paroles. "
-            "Tu ne peux décrire QUE ce qu'Elara fait, dit ou ressent. "
-            "Si tu veux qu'un PNJ réagisse, tu lui adresses la parole — et c'est Alexis qui joue sa réponse.\n"
-            "5. N'invente pas l'environnement : ne décris pas ce qui se passe dans le monde, les changements de décor, "
-            "la météo, les bruits ambiants ou tout élément non établi par Alexis.\n"
-            "6. Tu ne connais pas la vallée de Barovie, tout est nouveau ici pour toi."
-            + get_scene_prompt()
-            + get_active_quests_prompt()
-            + get_memories_prompt_compact(importance_min=_mem_min)
-            + get_calendar_prompt()
-            + get_session_logs_prompt(max_sessions=3)
-            + get_spells_prompt("Elara")
-            + get_inventory_prompt()
+            + _get_combat_prompt("wizard", "", 11) + "\n"
         ),
         llm_config=cfg_fn("Elara"),
     )
@@ -722,7 +1043,7 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
         name="Thorne",
         system_message=(
             _regle +
-            "Tu es Thorne, un Voleur (Assassin) Tieffelin de niveau 15, cynique et pragmatique.\n"
+            "Tu es Thorne, un Voleur (Assassin) Tieffelin de niveau 11, cynique et pragmatique.\n"
             "PERSONNALITÉ : Tu vois le monde en termes de risques, de profits et de qui manipule qui. "
             "Tes questions portent sur les motivations cachées, les pièges potentiels, ce qu'on ne te dit pas, "
             "et ce que rapporte concrètement la mission. Tu es sarcastique et tu n'accordes ta confiance à personne. "
@@ -743,26 +1064,14 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
             "qui tire les ficelles, est-ce un piège, qu'est-ce qu'on peut ramasser, "
             "comment sortir vivant de là. Tes observations sont tactiques et pragmatiques, "
             "jamais magiques ni théoriques.\n"
-            + _get_combat_prompt("rogue", "Assassin", 15) + "\n"
-            "RÈGLES ABSOLUES :\n"
-            "0. LONGUEUR STRICTE : 1 réplique (1-2 phrases) maximum par message hors combat. "
-            "Pas de paragraphes entre parenthèses. Pas de plusieurs questions. Une seule idée, dite une seule fois.\n"
-            "1. Alexis est le seul Maître du Jeu. Il a l'autorité exclusive sur le monde, les PNJs et l'environnement.\n"
-            "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste.\n"
-            "3. Ne décide jamais si tu réussis — c'est Alexis qui valide.\n"
-            "4. INTERDIT ABSOLU : ne parle JAMAIS à la place d'un PNJ (tout personnage non joueur). "
-            "Ne décris JAMAIS leurs gestes, leurs réactions, leurs émotions ni leurs paroles. "
-            "Tu ne peux décrire QUE ce que Thorne fait, dit ou ressent. "
-            "Si tu veux qu'un PNJ réagisse, tu lui adresses la parole — et c'est Alexis qui joue sa réponse.\n"
-            "5. N'invente pas l'environnement : ne décris pas ce qui se passe dans le monde, les changements de décor, "
-            "la météo, les bruits ambiants ou tout élément non établi par Alexis.\n"
-            "6. Tu connais la légende de la vallée de Barovie, les grands mots, mais tu n'y crois pas."
-            + get_scene_prompt()
-            + get_active_quests_prompt()
-            + get_memories_prompt_compact(importance_min=_mem_min)
-            + get_calendar_prompt()
-            + get_session_logs_prompt(max_sessions=3)
-            + get_inventory_prompt()
+            "FORMAT ATTAQUE OBLIGATOIRE — Tu te bats avec deux armes (Extra Attack) :\n"
+            "  [ACTION]\n"
+            "  Type      : Action — Attaque × 2\n"
+            "  Intention : Frapper deux fois avec mes lames\n"
+            "  Règle 5e  : Attaque 1 : corps-à-corps +11, 1d6+5 | Attaque 2 : corps-à-corps +11, 1d6+5\n"
+            "  Cible     : [la cible]\n"
+            "Déclare toujours tes deux attaques dans le MÊME bloc [ACTION].\n"
+            + _get_combat_prompt("rogue", "Assassin", 11) + "\n"
         ),
         llm_config=cfg_fn("Thorne"),
     )
@@ -772,32 +1081,12 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
         name="Lyra",
         system_message=(
             _regle +
-            "Tu es Lyra, une Clerc (Domaine de la Vie) Demi-Elfe de niveau 15, bienveillante et implacable.\n"
+            "Tu es Lyra, une Clerc (Domaine de la Vie) Demi-Elfe de niveau 11, bienveillante et implacable.\n"
             "PERSONNALITÉ : Tu penses d'abord aux innocents qui souffrent, à la dimension spirituelle et divine "
             "des événements, et à ce que les dieux pourraient vouloir ici. Tu poses des questions sur les victimes, "
             "la souffrance des gens ordinaires, les signes divins, et ce que signifie moralement la situation. "
             "Tu ne poses JAMAIS une question qu'un autre personnage vient de poser — chaque voix doit être unique.\n"
-            + _get_combat_prompt("cleric", "Life", 15) + "\n"
-            "RÈGLES ABSOLUES :\n"
-            "0. LONGUEUR STRICTE : 1 réplique (1-2 phrases) maximum par message hors combat. "
-            "Pas de paragraphes entre parenthèses. Pas de plusieurs questions. Une seule idée, dite une seule fois.\n"
-            "1. Alexis est le seul Maître du Jeu. Il a l'autorité exclusive sur le monde, les PNJs et l'environnement.\n"
-            "2. Déclare toutes tes actions de façon autonome — n'attends pas qu'on te les liste.\n"
-            "3. Ne décide pas du résultat de tes actions — c'est Alexis qui valide.\n"
-            "4. INTERDIT ABSOLU : ne parle JAMAIS à la place d'un PNJ (tout personnage non joueur). "
-            "Ne décris JAMAIS leurs gestes, leurs réactions, leurs émotions ni leurs paroles. "
-            "Tu ne peux décrire QUE ce que Lyra fait, dit ou ressent. "
-            "Si tu veux qu'un PNJ réagisse, tu lui adresses la parole — et c'est Alexis qui joue sa réponse.\n"
-            "5. N'invente pas l'environnement : ne décris pas ce qui se passe dans le monde, les changements de décor, "
-            "la météo, les bruits ambiants ou tout élément non établi par Alexis.\n"
-            "6. Tu ne connais pas la vallée de Barovie, tout est nouveau ici pour toi."
-            + get_scene_prompt()
-            + get_active_quests_prompt()
-            + get_memories_prompt_compact(importance_min=_mem_min)
-            + get_calendar_prompt()
-            + get_session_logs_prompt(max_sessions=3)
-            + get_spells_prompt("Lyra")
-            + get_inventory_prompt()
+            + _get_combat_prompt("cleric", "Life", 11) + "\n"
         ),
         llm_config=cfg_fn("Lyra"),
     )

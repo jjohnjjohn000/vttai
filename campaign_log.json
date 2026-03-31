@@ -203,10 +203,10 @@
       "importance": 2,
       "auto_archived": true,
       "agent_reads": {
-        "Kaelen": "2026-03-27T16:16:11",
-        "Elara": "2026-03-27T16:16:11",
-        "Thorne": "2026-03-27T16:16:11",
-        "Lyra": "2026-03-27T16:16:11"
+        "Kaelen": "2026-03-30T21:24:49",
+        "Elara": "2026-03-30T21:24:49",
+        "Thorne": "2026-03-30T21:24:49",
+        "Lyra": "2026-03-30T21:24:49"
       }
     },
     {
@@ -307,10 +307,10 @@
       "importance": 2,
       "auto_archived": true,
       "agent_reads": {
-        "Kaelen": "2026-03-27T16:16:11",
-        "Elara": "2026-03-27T16:16:11",
-        "Thorne": "2026-03-27T16:16:11",
-        "Lyra": "2026-03-27T16:16:11"
+        "Kaelen": "2026-03-30T21:24:49",
+        "Elara": "2026-03-30T21:24:49",
+        "Thorne": "2026-03-30T21:24:49",
+        "Lyra": "2026-03-30T21:24:49"
       }
     },
     {
@@ -363,6 +363,58 @@
         "Elara": "2026-03-25T22:05:09",
         "Thorne": "2026-03-25T22:05:09",
         "Lyra": "2026-03-25T22:05:09"
+      }
+    },
+    {
+      "id": "clog_008",
+      "label": "Sessions 7–9",
+      "session_range": [
+        7,
+        9
+      ],
+      "date_archived": "2026-03-28T11:36:06",
+      "summary": "### Archives de la Campagne : L’Incursion du Néant et le Verrou de Tser (Sessions 7–9)\n\n**Synthèse Historique**\n\nLe conflit en Barovie a basculé dans une phase d'urgence absolue. Ce qui n'était initialement qu'une dégradation structurelle de la réalité au Gué de la Tser s'est transformé en un champ de bataille ouvert contre des entités extradimensionnelles. Le groupe, désormais épaulé par l'expertise occultiste de **Rudolph van Richten** et la mobilité tactique d'**Ezmerelda d'Avenir**, a dû faire face à une « plaie béante » dans le tissu du monde, matérialisée par un Mur Noir d'obsidienne liquide.\n\n**La Confrontation au Gué de la Tser**\nLa tension a culminé lors d'une incursion brutale menée par une meute de diables à épines, commandée par un redoutable *Chain Devil*. Cette force d'invasion, tirant profit de la faille planaire, a tenté de submerger les défenseurs. **Kaelen**, en première ligne, a essuyé l'assaut des chaînes animées, subissant des blessures critiques tout en maintenant une ligne de défense héroïque. Cette résistance a permis à **Elara** et **Lyra** de coordonner une réponse arcanique et divine : tandis qu'Elara déployait un *Mur de Force* protecteur pour isoler les points de tension structurelle de la faille, Lyra maintenait les lignes de vie du groupe et purgeait les zones d'approche avec une ferveur implacable. **Thorne**, usant de sa précision habituelle, a neutralisé les points de fragilité des créatures, forçant l'effondrement de leur cohésion.\n\n**Analyses et Révélations**\nLa victoire, bien que chèrement acquise, laisse le groupe face à une vérité sinistre : la Barovie n'est plus une prison pour les âmes sous la coupe d'un vampire, mais un territoire dont les verrous ancestraux cèdent un à un. Les analyses croisées d'Elara — appuyées par l'étude de l'échantillon de liane cristalline prélevé sur place — et le carnet de Van Richten convergent vers une conclusion alarmante : le **Temple d'Ambre** est probablement la source originelle de cette corruption et le lieu où résident les « Vestiges » libérés par la destruction d'un verrou planaire antique.\n\n**État de la Situation**\nBien que l'incursion immédiate au Gué de la Tser ait été repoussée, la corruption persiste dans le sol même de la région. Le groupe se trouve à la croisée des chemins :\n*   **Priorité Stratégique** : Le focus est désormais déplacé vers le Temple d'Ambre, identifié comme le point focal de l'entropie planaire.\n*   **Défense du Bastion** : Argynvostholt demeure un sanctuaire vital, mais sa survie est désormais directement corrélée à la capacité du groupe à fermer les brèches à la source, loin des murs du manoir.\n*   **Continuité Narrative** : La quête spirituelle pour honorer les restes d'Argynvost demeure un pilier, non seulement pour restaurer l'intégrité spirituelle de la terre, mais pour fournir l'ancrage nécessaire à la fermeture des cicatrices arcaniques. \n\nLe groupe a prouvé sa capacité à repousser l'invasion, mais la fragilité du voile séparant la Barovie du néant impose une action rapide. La survie de ce domaine ne dépend plus de la défaite du maître des lieux, mais de leur capacité à restaurer les fondations d'un monde en dissolution.\n\n*Archivé le 26 mars 2026 par le Chroniqueur IA.*",
+      "keywords": [
+        "groupe",
+        "Barovie",
+        "Kaelen",
+        "Elara",
+        "quête",
+        "Lyra",
+        "sanctuaire",
+        "vampire",
+        "Ezmerelda",
+        "Thorne",
+        "Manoir",
+        "Argynvostholt",
+        "désormais",
+        "planaire",
+        "capacité",
+        "Campagne",
+        "Incursion",
+        "Néant",
+        "Verrou",
+        "Tser",
+        "Sessions",
+        "Synthèse",
+        "Historique",
+        "Rudolph",
+        "Richten"
+      ],
+      "characters": [
+        "Kaelen",
+        "Elara",
+        "Thorne",
+        "Lyra"
+      ],
+      "locations": [],
+      "importance": 2,
+      "auto_archived": true,
+      "agent_reads": {
+        "Kaelen": "2026-03-28T11:37:13",
+        "Elara": "2026-03-28T11:37:13",
+        "Thorne": "2026-03-28T11:37:13",
+        "Lyra": "2026-03-28T11:37:13"
       }
     }
   ],

@@ -35,12 +35,25 @@ from engine_mechanics  import (
     roll_attack_only, roll_damage_only, execute_action_mechanics,
 )
 from engine_spell_mj   import (
-    ACTION_PATTERN, SORT_PATTERN, DAMAGE_PATTERN, PC_NAME_RE,
+    SORT_PATTERN, DAMAGE_PATTERN, PC_NAME_RE,
     DIRECTIVE_PREFILTER, PARSER_SYSTEM,
     get_prepared_spell_names, extract_spell_name_llm, is_spell_prepared,
     can_ritual_cast, build_pnj_patterns, parse_mj_directives,
     validate_bonus_action_rule, validate_cast_time_in_combat
 )
+
+# ── OVERRIDE DU PATTERN ACTION (TOLÉRANCE MAXIMALE) ─────────────────────────
+# L'original de engine_spell_mj est trop strict sur les espaces avant les deux-points.
+# Ce pattern encaisse les fantaisies de formatage du LLM (espaces, sauts de ligne, etc.)
+ACTION_PATTERN = _re.compile(
+    r'\[ACTION\]\s*'
+    r'(?:Type|Action|Type d\'action)\s*:\s*(?P<type>[^\n]*)\s*'
+    r'Intention\s*:\s*(?P<intention>.*?)\s*'
+    r'R[eéè]gle\s*(?:5e)?\s*:\s*(?P<regle>[^\n]*)\s*'
+    r'Cible\s*:\s*(?P<cible>[^\n]*)',
+    _re.IGNORECASE | _re.DOTALL
+)
+# ────────────────────────────────────────────────────────────────────────────
 
 
 # ─── EngineContext ────────────────────────────────────────────────────────────
@@ -164,6 +177,190 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
         cleaned = _tts_clean(strip_mechanical_blocks(text))
         for sentence in _split_sentences(cleaned):
             _app.audio_queue.put((sentence, char_name))
+
+    # ── Helpers ressources de tour ────────────────────────────────────────────
+
+    def _get_char_speed_ft(char_name: str) -> int:
+        """Vitesse de déplacement en pieds (défaut 30 ft / 6 cases)."""
+        try:
+            return int(_CM.get(char_name, {}).get("speed", 30))
+        except Exception:
+            return 30
+
+    def _get_turn_res(char_name: str) -> dict:
+        """
+        Retourne le dict de ressources pour le tour en cours de char_name.
+        Réinitialise automatiquement dès que c'est un nouveau combattant actif.
+        """
+        _tr_dict = COMBAT_STATE.setdefault("turn_res", {})
+        if _tr_dict.get("_last_initialized") != char_name:
+            _tr_dict["_last_initialized"] = char_name
+            _tr_dict[char_name] = {
+                "action":      True,
+                "bonus":       True,
+                "movement_ft": _get_char_speed_ft(char_name),
+            }
+        return _tr_dict.setdefault(char_name, {
+            "action":      True,
+            "bonus":       True,
+            "movement_ft": _get_char_speed_ft(char_name),
+        })
+
+    def _consume_turn_res(char_name: str, type_label: str, movement_ft: int = 0):
+        """Marque une ressource comme consommée pour ce tour."""
+        _tr = _get_turn_res(char_name)
+        _lbl = type_label.lower()
+        if "mouvement" in _lbl:
+            _tr["movement_ft"] = max(0, _tr["movement_ft"] - movement_ft)
+        elif "bonus" in _lbl:
+            _tr["bonus"] = False
+        elif "réaction" in _lbl or "reaction" in _lbl:
+            pass  # géré séparément via reactions_used
+        else:
+            _tr["action"] = False
+
+    def _build_tour_en_cours(char_name: str) -> str:
+        """Construit le message[TOUR EN COURS] avec les ressources restantes."""
+        _tr     = _get_turn_res(char_name)
+        _mv_rem = _tr["movement_ft"]
+        _react  = char_name not in COMBAT_STATE.get("reactions_used", set())
+        _speed  = _get_char_speed_ft(char_name)
+
+        a_str  = "✅ disponible" if _tr["action"]  else "❌ utilisée"
+        b_str  = "✅ disponible" if _tr["bonus"]   else "❌ utilisée"
+        r_str  = "✅ disponible" if _react         else "❌ utilisée"
+        
+        if _mv_rem > 0:
+            mv_str = f"✅ {_mv_rem} ft ({_mv_rem // 5} cases)[Vitesse de base: {_speed} ft]"
+        else:
+            mv_str = "❌ épuisé"
+
+        _any_left = _tr["action"] or _tr["bonus"] or _mv_rem > 0
+        _any_action_left = _tr["action"] or _tr["bonus"]
+        next_instr = (
+            "Déclare ta prochaine action avec UN seul bloc [ACTION], ET UNE SEULE CHOSE À LA FOIS (ex: 1 mouvement OU 1 attaque)."
+            " ou envoie [FIN_DE_TOUR] pour terminer ton tour."
+            if _any_action_left else
+            (
+                f"Il te reste {_mv_rem} ft de déplacement."
+                " Déclare un [ACTION] Type: Mouvement si tu veux bouger,"
+                " ou envoie [FIN_DE_TOUR] pour terminer ton tour."
+                if _mv_rem > 0 else
+                "Toutes tes ressources sont épuisées. Envoie [FIN_DE_TOUR]."
+            )
+        )
+        
+        if _any_left and _tr["action"]:
+            # Conseil contextuel : si mouvement épuisé et ennemi hors portée, guider vers Dash ou alternatives
+            _dash_hint_tec = ""
+            if _mv_rem == 0:
+                try:
+                    import os as _os_tec, json as _json_tec, math as _math_tec
+                    _map_data_tec = {}
+                    _act_map_tec = _app._win_state.get("active_map_name", "")
+                    if _act_map_tec:
+                        try:
+                            from app_config import get_campaign_name as _gcn_tec
+                            _camp_tec = _gcn_tec()
+                        except Exception:
+                            _camp_tec = "campagne"
+                        _camp_tec = "".join(c for c in _camp_tec if c.isalnum() or c in (" ", "-", "_")).strip() or "campagne"
+                        _safe_tec = "".join(c for c in _act_map_tec if c.isalnum() or c in (" ", "-", "_")).strip() or "carte"
+                        _mp_tec = _os_tec.path.join("campagne", _camp_tec, "maps", f"{_safe_tec}.json")
+                        if _os_tec.path.exists(_mp_tec):
+                            with open(_mp_tec, "r", encoding="utf-8") as _f_tec:
+                                _map_data_tec = _json_tec.load(_f_tec)
+                    if not _map_data_tec:
+                        _map_data_tec = _app._win_state.get("combat_map_data", {})
+                    _toks_tec = _map_data_tec.get("tokens", [])
+                    _hero_tec = None
+                    _nearest_d = 9999.0
+                    _nearest_n = ""
+                    for _t in _toks_tec:
+                        if (_t.get("name") or "").lower() == char_name.lower():
+                            _hero_tec = _t
+                    if _hero_tec:
+                        _hc = int(round(_hero_tec.get("col", 0)))
+                        _hr = int(round(_hero_tec.get("row", 0)))
+                        for _t in _toks_tec:
+                            if _t.get("type") == "monster":
+                                _mc = int(round(_t.get("col", 0)))
+                                _mr = int(round(_t.get("row", 0)))
+                                _h = max(abs(_hc - _mc), abs(_hr - _mr)) * 5.0
+                                _da = abs(int(_hero_tec.get("altitude_ft", 0)) - int(_t.get("altitude_ft", 0)))
+                                _dd = _math_tec.sqrt(_h ** 2 + _da ** 2)
+                                if _dd < _nearest_d:
+                                    _nearest_d = _dd
+                                    _nearest_n = _t.get("name", "ennemi")
+                        if _nearest_d <= 10.0:
+                            _dash_hint_tec = f"\n💡 Tu es déjà à portée de mêlée de {_nearest_n} ({_nearest_d:.0f} ft) — ATTAQUE !"
+                        elif _nearest_d <= 5.0 + _speed:
+                            _dash_hint_tec = (
+                                f"\n💡 Ennemi le plus proche : {_nearest_n} à {_nearest_d:.0f} ft. "
+                                f"FONCE (Dash, +{_speed} ft) pour le rejoindre et attaquer ensuite !"
+                            )
+                        else:
+                            _dash_hint_tec = (
+                                f"\n💡 Ennemi le plus proche : {_nearest_n} à {_nearest_d:.0f} ft. "
+                                f"Foncer (Dash) te rapproche de {_speed} ft (tu attaqueras au prochain tour)."
+                            )
+                except Exception:
+                    pass
+            if _dash_hint_tec:
+                next_instr += _dash_hint_tec
+            else:
+                next_instr += f"\n💡 (Tactique : Ton Action peut être utilisée pour [Foncer] et gagner +{_speed} ft ce tour)."
+
+        return (
+            f"[TOUR EN COURS — {char_name}]\n"
+            f"  Action       : {a_str}\n"
+            f"  Action Bonus : {b_str}\n"
+            f"  Déplacement  : {mv_str}\n"
+            f"  Réaction     : {r_str}\n\n"
+            + next_instr
+        )
+
+    # ── Helper : narrative d'action publique pour le GroupChat ───────────────
+    # Remplace [TOUR EN COURS] dans le GroupChat (visible par TOUS les agents).
+    # Règle : le GroupChat ne doit contenir que des informations observables
+    # par tous les personnages. Les ressources de tour (Action/Bonus/Déplacement)
+    # sont privées → elles restent dans le system_message de l'agent actif,
+    # mis à jour par _rebuild_agent_prompts() / get_combat_prompt().
+
+    def _build_action_narrative(name: str, type_lbl: str, intention: str,
+                                cible: str, feedback: str = "") -> str:
+        """
+        Construit une ligne narrative courte pour le GroupChat (visible par tous).
+        Exemple : "Lyra [action] : lancer Sacred Flame → Barbed Devil. ✅ touché"
+        """
+        t = (type_lbl or "").lower()
+        if "bonus" in t:
+            slot = "action bonus"
+        elif "mouvement" in t or "déplace" in t or "move" in t:
+            slot = "mouvement"
+        elif "réaction" in t or "reaction" in t:
+            slot = "réaction"
+        else:
+            slot = "action"
+
+        intention_clean = (intention or "").strip().rstrip(".")
+        cible_part = f" → {cible.strip()}" if cible and cible.strip() else ""
+
+        fb = feedback or ""
+        if "ATTAQUE RÉSOLUE" in fb or "ATTAQUE DE SORT RÉSOLUE" in fb:
+            result = " ✅ (touché)"
+        elif "ATTAQUE RATÉE" in fb or "ATTAQUE DE SORT RATÉE" in fb:
+            result = " ❌ (raté)"
+        elif "RÉSULTAT SYSTÈME — SOIN" in fb:
+            result = " ✅ (soins appliqués)"
+        elif "IMPOSSIBLE" in fb:
+            result = " ❌ (impossible)"
+        elif "RÉSOLUE" in fb or "CONFIRMÉE" in fb:
+            result = " ✅"
+        else:
+            result = ""
+
+        return f"{name} [{slot}] : {intention_clean}{cible_part}.{result}"
 
     # ── Helper : directive récente dans l'historique ──────────────────────────
 
@@ -590,26 +787,51 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                 # Guard 4 : appel d'outil sans narration
                 # L'agent doit toujours fournir une phrase décrivant ce qu'il fait
                 # avant (ou avec) l'appel d'outil. Si content est vide, on re-prompt.
+                # Après 1 retry sans résultat (comportement normal de Gemini/Groq qui
+                # retourne content=null lors d'un tool_call), on injecte une narration
+                # synthétique pour roll_dice afin d'éviter la boucle infinie.
                 _has_narrative = content and str(content).strip() not in ("", "[SILENCE]")
                 if not _has_narrative and name in PLAYER_NAMES:
-                    _no_narr_msg = (
-                        f"[DIRECTIVE SYSTÈME — NARRATION MANQUANTE]\n"
-                        f"{name} : avant d'appeler {_fn_name}, tu dois écrire UNE phrase "
-                        f"décrivant brièvement ce que ton personnage fait ou ressent "
-                        f"(ex : « Je scrute les alentours avec attention. »).\n"
-                        f"Réponds avec ta phrase narrative ET l'appel d'outil dans le même message."
-                    )
-                    _app.msg_queue.put({
-                        "sender": "⚠️ Système",
-                        "text":   _no_narr_msg,
-                        "color":  "#FF9800",
-                    })
-                    _original_receive(
-                        self_mgr,
-                        {"role": "user", "content": _no_narr_msg, "name": "Alexis_Le_MJ"},
-                        sender, request_reply=True, silent=False,
-                    )
-                    return
+                    _g4_key = f"_g4_narr_{name}"
+                    _g4_retry = ctx.tool_refusal_strikes.get(_g4_key, 0)
+
+                    if _fn_name == "roll_dice" and _g4_retry >= 1:
+                        # 2e tentative sans narrative : le modèle ne peut pas combiner
+                        # texte + tool_call. On injecte une narration synthétique courte
+                        # et on laisse passer l'appel roll_dice.
+                        ctx.tool_refusal_strikes[_g4_key] = 0
+                        _synth_text = f"*{name} ferme les yeux un instant et se concentre.*"
+                        _app.msg_queue.put({
+                            "sender": name,
+                            "text":   _synth_text,
+                            "color":  _app.CHAR_COLORS.get(name, "#e0e0e0"),
+                        })
+                        _original_receive(
+                            self_mgr,
+                            {"role": "assistant", "content": _synth_text, "name": name},
+                            sender, request_reply=False, silent=True,
+                        )
+                        # Laisser le flux continuer vers « Appel légitime »
+                    else:
+                        ctx.tool_refusal_strikes[_g4_key] = _g4_retry + 1
+                        _no_narr_msg = (
+                            f"[DIRECTIVE SYSTÈME — NARRATION MANQUANTE]\n"
+                            f"{name} : avant d'appeler {_fn_name}, tu dois écrire UNE phrase "
+                            f"décrivant brièvement ce que ton personnage fait ou ressent "
+                            f"(ex : « Je scrute les alentours avec attention. »).\n"
+                            f"Réponds avec ta phrase narrative ET l'appel d'outil dans le même message."
+                        )
+                        _app.msg_queue.put({
+                            "sender": "⚠️ Système",
+                            "text":   _no_narr_msg,
+                            "color":  "#FF9800",
+                        })
+                        _original_receive(
+                            self_mgr,
+                            {"role": "user", "content": _no_narr_msg, "name": "Alexis_Le_MJ"},
+                            sender, request_reply=True, silent=False,
+                        )
+                        return
 
                 # Appel légitime
                 is_mj_roll_response = True
@@ -700,8 +922,8 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
             _original_receive(self_mgr, message, sender, request_reply, silent)
             return
 
-        # ── INTERCEPTION SORT [SORT: Nom | Niveau: X | Cible: Y] ─────────────
-        if (not is_system
+        # ── INTERCEPTION SORT [SORT:] désactivée — tous les sorts passent par [ACTION] ──
+        if False and (not is_system
                 and name in SPELL_CASTERS
                 and content
                 and SORT_PATTERN.search(str(content))):
@@ -710,6 +932,24 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
             spell_level = int(m.group("niveau"))
             target      = (m.group("cible") or "").strip()
             clean_content = SORT_PATTERN.sub("", str(content)).strip()
+
+            # ── Garde-fou : [SORT:] + [ACTION] dans le même message ─────────
+            # L'agent ne peut déclarer qu'une seule décision par message.
+            # Si un bloc [ACTION] accompagne le tag [SORT:], on le retire du
+            # contenu affiché et on injecte une correction après résolution.
+            _combo_action_stripped = ACTION_PATTERN.search(clean_content)
+            if _combo_action_stripped:
+                clean_content = ACTION_PATTERN.sub("", clean_content).strip()
+                _app.msg_queue.put({
+                    "sender": "⚠️ Règle",
+                    "text": (
+                        f"[COMBO INTERDIT — {name}]\n"
+                        f"{name} a déclaré un tag [SORT:] ET un bloc [ACTION] dans le même message.\n"
+                        f"RÈGLE : une seule décision par message en combat.\n"
+                        f"Le bloc [ACTION] a été ignoré — il sera redemandé après résolution du sort."
+                    ),
+                    "color": "#e67e22",
+                })
 
             if not is_spell_prepared(name, spell_name):
                 _avail3 = get_prepared_spell_names(name)
@@ -880,15 +1120,253 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         is_spell_prepared_fn=is_spell_prepared,
                         get_prepared_spell_names_fn=get_prepared_spell_names,
                     )
-                    _app.msg_queue.put({"sender": "⚙️ Système", "text": _fb, "color": "#a89f91"})
-                    _original_receive(
-                        self_mgr,
-                        {"role": "user", "content": _fb, "name": "Alexis_Le_MJ"},
-                        sender, request_reply=False, silent=True,
-                    )
+
+                    _is_healing_spell = _fb.startswith("[RÉSULTAT SYSTÈME — SOIN]")
+                    _is_save_spell    = _fb.startswith("[RÉSULTAT SYSTÈME — JET DE SAUVEGARDE]")
+
+                    if _is_save_spell:
+                        # ── Boîte de confirmation JET DE SAUVEGARDE ───────────
+                        _split_sv = "\n\n[INSTRUCTION NARRATIVE]"
+                        _save_results_part = (
+                            _fb.split(_split_sv)[0]
+                            .replace("[RÉSULTAT SYSTÈME — JET DE SAUVEGARDE]\n", "")
+                            .strip()
+                        )
+                        # Extraire le total dégâts annoté par engine_mechanics
+                        _sv_dmg_m = _re.search(r"\[__save_dmg_total__:(\d+)\]", _save_results_part)
+                        _sv_dmg_total = int(_sv_dmg_m.group(1)) if _sv_dmg_m else 0
+                        # Nettoyer l'annotation interne de l'affichage
+                        _save_results_display = _re.sub(r"\[__save_dmg_total__:\d+\]\n?", "", _save_results_part).strip()
+
+                        _sv_ev  = _threading.Event()
+                        _sv_res: dict = {}
+
+                        def _sv_cb(target_saved, mj_note_sv="", _ev=_sv_ev, _res=_sv_res):
+                            _app._unregister_approval_event(_ev)
+                            _res["saved"]  = target_saved
+                            _res["note"]   = mj_note_sv
+                            _ev.set()
+
+                        _app._register_approval_event(_sv_ev)
+                        _app.msg_queue.put({
+                            "action":          "result_confirm",
+                            "char_name":       name,
+                            "type_label":      f"Sort — {spell_name}",
+                            "results_text":    _save_results_display,
+                            "mode":            "save",
+                            "resume_callback": _sv_cb,
+                        })
+                        _sv_ev.wait(timeout=600)
+                        _app._unregister_approval_event(_sv_ev)
+
+                        _target_saved  = _sv_res.get("saved", False)
+                        _sv_mj_note    = _sv_res.get("note", "")
+
+                        def _apply_save_damage(cible_sv, dmg_sv, label_sv):
+                            """Affiche damage_link et applique au PNJ."""
+                            _dl_ev  = _threading.Event()
+                            _dl_res: dict = {}
+                            def _dl_cb(final, _ev=_dl_ev, _res=_dl_res):
+                                _app._unregister_approval_event(_ev)
+                                _res["amount"] = final
+                                _ev.set()
+                            _app._register_approval_event(_dl_ev)
+                            _app.msg_queue.put({
+                                "action":          "damage_link",
+                                "sender":          name,
+                                "char_name":       name,
+                                "cible":           cible_sv,
+                                "dmg_text":        label_sv,
+                                "dmg_total":       dmg_sv,
+                                "is_crit":         False,
+                                "resume_callback": _dl_cb,
+                            })
+                            _dl_ev.wait(timeout=300)
+                            _app._unregister_approval_event(_dl_ev)
+                            _final_d = _dl_res.get("amount", dmg_sv)
+                            try:
+                                if _app._combat_tracker is not None:
+                                    _app._combat_tracker.apply_damage_to_npc(cible_sv, _final_d)
+                            except Exception as _dap_err:
+                                print(f"[SaveDamageApply] {_dap_err}")
+                            return _final_d
+
+                        if _target_saved:
+                            # Sauvegarde RÉUSSIE → sort raté
+                            _half = _sv_dmg_total // 2
+                            if _half > 0:
+                                _applied = _apply_save_damage(
+                                    target or "Cible",
+                                    _half,
+                                    f"Sauvegarde réussie — demi-dégâts ({_sv_dmg_total}÷2)",
+                                )
+                                _fb = (
+                                    "[RÉSULTAT SYSTÈME — SAUVEGARDE RÉUSSIE]\n"
+                                    + _save_results_display
+                                    + "\n  → SAUVEGARDE RÉUSSIE ✅ (sort raté)"
+                                    + (f"\n  Note MJ : {_sv_mj_note}" if _sv_mj_note else "")
+                                    + f"\n  Demi-dégâts appliqués : {_applied}"
+                                    + "\n\n[INSTRUCTION NARRATIVE]\n"
+                                    + f"La cible a résisté. Narre en 1-2 phrases comment {target or 'la cible'} "
+                                    + f"résiste partiellement au sort de {name}. Ne mentionne pas les chiffres."
+                                )
+                            else:
+                                _fb = (
+                                    "[RÉSULTAT SYSTÈME — SAUVEGARDE RÉUSSIE]\n"
+                                    + _save_results_display
+                                    + "\n  → SAUVEGARDE RÉUSSIE ✅ (sort raté — aucun effet)"
+                                    + (f"\n  Note MJ : {_sv_mj_note}" if _sv_mj_note else "")
+                                    + "\n\n[INSTRUCTION NARRATIVE]\n"
+                                    + f"La cible a esquivé le sort. Narre en 1-2 phrases comment "
+                                    + f"{target or 'la cible'} résiste ou esquive le sort de {name}."
+                                )
+                        else:
+                            # Sauvegarde RATÉE → sort touché
+                            if _sv_dmg_total > 0:
+                                _applied = _apply_save_damage(
+                                    target or "Cible",
+                                    _sv_dmg_total,
+                                    f"Sauvegarde ratée — dégâts pleins",
+                                )
+                                _fb = (
+                                    "[RÉSULTAT SYSTÈME — SAUVEGARDE RATÉE]\n"
+                                    + _save_results_display
+                                    + "\n  → SAUVEGARDE RATÉE ❌ (sort touché)"
+                                    + (f"\n  Note MJ : {_sv_mj_note}" if _sv_mj_note else "")
+                                    + f"\n  Dégâts appliqués : {_applied}"
+                                    + "\n\n[INSTRUCTION NARRATIVE]\n"
+                                    + f"La cible a raté son jet. Narre en 1-2 phrases l'impact du sort "
+                                    + f"de {name} sur {target or 'la cible'}. Ne mentionne pas les chiffres."
+                                )
+                            else:
+                                _fb = (
+                                    "[RÉSULTAT SYSTÈME — SAUVEGARDE RATÉE]\n"
+                                    + _save_results_display
+                                    + "\n  → SAUVEGARDE RATÉE ❌ (sort touché — effets actifs)"
+                                    + (f"\n  Note MJ : {_sv_mj_note}" if _sv_mj_note else "")
+                                    + "\n\n[INSTRUCTION NARRATIVE]\n"
+                                    + f"La cible a raté son jet. Le sort de {name} fait plein effet sur "
+                                    + f"{target or 'la cible'}. Narre l'effet en 1-2 phrases."
+                                )
+
+                        _original_receive(
+                            self_mgr,
+                            {"role": "user", "content": _fb, "name": "Alexis_Le_MJ"},
+                            sender, request_reply=False, silent=True,
+                        )
+
+                    elif _is_healing_spell:
+                        # ── Boîte de confirmation SOIN (verte) ────────────
+                        _split_mk = "\n\n[INSTRUCTION NARRATIVE]"
+                        _heal_results_part = (
+                            _fb.split(_split_mk)[0]
+                            .replace("[RÉSULTAT SYSTÈME — SOIN]\n", "")
+                            .strip()
+                        )
+
+                        _heal_ev = _threading.Event()
+                        _heal_note: dict = {}
+
+                        def _heal_cb(mj_note_heal="", _ev=_heal_ev, _res=_heal_note):
+                            _app._unregister_approval_event(_ev)
+                            _res["note"] = mj_note_heal
+                            _ev.set()
+
+                        _app._register_approval_event(_heal_ev)
+                        _app.msg_queue.put({
+                            "action": "result_confirm", "char_name": name,
+                            "type_label": f"Sort — {spell_name}",
+                            "results_text": _heal_results_part,
+                            "mode": "healing", "resume_callback": _heal_cb,
+                        })
+                        _heal_ev.wait(timeout=600)
+                        _app._unregister_approval_event(_heal_ev)
+
+                        _heal_mj = _heal_note.get("note", "")
+                        if _heal_mj:
+                            _fb += f"\n[Modification MJ] {_heal_mj}"
+
+                        _original_receive(
+                            self_mgr,
+                            {"role": "user", "content": _fb, "name": "Alexis_Le_MJ"},
+                            sender, request_reply=False, silent=True,
+                        )
+                    else:
+                        _app.msg_queue.put({"sender": "⚙️ Système", "text": _fb, "color": "#a89f91"})
+                        _original_receive(
+                            self_mgr,
+                            {"role": "user", "content": _fb, "name": "Alexis_Le_MJ"},
+                            sender, request_reply=False, silent=True,
+                        )
                 except Exception as _exec_err:
                     print(f"Erreur exec sort auto: {_exec_err}")
-                
+
+                # Consommer l'Action ou l'Action Bonus
+                if _sp_data:
+                    _unit = _sp_data.get("cast_time_raw", [{}])[0].get("unit", "action") if _sp_data.get("cast_time_raw") else "action"
+                    _consume_turn_res(name, _unit)
+                    _app._update_agent_combat_prompts()
+                else:
+                    _consume_turn_res(name, "action")
+                    _app._update_agent_combat_prompts()
+
+                # ── Narrative publique (visible tous agents) + trigger de tour ──
+                # Le tableau [TOUR EN COURS] (ressources) reste dans le system_message
+                # de l'agent actif (mis à jour par _rebuild_agent_prompts ci-dessus).
+                # Le GroupChat reçoit UNIQUEMENT une narrative lisible + un trigger.
+                if COMBAT_STATE["active"] and name == COMBAT_STATE.get("active_combatant"):
+                    _tec_msg  = _build_tour_en_cours(name)
+                    _tr       = _get_turn_res(name)
+                    _has_res  = _tr["action"] or _tr["bonus"]
+
+                    # [UI MJ] : tableau complet dans l'interface (pas dans le GroupChat)
+                    _app.msg_queue.put({"sender": "⚔️ Combat", "text": _tec_msg, "color": "#5577aa"})
+
+                    # [GroupChat public] : narrative de l'action pour tous les agents
+                    _sort_type = "action bonus" if (_unit and "bonus" in str(_unit).lower()) else "action"
+                    _narr_sort = _build_action_narrative(
+                        name, _sort_type,
+                        f"lancer {spell_name} (niv.{_final_level})",
+                        target, _fb if "_fb" in dir() else "",
+                    )
+                    _original_receive(
+                        self_mgr,
+                        {"role": "user", "content": _narr_sort, "name": "Alexis_Le_MJ"},
+                        sender, request_reply=False, silent=False,
+                    )
+
+                    # [Trigger de continuation] : simple, sans données de ressources
+                    _app._pending_combat_trigger = (
+                        f"Tu as encore des actions disponibles. Continue ton tour, {name}."
+                        if _has_res else
+                        f"{name}, plus d'actions disponibles. Envoie [FIN_DE_TOUR] ou déclare un mouvement."
+                    )
+                    _gc_trigger_base = (
+                        f"Continue ton tour, {name}."
+                        if _has_res else
+                        f"{name}, plus d'actions disponibles. Envoie [FIN_DE_TOUR] ou déclare un mouvement."
+                    )
+                    # Si l'agent avait combiné [SORT:] + [ACTION] dans son message,
+                    # rappeler la règle et redemander la décision ignorée séparément.
+                    if _combo_action_stripped:
+                        _gc_trigger = (
+                            _gc_trigger_base
+                            + f"\n\n[RAPPEL RÈGLE] Tu avais inclus un bloc [ACTION] avec ton sort — il a été ignoré."
+                            f"\nDéclare UN SEUL bloc [ACTION] par message. Si tu veux te déplacer, fais-le maintenant en UN seul message dédié."
+                        )
+                    else:
+                        _gc_trigger = _gc_trigger_base
+
+                    _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                    _original_receive(
+                        self_mgr,
+                        {"role": "user", "content": _gc_trigger, "name": "Alexis_Le_MJ"},
+                        sender,
+                        request_reply=True,
+                        silent=False,
+                    )
+                    return
+
                 _original_receive(self_mgr, message, sender, request_reply, silent)
                 return
             else:
@@ -924,26 +1402,112 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                 log_tts_start(name, clean_content)
                 _enqueue_tts(clean_content, name)
 
-            # Collecte toutes les sous-actions
-            _all_subactions: list = []
-            for _m_a in ACTION_PATTERN.finditer(str(content)):
-                _type_lbl = (_m_a.group("type") or "").strip() or "Action"
-                _intention = _m_a.group("intention").strip()
-                _regle     = _m_a.group("regle").strip()
-                _cible     = _m_a.group("cible").strip()
-                _all_subactions.extend(
-                    split_into_subactions(
-                        _type_lbl, _intention, _regle, _cible,
-                        _CM.get(name, {}),   # stats du perso → n_attacks correct
-                    )
-                )
+            # ── Ne traiter QUE le premier bloc [ACTION] ───────────────────────
+            # Les blocs suivants (s'il y en a) sont ignorés : le système enverra
+            # un [TOUR EN COURS] après confirmation, et l'agent déclarera
+            # sa prochaine action dans un nouveau message.
+            _first_match = next(ACTION_PATTERN.finditer(str(content)), None)
+            if _first_match is None:
+                _original_receive(self_mgr, message, sender, request_reply, silent)
+                return
 
-            _sub_total = len(_all_subactions)
+            _type_lbl  = (_first_match.group("type")      or "").strip() or "Action"
+            _intention = (_first_match.group("intention") or "").strip()
+            _regle     = (_first_match.group("regle")     or "").strip()
+            _cible     = (_first_match.group("cible")     or "").strip()
+
+            # Si l'agent utilise Type: Fin de tour, on termine le tour immédiatement sans interroger le MJ
+            if _type_lbl.lower() in ("fin de tour", "fin du tour", "end of turn", "end turn"):
+                if COMBAT_STATE["active"] and name == COMBAT_STATE.get("active_combatant"):
+                    def _end_t1():
+                        _trk = getattr(_app, "_combat_tracker_win", None) or getattr(_app, "_combat_tracker", None)
+                        if _trk and hasattr(_trk, "advance_turn"):
+                            _trk.advance_turn()
+                    _app.root.after(0, _end_t1)
+                elif not COMBAT_STATE["active"]:
+                    # Hors combat : "Fin de tour" n'a aucun sens — corriger l'agent
+                    _hc_fin_msg = (
+                        f"[DIRECTIVE SYSTÈME — FORMAT INCORRECT]\n"
+                        f"{name} : le Type 'Fin de tour' dans un bloc [ACTION] n'existe "
+                        f"QUE dans le mode combat.\n\n"
+                        f"HORS COMBAT, il n'y a pas de tour à terminer. Deux options :\n"
+                        f"  • Si tu n'as plus rien à faire : réponds simplement par une "
+                        f"phrase de roleplay ou [SILENCE].\n"
+                        f"  • Si tu veux déclarer une action mécanique : utilise un bloc "
+                        f"[ACTION] avec Type: Action / Action Bonus / Mouvement — jamais "
+                        f"'Fin de tour'."
+                    )
+                    _app.msg_queue.put({
+                        "sender": "⚠️ Système",
+                        "text": _hc_fin_msg,
+                        "color": "#ff9800",
+                    })
+                    _original_receive(
+                        self_mgr,
+                        {"role": "user", "content": _hc_fin_msg, "name": "Alexis_Le_MJ"},
+                        sender, request_reply=False, silent=True,
+                    )
+                _original_receive(self_mgr, message, sender, request_reply, silent)
+                return
+
+            if not _intention and not _regle:
+                # Bloc malformé — ignorer
+                _original_receive(self_mgr, message, sender, request_reply, silent)
+                return
+
+            _all_subactions = split_into_subactions(
+                _type_lbl, _intention, _regle, _cible,
+                _CM.get(name, {}),
+            )
+            if not _all_subactions:
+                _original_receive(self_mgr, message, sender, request_reply, silent)
+                return
+
+            _sub_total    = len(_all_subactions)
             _turn_aborted = False
 
             for _sub_idx, _sub in enumerate(_all_subactions, start=1):
+                # ── VÉRIFICATION STRICTE DES RESSOURCES ──────────────────────
+                if COMBAT_STATE["active"]:
+                    _tr_pre = _get_turn_res(name)
+                    _req_type = (_sub.get("type_label") or "").lower()
+                    
+                    _is_req_act = "action" in _req_type and "action bonus" not in _req_type and "bonus" not in _req_type
+                    _is_req_ba = "action bonus" in _req_type or "bonus action" in _req_type or "bonus" in _req_type
+                    
+                    if _is_req_act and not _tr_pre.get("action"):
+                        _no_res_msg = (
+                            f"[RÉSULTAT SYSTÈME — ACTION IMPOSSIBLE]\n"
+                            f"Tu as déclaré une Action, mais tu l'as DÉJÀ utilisée à ce tour (ton Action est ❌ épuisée).\n\n"
+                            f"[INSTRUCTION]\nAnnule cette tentative. Utilise tes ressources restantes "
+                            f"(Action Bonus, Mouvement) ou termine ton tour obligatoirement avec [FIN_DE_TOUR]."
+                        )
+                        _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_res_msg, "color": "#cc4444"})
+                        _refus_public = f"{name} : tentative d'Action impossible (ressource épuisée). Nouvelle déclaration requise."
+                        _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                        _original_receive(self_mgr, {"role": "user", "content": _refus_public, "name": "Alexis_Le_MJ"}, sender, request_reply=False, silent=True)
+                        _original_receive(self_mgr, {"role": "user", "content": _no_res_msg, "name": "Alexis_Le_MJ"}, sender, request_reply=True, silent=False)
+                        return
+
+                    if _is_req_ba and not _tr_pre.get("bonus"):
+                        _no_res_msg2 = (
+                            f"[RÉSULTAT SYSTÈME — ACTION BONUS IMPOSSIBLE]\n"
+                            f"Tu as déclaré une Action Bonus, mais tu l'as DÉJÀ utilisée à ce tour (elle est ❌ épuisée).\n\n"
+                            f"[INSTRUCTION]\nAnnule cette tentative. Utilise tes ressources restantes "
+                            f"(Action, Mouvement) ou termine ton tour obligatoirement avec[FIN_DE_TOUR]."
+                        )
+                        _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_res_msg2, "color": "#cc4444"})
+                        _refus_public = f"{name} : tentative d'Action Bonus impossible (ressource épuisée). Nouvelle déclaration requise."
+                        _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                        _original_receive(self_mgr, {"role": "user", "content": _refus_public, "name": "Alexis_Le_MJ"}, sender, request_reply=False, silent=True)
+                        _original_receive(self_mgr, {"role": "user", "content": _no_res_msg2, "name": "Alexis_Le_MJ"}, sender, request_reply=True, silent=False)
+                        return
+
                 # ── Pré-vérification slots sort ──────────────────────────────
-                _pre_is_spell = any(
+                _t_low_spellcheck = (_sub.get("type_label") or "").lower()
+                _is_physical_attack = "attaque" in _t_low_spellcheck and "sort" not in _t_low_spellcheck and "magie" not in _t_low_spellcheck
+
+                _pre_is_spell = not _is_physical_attack and any(
                     k in _sub["regle"].lower() or k in _sub["intention"].lower()
                     for k in (
                         "sort","magie","incant","invoque","appelle","convoque","projette","déclenche",
@@ -954,7 +1518,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                     )
                 )
                 _pre_lvl = None
-                _pre_spell_candidate = None   # initialisé ici — assigned plus tard si _pre_lvl > 0
+                _pre_spell_candidate = None
                 if _pre_is_spell:
                     for _pat in (r"niv(?:eau)?\.?\s*(\d+)", r"niveau\s*(\d+)", r"\bniv(\d+)",
                                  r"slot\s+(?:de\s+)?(?:niveau\s+)?(\d)",
@@ -977,7 +1541,6 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                     except Exception:
                         _pre_slots = 1
                     if _pre_slots <= 0:
-                        # ── Bypass rituel via [ACTION] ──
                         _pre_spell_for_ritual = extract_spell_name_llm(_sub["intention"], name)
                         if _pre_spell_for_ritual and can_ritual_cast(name, _pre_spell_for_ritual):
                             _ritual_msg2 = (
@@ -1009,7 +1572,6 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 f"sort de niveau inférieur, tour de magie, ou attaque physique."
                             )
                             _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_slot_fb, "color": "#cc4444"})
-                            # Insert the original message first so that the agent hasn't theoretically responded to the feedback
                             _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
                             _original_receive(
                                 self_mgr,
@@ -1019,74 +1581,109 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             _sub_ev.set()
                             return
 
-                    # Vérification sorts préparés (pré-check)
-                    _pre_spell_candidate = extract_spell_name_llm(_sub["intention"], name)
-                    if _pre_spell_candidate:
-                        if not is_spell_prepared(name, _pre_spell_candidate):
-                            _avail2 = get_prepared_spell_names(name)
-                            _avail2_str = ", ".join(_avail2) if _avail2 else "aucun sort préparé trouvé"
-                            _no_prep_fb = (
+                _pre_spell_candidate = extract_spell_name_llm(_sub["intention"], name)
+                if _pre_spell_candidate:
+                    if not is_spell_prepared(name, _pre_spell_candidate):
+                        _avail2 = get_prepared_spell_names(name)
+                        _avail2_str = ", ".join(_avail2) if _avail2 else "aucun sort préparé trouvé"
+                        _no_prep_fb = (
+                            f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                            f"« {_pre_spell_candidate} » n'est pas dans la liste de sorts "
+                            f"préparés de {name}. Ce sort ne peut pas être lancé aujourd'hui.\n\n"
+                            f"[SORTS AUTORISÉS POUR {name.upper()}]\n{_avail2_str}\n\n"
+                            f"[INSTRUCTION]\nChoisis UNIQUEMENT parmi les sorts listés ci-dessus."
+                        )
+                        _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_prep_fb, "color": "#cc4444"})
+                        _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                        _original_receive(
+                            self_mgr,
+                            {"role": "user", "content": _no_prep_fb, "name": "Alexis_Le_MJ"},
+                            sender, request_reply=request_reply, silent=silent,
+                        )
+                        _sub_ev.set()
+                        return
+
+                    from spell_data import get_spell as _get_sp
+                    _sp_data_sub = _get_sp(_pre_spell_candidate)
+                    if _sp_data_sub:
+                        _eff_lvl = _pre_lvl or _sp_data_sub.get("level", 0)
+                        _valid_ba_sub, _err_ba_sub = validate_bonus_action_rule(
+                            name, _pre_spell_candidate, _eff_lvl, _sp_data_sub.get("cast_time_raw", []), COMBAT_STATE.get("turn_spells", [])
+                        )
+                        if not _valid_ba_sub:
+                            _not_ba_fb2 = (
                                 f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
-                                f"« {_pre_spell_candidate} » n'est pas dans la liste de sorts "
-                                f"préparés de {name}. Ce sort ne peut pas être lancé aujourd'hui.\n\n"
-                                f"[SORTS AUTORISÉS POUR {name.upper()}]\n{_avail2_str}\n\n"
-                                f"[INSTRUCTION]\nChoisis UNIQUEMENT parmi les sorts listés ci-dessus."
+                                f"{_err_ba_sub}\n\n"
+                                f"[INSTRUCTION]\nAnnule cette tentative. "
+                                f"Choisis une action valide (attaque, esquive, ou un tour de magie coûtant 1 action si applicable)."
                             )
-                            _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_prep_fb, "color": "#cc4444"})
+                            _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_ba_fb2, "color": "#cc4444"})
                             _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
                             _original_receive(
                                 self_mgr,
-                                {"role": "user", "content": _no_prep_fb, "name": "Alexis_Le_MJ"},
+                                {"role": "user", "content": _not_ba_fb2, "name": "Alexis_Le_MJ"},
                                 sender, request_reply=request_reply, silent=silent,
                             )
                             _sub_ev.set()
                             return
-                        
-                        # Vérification de la règle des Actions Bonus (D&D 5e)
-                        from spell_data import get_spell as _get_sp
-                        _sp_data_sub = _get_sp(_pre_spell_candidate)
-                        if _sp_data_sub:
-                            _eff_lvl = _pre_lvl or _sp_data_sub.get("level", 0)
-                            _valid_ba_sub, _err_ba_sub = validate_bonus_action_rule(
-                                name, _pre_spell_candidate, _eff_lvl, _sp_data_sub.get("cast_time_raw", []), COMBAT_STATE.get("turn_spells", [])
-                            )
-                            if not _valid_ba_sub:
-                                _not_ba_fb2 = (
-                                    f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
-                                    f"{_err_ba_sub}\n\n"
-                                    f"[INSTRUCTION]\nAnnule cette tentative. "
-                                    f"Choisis une action valide (attaque, esquive, ou un tour de magie coûtant 1 action si applicable)."
-                                )
-                                _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_ba_fb2, "color": "#cc4444"})
-                                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
-                                _original_receive(
-                                    self_mgr,
-                                    {"role": "user", "content": _not_ba_fb2, "name": "Alexis_Le_MJ"},
-                                    sender, request_reply=request_reply, silent=silent,
-                                )
-                                _sub_ev.set()
-                                return
 
-                            # Vérification du temps d'incantation (combat only)
-                            _valid_ct_sub, _err_ct_sub = validate_cast_time_in_combat(
-                                _pre_spell_candidate, _sp_data_sub.get("cast_time_raw", [])
+                        _ct_unit = _sp_data_sub.get("cast_time_raw", [{}])[0].get("unit", "").lower() if _sp_data_sub.get("cast_time_raw") else ""
+                        _type_low = (_sub.get("type_label", "") or "").lower()
+
+                        _type_is_ba = "bonus" in _type_low
+                        _type_is_act = "action" in _type_low and "bonus" not in _type_low
+                        _type_is_reac = "reaction" in _type_low or "réaction" in _type_low
+                        
+                        _spell_is_ba = _ct_unit == "bonus"
+                        _spell_is_act = _ct_unit == "action"
+                        _spell_is_reac = _ct_unit == "reaction"
+                        
+                        _mismatch = False
+                        _expected = ""
+                        
+                        if _type_is_ba and not _spell_is_ba:
+                            _mismatch = True
+                        elif _type_is_act and not _spell_is_act:
+                            _mismatch = True
+                        elif _type_is_reac and not _spell_is_reac:
+                            _mismatch = True
+                            
+                        if _mismatch:
+                            _expected = "Action Bonus" if _spell_is_ba else "Action" if _spell_is_act else "Réaction" if _spell_is_reac else f"1 {_ct_unit}"
+                            _wrong_type_fb = (
+                                f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                                f"Le sort {_pre_spell_candidate} demande 1 {_expected}, et non pas ce que tu as déclaré ({_sub.get('type_label', 'Action')}).\n\n"
+                                f"[INSTRUCTION]\nAnnule cette tentative et déclare un sort correspondant à l'action que tu souhaites utiliser."
                             )
-                            if not _valid_ct_sub:
-                                _not_ct_fb2 = (
-                                    f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
-                                    f"{_err_ct_sub}\n\n"
-                                    f"[INSTRUCTION]\nAnnule cette tentative. "
-                                    f"Choisis une action valide et déclare-la avec [ACTION]."
-                                )
-                                _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_ct_fb2, "color": "#cc4444"})
-                                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
-                                _original_receive(
-                                    self_mgr,
-                                    {"role": "user", "content": _not_ct_fb2, "name": "Alexis_Le_MJ"},
-                                    sender, request_reply=request_reply, silent=silent,
-                                )
-                                _sub_ev.set()
-                                return
+                            _app.msg_queue.put({"sender": "⚙️ Système", "text": _wrong_type_fb, "color": "#cc4444"})
+                            _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                            _original_receive(
+                                self_mgr,
+                                {"role": "user", "content": _wrong_type_fb, "name": "Alexis_Le_MJ"},
+                                sender, request_reply=request_reply, silent=silent,
+                            )
+                            _sub_ev.set()
+                            return
+
+                        _valid_ct_sub, _err_ct_sub = validate_cast_time_in_combat(
+                            _pre_spell_candidate, _sp_data_sub.get("cast_time_raw", [])
+                        )
+                        if not _valid_ct_sub:
+                            _not_ct_fb2 = (
+                                f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                                f"{_err_ct_sub}\n\n"
+                                f"[INSTRUCTION]\nAnnule cette tentative. "
+                                f"Choisis une action valide et déclare-la avec [ACTION]."
+                            )
+                            _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_ct_fb2, "color": "#cc4444"})
+                            _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                            _original_receive(
+                                self_mgr,
+                                {"role": "user", "content": _not_ct_fb2, "name": "Alexis_Le_MJ"},
+                                sender, request_reply=request_reply, silent=silent,
+                            )
+                            _sub_ev.set()
+                            return
 
                 def _sub_cb(confirmed, mj_note="", _ev=_sub_ev, _res=_sub_res):
                     _app._unregister_approval_event(_ev)
@@ -1094,17 +1691,280 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                     _res["mj_note"]   = mj_note
                     _ev.set()
 
-                _app._register_approval_event(_sub_ev)
-                _app.msg_queue.put({
-                    "action": "action_confirm", "char_name": name,
-                    "type_label": _sub["type_label"], "intention": _sub["intention"],
-                    "regle": _sub["regle"], "cible": _sub["cible"],
-                    "sub_index": _sub_idx, "sub_total": _sub_total,
-                    "resume_callback": _sub_cb,
-                })
+                # ── Garde-fou de distance max (Dash et Mouvement en combat) ──
+                # IMPORTANT : on détecte le mouvement via le type_label en PRIORITÉ.
+                # Ne pas scanner intention/regle qui peuvent contenir des mots-clés
+                # de mouvement dans la description d'un effet de sort
+                # (ex: "Cible subit -10ft de vitesse" → pas un déplacement du PJ).
+                _combined_low = (_sub.get("intention", "") + " " + _sub.get("regle", "") + " " + _sub.get("type_label", "")).lower()
+                _type_low = (_sub.get("type_label", "") or _type_lbl or "").lower()
+                _MOVE_KEYWORDS = ("mouvement", "déplace", "deplace", "dash", "sprint", "avance", "recule", "fonce")
+                _type_is_move = any(k in _type_low for k in _MOVE_KEYWORDS)
+                _type_is_generic = not _type_is_move and _type_low in ("", "action", "action bonus", "réaction", "reaction")
+                _is_ic_move = (
+                    COMBAT_STATE["active"]
+                    and (
+                        _type_is_move
+                        or (
+                            # Type générique : inspecter l'intention UNIQUEMENT, pas la regle
+                            # (la regle décrit souvent les effets du sort/attaque, pas le déplacement)
+                            _type_is_generic
+                            and any(k in (_sub.get("intention", "")).lower() for k in _MOVE_KEYWORDS)
+                        )
+                    )
+                )
+                if _is_ic_move:
+                    # Extraire les ft/cases uniquement depuis type + intention,
+                    # jamais depuis regle (qui contient les effets du sort/attaque).
+                    _move_scan_text = (_type_low + " " + (_sub.get("intention", "")).lower())
+                    _ft_m = _re.search(r'(\d+)\s*(?:ft|feet|pieds)', _move_scan_text)
+                    _cs_m = _re.search(r'(\d+)\s*cases?', _move_scan_text)
+                    _mv_req = 0
+                    if _ft_m:
+                        _mv_req = int(_ft_m.group(1))
+                    elif _cs_m:
+                        _mv_req = int(_cs_m.group(1)) * 5
+                    
+                    if _mv_req > 0:
+                        _tr = _get_turn_res(name)
+                        _rem = _tr["movement_ft"]
+                        _speed = _get_char_speed_ft(name)
+                        
+                        _is_dash = any(k in _combined_low for k in ("dash", "foncer", "sprint"))
+                        
+                        _max_allowed = _rem
+                        if _is_dash:
+                            if name == "Thorne" and _tr["bonus"]:
+                                _max_allowed = _rem + _speed
+                            elif _tr["action"]:
+                                _max_allowed = _rem + _speed
+                                
+                        if _mv_req > _max_allowed:
+                            # ── Auto-Dash : si le mouvement dépasse le restant mais est
+                            #    dans le range Dash ET l'Action est dispo → convertir auto
+                            _can_auto_dash = (
+                                not _is_dash
+                                and _mv_req <= _rem + _speed
+                                and _tr["action"]
+                            )
+                            _can_auto_dash_thorne = (
+                                not _is_dash
+                                and name == "Thorne"
+                                and _mv_req <= _rem + _speed
+                                and _tr["bonus"]
+                            )
 
-                _sub_ev.wait(timeout=600)
-                _app._unregister_approval_event(_sub_ev)
+                            if _can_auto_dash or _can_auto_dash_thorne:
+                                # ── AUTO-DASH : consommer l'Action (ou Bonus pour Thorne) ──
+                                if _can_auto_dash_thorne:
+                                    _consume_turn_res(name, "bonus")
+                                    _dash_type = "Action Bonus"
+                                else:
+                                    _consume_turn_res(name, "action")
+                                    _dash_type = "Action"
+                                _auto_msg = (
+                                    f"[SYSTÈME — AUTO-DASH]\n"
+                                    f"{name} veut se déplacer de {_mv_req} ft (vitesse: {_speed} ft).\n"
+                                    f"→ Le système utilise automatiquement son {_dash_type} pour Foncer (Dash).\n"
+                                    f"  Déplacement restant après Dash : {_rem + _speed - _mv_req} ft.\n"
+                                    f"  {_dash_type} consommée pour Foncer."
+                                )
+                                _app.msg_queue.put({"sender": "⚙️ Système", "text": _auto_msg, "color": "#5577aa"})
+                                # Mettre à jour le mouvement restant : on laisse passer
+                                # (la consommation réelle se fera plus bas dans _consume_turn_res)
+                                _tr["movement_ft"] = _rem + _speed  # budget Dash complet
+                                # Ne PAS break — laisser le flow continuer normalement
+
+                            else:
+                                # ── Rejet classique : au-delà même du Dash ──
+                                _rem_str = f" ({_rem} restants + {_speed} Dash)" if _is_dash else ""
+                                _dash_hint = f"💡 Distance maximale théorique ce tour : {_max_allowed} ft{_rem_str}."
+
+                                _err_msg = (
+                                    f"[RÉSULTAT SYSTÈME — MOUVEMENT IMPOSSIBLE]\n"
+                                    f"Tu as déclaré un mouvement de {_mv_req} ft, mais "
+                                    f"ta vitesse est de {_speed} ft et il ne te reste que {_rem} ft.\n"
+                                    f"{_dash_hint}\n\n"
+                                    f"[INSTRUCTION]\nTon mouvement a été annulé, tu n'as PAS bougé et tu n'as PAS attaqué.\n"
+                                    f"Déclare une nouvelle action valide.\n"
+                                    f"⛔ RAPPEL : ton déplacement par tour ne peut JAMAIS dépasser ta vitesse de base "
+                                    f"({_speed} ft sans Dash, {_speed*2} ft avec Dash). "
+                                    f"Consulte le champ 'Déplacement' du [TOUR EN COURS] pour tes ft restants."
+                                )
+                                _app.msg_queue.put({"sender": "⚙️ Système", "text": _err_msg, "color": "#cc4444"})
+                                _refus_public = f"{name} : mouvement impossible (distance trop grande). Nouvelle déclaration requise."
+                                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                                _original_receive(self_mgr, {"role": "user", "content": _refus_public, "name": "Alexis_Le_MJ"}, sender, request_reply=False, silent=True)
+                                _original_receive(self_mgr, {"role": "user", "content": _err_msg, "name": "Alexis_Le_MJ"}, sender, request_reply=True, silent=False)
+                                return
+
+                # ── Garde-fou de portée MÊLÉE (corps-à-corps) ────────────────
+                _is_melee_atk = (
+                    COMBAT_STATE["active"]
+                    and not _turn_aborted
+                    and any(k in _combined_low for k in (
+                        "corps-à-corps", "corps à corps", "corps-a-corps",
+                        "melee", "mêlée", "frappe", "frapper",
+                        "attaque", "épée", "epee", "hache", "marteau",
+                        "lame", "glaive", "rapière", "rapiere",
+                    ))
+                    and not any(k in _combined_low for k in (
+                        "distance", "arc", "arbalète", "arbalete",
+                        "javelot", "dard", "projectile", "sort",
+                        "ray", "rayon", "bolt", "feu sacré",
+                        "mouvement", "déplace", "deplace",
+                    ))
+                )
+                if _is_melee_atk and _sub.get("cible"):
+                    try:
+                        import os as _os_melee, json as _json_melee, math as _math_melee
+                        _map_data_melee = {}
+                        _active_map = _app._win_state.get("active_map_name", "")
+                        if _active_map:
+                            try:
+                                from app_config import get_campaign_name as _gcn_m
+                                _camp_m = _gcn_m()
+                            except Exception:
+                                _camp_m = "campagne"
+                            _camp_m = "".join(
+                                c for c in _camp_m if c.isalnum() or c in (" ", "-", "_")
+                            ).strip() or "campagne"
+                            _safe_m = "".join(
+                                c for c in _active_map if c.isalnum() or c in (" ", "-", "_")
+                            ).strip() or "carte"
+                            _map_path_m = _os_melee.path.join("campagne", _camp_m, "maps", f"{_safe_m}.json")
+                            if _os_melee.path.exists(_map_path_m):
+                                with open(_map_path_m, "r", encoding="utf-8") as _fmap:
+                                    _map_data_melee = _json_melee.load(_fmap)
+                        if not _map_data_melee:
+                            _map_data_melee = _app._win_state.get("combat_map_data", {})
+
+                        _toks = _map_data_melee.get("tokens", [])
+                        if _toks:
+                            _cible_low = _sub["cible"].lower()
+                            _attacker_tok = None
+                            _target_tok = None
+                            for _tk in _toks:
+                                _tk_name = (_tk.get("name") or "").lower()
+                                if _tk_name == name.lower():
+                                    _attacker_tok = _tk
+                                if _tk_name and (_tk_name in _cible_low or _cible_low in _tk_name):
+                                    _target_tok = _tk
+                            if _attacker_tok and _target_tok:
+                                _ac = int(round(_attacker_tok.get("col", 0)))
+                                _ar = int(round(_attacker_tok.get("row", 0)))
+                                _tc = int(round(_target_tok.get("col", 0)))
+                                _tr_r = int(round(_target_tok.get("row", 0)))
+                                _horiz = max(abs(_ac - _tc), abs(_ar - _tr_r)) * 5.0
+                                _dalt = abs(int(_attacker_tok.get("altitude_ft", 0)) - int(_target_tok.get("altitude_ft", 0)))
+                                _d3d = _math_melee.sqrt(_horiz ** 2 + _dalt ** 2)
+
+                                if _d3d > 10.0:
+                                    # ── Conseil contextuel selon ressources restantes ──
+                                    _tr_melee = _get_turn_res(name)
+                                    _mv_left = _tr_melee["movement_ft"]
+                                    _has_action = _tr_melee["action"]
+                                    _has_bonus = _tr_melee["bonus"]
+                                    _speed_m = _get_char_speed_ft(name)
+                                    _need_ft = _d3d - 5.0  # ft à parcourir pour être en mêlée
+
+                                    if _mv_left >= _need_ft:
+                                        # Assez de mouvement restant
+                                        _conseil = (
+                                            f"💡 Tu as encore {_mv_left} ft de déplacement. "
+                                            f"Déclare [ACTION] Type: Mouvement pour te rapprocher de {_need_ft:.0f} ft, "
+                                            f"PUIS attaque au prochain bloc [ACTION]."
+                                        )
+                                    elif _has_action and (_mv_left + _speed_m) >= _need_ft:
+                                        # Dash + mouvement restant suffit
+                                        _conseil = (
+                                            f"💡 Ton déplacement restant ({_mv_left} ft) ne suffit pas "
+                                            f"(il te faut {_need_ft:.0f} ft).\n"
+                                            f"→ Utilise ton ACTION pour FONCER (Dash) : déclare\n"
+                                            f"  [ACTION]\n"
+                                            f"  Type      : Action\n"
+                                            f"  Intention : Foncer (Dash) vers {_sub['cible']}\n"
+                                            f"  Règle 5e  : Foncer — déplacement supplémentaire de {_speed_m} ft\n"
+                                            f"  Cible     : —\n"
+                                            f"Cela te donnera +{_speed_m} ft. Tu pourras attaquer au tour suivant."
+                                        )
+                                    elif _mv_left == 0 and _has_action:
+                                        # Mouvement épuisé, action dispo → Dash
+                                        _dash_total = _speed_m
+                                        if _dash_total >= _need_ft:
+                                            _conseil = (
+                                                f"💡 Ton déplacement est ÉPUISÉ (0 ft restant). "
+                                                f"Il te faut encore {_need_ft:.0f} ft pour être en mêlée.\n"
+                                                f"→ Utilise ton ACTION pour FONCER (Dash) :\n"
+                                                f"  [ACTION]\n"
+                                                f"  Type      : Action\n"
+                                                f"  Intention : Foncer (Dash) vers {_sub['cible']}\n"
+                                                f"  Règle 5e  : Foncer — déplacement supplémentaire de {_speed_m} ft\n"
+                                                f"  Cible     : —\n"
+                                                f"Cela te donnera +{_speed_m} ft pour te rapprocher."
+                                            )
+                                        else:
+                                            _remaining_after_dash = _need_ft - _speed_m
+                                            _conseil = (
+                                                f"💡 Ton déplacement est ÉPUISÉ. Foncer (Dash, +{_speed_m} ft) "
+                                                f"ne suffit pas pour atteindre la mêlée (il te faut {_need_ft:.0f} ft).\n"
+                                                f"→ MEILLEURE OPTION : Foncer pour te rapprocher de {_speed_m} ft "
+                                                f"(il restera {_remaining_after_dash:.0f} ft — tu attaqueras au tour suivant).\n"
+                                                f"  [ACTION]\n"
+                                                f"  Type      : Action\n"
+                                                f"  Intention : Foncer (Dash) vers {_sub['cible']}\n"
+                                                f"  Règle 5e  : Foncer — déplacement supplémentaire de {_speed_m} ft\n"
+                                                f"  Cible     : —\n"
+                                                f"→ Autres options : attaque à DISTANCE, sort à distance, Esquive (Dodge)."
+                                            )
+                                    else:
+                                        # Aucune option pour se rapprocher
+                                        _conseil = (
+                                            f"💡 Tu ne peux plus te rapprocher ce tour "
+                                            f"(déplacement: {_mv_left} ft, action: {'✅' if _has_action else '❌'}).\n"
+                                            f"→ Options : attaque à DISTANCE, sort à distance, "
+                                            f"Esquive (Dodge), Aide (Help), ou [FIN_DE_TOUR]."
+                                        )
+
+                                    _melee_err = (
+                                        f"[RÉSULTAT SYSTÈME — ATTAQUE MÊLÉE IMPOSSIBLE]\n"
+                                        f"Tu as déclaré une attaque corps-à-corps contre {_sub['cible']}, "
+                                        f"mais tu es à {_d3d:.0f} ft de distance (portée mêlée = 5 ft, reach = 10 ft).\n\n"
+                                        f"[INSTRUCTION]\n"
+                                        f"{_conseil}"
+                                    )
+                                    _app.msg_queue.put({"sender": "⚙️ Système", "text": _melee_err, "color": "#cc4444"})
+                                    _refus_public = f"{name} : attaque de mêlée impossible (cible hors de portée). Nouvelle déclaration requise."
+                                    _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                                    _original_receive(self_mgr, {"role": "user", "content": _refus_public, "name": "Alexis_Le_MJ"}, sender, request_reply=False, silent=True)
+                                    _original_receive(self_mgr, {"role": "user", "content": _melee_err, "name": "Alexis_Le_MJ"}, sender, request_reply=True, silent=False)
+                                    return
+                    except Exception as _melee_guard_err:
+                        print(f"[MeleeGuard] Erreur non bloquante : {_melee_guard_err}")
+
+                # Mouvement hors combat → seuil minimal de 6 cases.
+                _is_oc_move = (
+                    not COMBAT_STATE["active"]
+                    and "mouvement" in _sub.get("type_label", "").lower()
+                )
+                if _is_oc_move:
+                    _mv_dist_m = _re.search(r'(\d+)\s*cases?', _sub.get("regle", ""), _re.IGNORECASE)
+                    _mv_cases  = int(_mv_dist_m.group(1)) if _mv_dist_m else 999
+                    if _mv_cases < 6:
+                        continue
+                    _sub_res["confirmed"] = True
+                    _sub_res["mj_note"]   = ""
+                else:
+                    _app._register_approval_event(_sub_ev)
+                    _app.msg_queue.put({
+                        "action": "action_confirm", "char_name": name,
+                        "type_label": _sub["type_label"], "intention": _sub["intention"],
+                        "regle": _sub["regle"], "cible": _sub["cible"],
+                        "sub_index": _sub_idx, "sub_total": _sub_total,
+                        "resume_callback": _sub_cb,
+                    })
+                    _sub_ev.wait(timeout=600)
+                    _app._unregister_approval_event(_sub_ev)
 
                 _confirmed = _sub_res.get("confirmed", False)
                 _mj_note   = _sub_res.get("mj_note", "")
@@ -1135,7 +1995,6 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             )
                             continue
 
-                        # Phase 1 : touché/raté ?
                         _hit_ev  = _threading.Event()
                         _hit_res: dict = {}
 
@@ -1175,10 +2034,8 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             )
                             continue
 
-                        # Phase 2 : smite ?
                         _smite_used = None
 
-                        # Détection inline si pas dans pending_smite
                         if name not in ctx.pending_smite:
                             _sub_i_low = _sub["intention"].lower()
                             _sub_r_low = _sub["regle"].lower()
@@ -1286,15 +2143,12 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 except Exception as _sse:
                                     print(f"[Smite slot] Erreur : {_sse}")
 
-                        # Phase 3 : dégâts
-                        # roll_damage_only retourne maintenant (str, int)
                         _dmg_feedback, _dmg_total = roll_damage_only(
                             name, _sub["cible"],
                             _atk_data["dn"], _atk_data["df"], _atk_data["db"],
                             _atk_data["is_crit"], _smite_used, _hit_note, _CM
                         )
 
-                        # Texte compact des dés (sans l'instruction narrative ni le header)
                         _dmg_part = (
                             _dmg_feedback
                             .split("\n\n[INSTRUCTION NARRATIVE]")[0]
@@ -1302,50 +2156,10 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             .strip()
                         )
 
-                        # ── Hyperlien dans le chat → popup de confirmation ────────────
-                        # Le message "damage_link" est intercepté par le consumer de
-                        # msg_queue dans l'application principale, qui crée un widget
-                        # cliquable (label/bouton) dans la fenêtre de chat.
-                        # Cliquer sur ce widget appelle resume_callback(final_amount).
-                        # ─────────────────────────────────────────────────────────────
-                        # Code à ajouter dans le handler msg_queue de l'app principale :
-                        #
-                        #   elif msg.get("action") == "damage_link":
-                        #       _cname  = msg["sender"]
-                        #       _cible  = msg["cible"]
-                        #       _total  = msg["dmg_total"]
-                        #       _dtext  = msg["dmg_text"]
-                        #       _crit   = msg["is_crit"]
-                        #       _cb     = msg["resume_callback"]
-                        #       _color  = self.CHAR_COLORS.get(_cname, "#4fc3f7")
-                        #       _lbl_txt = (
-                        #           f"⚔️  {_cname}  →  {_cible}  :  "
-                        #           f"{'🎯 CRITIQUE — ' if _crit else ''}{_total} dégâts "
-                        #           f" ─  [Modifier / Confirmer]"
-                        #       )
-                        #       # Insérer dans le chat_text (tk.Text) un widget cliquable :
-                        #       lnk = tk.Label(
-                        #           self.chat_text,
-                        #           text=_lbl_txt,
-                        #           bg="#1e1e2e", fg="#ff9944",
-                        #           font=("Consolas", 9, "underline"),
-                        #           cursor="hand2",
-                        #       )
-                        #       lnk.bind("<Button-1>", lambda e, cb=_cb, cn=_cname,
-                        #                                        ci=_cible, dt=_dtext,
-                        #                                        tot=_total, crit=_crit:
-                        #           self.root.after(0, lambda:
-                        #               self._open_damage_popup(cn, ci, dt, tot, crit, cb)))
-                        #       self.chat_text.window_create(tk.END, window=lnk)
-                        #       self.chat_text.insert(tk.END, "\n")
-                        #       self.chat_text.see(tk.END)
-                        # ─────────────────────────────────────────────────────────────
-
                         _dmg_ev  = _threading.Event()
                         _dmg_res: dict = {}
 
-                        def _dmg_link_cb(final_amount,
-                                         _ev=_dmg_ev, _res=_dmg_res):
+                        def _dmg_link_cb(final_amount, _ev=_dmg_ev, _res=_dmg_res):
                             _app._unregister_approval_event(_ev)
                             _res["amount"] = final_amount
                             _ev.set()
@@ -1354,35 +2168,30 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         _app.msg_queue.put({
                             "action":          "damage_link",
                             "sender":          name,
-                            "char_name":       name,        # clé lue par _handle_damage_link
+                            "char_name":       name,
                             "cible":           _sub["cible"],
                             "dmg_text":        _dmg_part,
                             "dmg_total":       _dmg_total,
                             "is_crit":         _atk_data["is_crit"],
                             "resume_callback": _dmg_link_cb,
                         })
-
-                        # Bloque le thread AutoGen jusqu'au clic MJ (timeout 300 s)
                         _dmg_ev.wait(timeout=300)
                         _app._unregister_approval_event(_dmg_ev)
 
                         _final_dmg = _dmg_res.get("amount", _dmg_total)
 
-                        # ── Appliquer les dégâts si la cible est un PNJ dans le tracker ────────
                         try:
                             if _app._combat_tracker is not None:
                                 _app._combat_tracker.apply_damage_to_npc(_sub["cible"], _final_dmg)
                         except Exception as _npc_dmg_err:
                             print(f"[DamageApply PNJ] {_npc_dmg_err}")
 
-                        # ── Appliquer les dégâts si la cible est un PJ ───────────────
                         try:
                             from state_manager import load_state as _ls_d, save_state as _ss_d
                             _cible_str   = _sub["cible"].lower()
                             _pj_targets  = [
                                 _pn for _pn in PLAYER_NAMES
-                                if _pn.lower() in _cible_str
-                                or _cible_str in _pn.lower()
+                                if _pn.lower() in _cible_str or _cible_str in _pn.lower()
                             ]
                             _state_d = _ls_d()
                             for _pj in _pj_targets:
@@ -1403,7 +2212,6 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         except Exception as _dmg_err:
                             print(f"[DamageApply] {_dmg_err}")
 
-                        # ── Feedback propre pour les agents (sans les lignes de dés) ─
                         _crit_tag = " 🎯 CRITIQUE" if _atk_data["is_crit"] else ""
                         _modif_note = (
                             f" (roulé : {_dmg_total}, modifié par MJ)"
@@ -1439,50 +2247,203 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
 
                     else:
                         # ── FLOW NON-ATTAQUE ──────────────────────────────────
-                        try:
-                            # Ajout aux turn_spells si c'est un sort validé
-                            if _pre_is_spell and _pre_spell_candidate:
-                                from spell_data import get_spell as _get_sp_fi
-                                _sp_fi = _get_sp_fi(_pre_spell_candidate)
-                                if _sp_fi:
-                                    _fi_unit = _sp_fi.get("cast_time_raw", [{}])[0].get("unit", "") if _sp_fi.get("cast_time_raw") else ""
-                                    _fi_lvl = _pre_lvl or _sp_fi.get("level", 0)
-                                    COMBAT_STATE.setdefault("turn_spells", []).append({
-                                        "name": _pre_spell_candidate, "level": _fi_lvl, "cast_time_unit": _fi_unit
-                                    })
-                                    
-                            feedback = execute_action_mechanics(
-                                name, _sub["intention"], _sub["regle"],
-                                _sub["cible"], _mj_note,
-                                single_attack=False,
-                                type_label=_sub.get("type_label", ""),
-                                char_mechanics=_CM,
-                                pending_smite=ctx.pending_smite,
-                                pending_skill_narrators=ctx.pending_skill_narrators,
-                                app=_app,
-                                extract_spell_name_fn=extract_spell_name_llm,
-                                is_spell_prepared_fn=is_spell_prepared,
-                                get_prepared_spell_names_fn=get_prepared_spell_names,
+
+                        # ── Détection jet de compétence / sauvegarde ──────────
+                        # Si l'action demande un test de caractéristique ou un
+                        # jet de compétence (hors sort avec son propre flow),
+                        # on ouvre la boîte skill_check_confirm pour que le MJ
+                        # valide le dé visuellement.
+                        _SKILL_CHECK_KEYS = (
+                            "test de", "jet de", "check",
+                            "investigation", "perception", "arcane",
+                            "athlétisme", "discrétion", "perspicacité",
+                            "acrobaties", "histoire", "intimidation",
+                            "médecine", "nature", "religion", "survie",
+                            "persuasion", "tromperie", "représentation",
+                            "escamotage", "dressage",
+                            "sauvegarde", "vigueur", "agilité",
+                            "aide", "assistance",
+                        )
+                        _sk_combined = (
+                            (_sub.get("intention", "") + " " + _sub.get("regle", ""))
+                            .lower()
+                        )
+                        _is_skill_chk = (
+                            not _is_physical_attack
+                            and not _pre_is_spell   # sorts gérés par leur propre flow
+                            and any(k in _sk_combined for k in _SKILL_CHECK_KEYS)
+                        )
+
+                        if _is_skill_chk:
+                            # ── Extraire skill / bonus / DC / avantage ────────
+                            _SKILL_MAP_SC = {
+                                "arcane":         ("Arcane",          "INT"),
+                                "investigation":  ("Investigation",   "INT"),
+                                "histoire":       ("Histoire",        "INT"),
+                                "nature":         ("Nature",          "INT"),
+                                "religion":       ("Religion",        "INT"),
+                                "perception":     ("Perception",      "SAG"),
+                                "perspicacité":   ("Perspicacité",    "SAG"),
+                                "médecine":       ("Médecine",        "SAG"),
+                                "survie":         ("Survie",          "SAG"),
+                                "dressage":       ("Dressage",        "SAG"),
+                                "athlétisme":     ("Athlétisme",      "FOR"),
+                                "acrobaties":     ("Acrobaties",      "DEX"),
+                                "discrétion":     ("Discrétion",      "DEX"),
+                                "escamotage":     ("Escamotage",      "DEX"),
+                                "persuasion":     ("Persuasion",      "CHA"),
+                                "tromperie":      ("Tromperie",       "CHA"),
+                                "intimidation":   ("Intimidation",    "CHA"),
+                                "représentation": ("Représentation",  "CHA"),
+                                "sauvegarde":     ("Sauvegarde",      ""),
+                                "aide":           ("Aide",            "INT"),
+                                "assistance":     ("Assistance",      ""),
+                            }
+                            _sk_label = "Compétence"
+                            _sk_stat  = ""
+                            _sk_bonus = 0
+                            for _kw_sc, (_lbl_sc, _stat_sc) in _SKILL_MAP_SC.items():
+                                if _kw_sc in _sk_combined:
+                                    _sk_label = _lbl_sc
+                                    _sk_stat  = _stat_sc
+                                    _char_mc  = _CM.get(name, {})
+                                    _sk_bonus = (
+                                        _char_mc.get("skills", {}).get(_kw_sc, 0)
+                                        or _char_mc.get("saves", {}).get(_stat_sc.lower(), 0)
+                                        or 0
+                                    )
+                                    break
+
+                            # DC depuis la règle ou l'intention
+                            _dc_m_sc = _re.search(
+                                r'(?:DC|DD)\s*(\d+)',
+                                _sub.get("regle", "") + " " + _sub.get("intention", ""),
+                                _re.IGNORECASE,
                             )
-                        except Exception as _exec_err:
-                            feedback = (
-                                f"[MJ → {name}] ✅ [{_sub['type_label']}] autorisé. "
-                                f"(Erreur : {_exec_err}) "
-                                f"Narre : {_sub['intention']} — {_sub['regle']} → {_sub['cible']}"
+                            _sk_dc = _dc_m_sc.group(1) if _dc_m_sc else None
+
+                            # Avantage/Désavantage
+                            _sk_adv = any(k in _sk_combined for k in ("avantage", "advantage", "aide"))
+                            _sk_dis = any(k in _sk_combined for k in ("désavantage", "disadvantage"))
+
+                            # ── Boîte skill_check_confirm ─────────────────────
+                            _sk_ev  = _threading.Event()
+                            _sk_res: dict = {}
+
+                            def _sk_cb(confirmed, total=0, mj_note="",
+                                       _ev=_sk_ev, _res=_sk_res):
+                                _app._unregister_approval_event(_ev)
+                                _res["confirmed"] = confirmed
+                                _res["total"]     = total
+                                _res["mj_note"]   = mj_note
+                                _ev.set()
+
+                            _app._register_approval_event(_sk_ev)
+                            _app.msg_queue.put({
+                                "action":           "skill_check_confirm",
+                                "char_name":        name,
+                                "skill_label":      _sk_label,
+                                "stat_label":       _sk_stat,
+                                "bonus":            _sk_bonus,
+                                "dc":               _sk_dc,
+                                "has_advantage":    _sk_adv,
+                                "has_disadvantage": _sk_dis,
+                                "resume_callback":  _sk_cb,
+                            })
+                            _sk_ev.wait(timeout=600)
+                            _app._unregister_approval_event(_sk_ev)
+
+                            _sk_confirmed = _sk_res.get("confirmed", False)
+                            _sk_total     = _sk_res.get("total", 0)
+                            _sk_note      = _sk_res.get("mj_note", "")
+
+                            _dc_tag_sk = ""
+                            if _sk_dc:
+                                try:
+                                    _dc_tag_sk = (
+                                        f"  ✅ SUCCÈS (DC {_sk_dc})"
+                                        if _sk_total >= int(_sk_dc)
+                                        else f"  ❌ ÉCHEC (DC {_sk_dc})"
+                                    )
+                                except Exception:
+                                    pass
+
+                            if _sk_confirmed:
+                                feedback = (
+                                    f"[RÉSULTAT SYSTÈME — JET DE COMPÉTENCE]\n"
+                                    f"⚙️ {name} — {_sub['intention']}\n"
+                                    f"  Test     : {_sk_label}"
+                                    + (f" ({_sk_stat})" if _sk_stat else "")
+                                    + (" avec Avantage" if _sk_adv else "")
+                                    + f" | Cible : {_sub['cible']}\n"
+                                    f"  Résultat : {_sk_total}{_dc_tag_sk}\n"
+                                    + (f"  Note MJ  : {_sk_note}\n" if _sk_note else "")
+                                    + "\n[INSTRUCTION NARRATIVE]\n"
+                                    f"Narre en 1-2 phrases l'action de {name} : {_sub['intention']}. "
+                                    f"Si des dés sont encore nécessaires, pose un nouveau [ACTION]."
+                                )
+                            else:
+                                feedback = (
+                                    f"[RÉSULTAT SYSTÈME — JET REFUSÉ]\n"
+                                    f"[MJ → {name}] ❌ Jet de {_sk_label} refusé."
+                                    + (f"  — {_sk_note}" if _sk_note else "")
+                                    + "\n\n[INSTRUCTION]\nCette tentative a été bloquée par le MJ. "
+                                    "Déclare une autre action si nécessaire."
+                                )
+
+                            _app.msg_queue.put({"sender": "⚙️ Système", "text": feedback, "color": "#4fc3f7"})
+                            _original_receive(
+                                self_mgr,
+                                {"role": "user", "content": feedback, "name": "Alexis_Le_MJ"},
+                                sender, request_reply=False, silent=True,
                             )
+
+                        if not _is_skill_chk:
+                            try:
+                                if _pre_is_spell and _pre_spell_candidate:
+                                    from spell_data import get_spell as _get_sp_fi
+                                    _sp_fi = _get_sp_fi(_pre_spell_candidate)
+                                    if _sp_fi:
+                                        _fi_unit = _sp_fi.get("cast_time_raw", [{}])[0].get("unit", "") if _sp_fi.get("cast_time_raw") else ""
+                                        _fi_lvl = _pre_lvl or _sp_fi.get("level", 0)
+                                        COMBAT_STATE.setdefault("turn_spells", []).append({
+                                            "name": _pre_spell_candidate, "level": _fi_lvl, "cast_time_unit": _fi_unit
+                                        })
+
+                                feedback = execute_action_mechanics(
+                                    name, _sub["intention"], _sub["regle"],
+                                    _sub["cible"], _mj_note,
+                                    single_attack=False,
+                                    type_label=_sub.get("type_label", ""),
+                                    char_mechanics=_CM,
+                                    pending_smite=ctx.pending_smite,
+                                    pending_skill_narrators=ctx.pending_skill_narrators,
+                                    app=_app,
+                                    extract_spell_name_fn=extract_spell_name_llm,
+                                    is_spell_prepared_fn=is_spell_prepared,
+                                    get_prepared_spell_names_fn=get_prepared_spell_names,
+                                )
+                            except Exception as _exec_err:
+                                feedback = (
+                                    f"[MJ → {name}] ✅ [{_sub['type_label']}] autorisé. "
+                                    f"(Erreur : {_exec_err}) "
+                                    f"Narre : {_sub['intention']} — {_sub['regle']} → {_sub['cible']}"
+                                )
 
                         _split_marker = "\n\n[INSTRUCTION NARRATIVE]"
                         _results_part = (
                             feedback.split(_split_marker)[0]
                             .replace("[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ]\n", "")
                             .replace("[RÉSULTAT SYSTÈME — ATTAQUE DE SORT]\n", "")
+                            .replace("[RÉSULTAT SYSTÈME — SOIN]\n", "")
                             .strip()
                         )
 
-                        _is_spell_attack = feedback.startswith("[RÉSULTAT SYSTÈME — ATTAQUE DE SORT]")
+                        _is_spell_attack    = feedback.startswith("[RÉSULTAT SYSTÈME — ATTAQUE DE SORT]")
+                        _is_healing_action  = feedback.startswith("[RÉSULTAT SYSTÈME — SOIN]")
+                        _is_save_action     = feedback.startswith("[RÉSULTAT SYSTÈME — JET DE SAUVEGARDE]")
 
                         if _is_spell_attack:
-                            # Attaque de sort → confirmation touché/raté nécessaire
                             _result_ev   = _threading.Event()
                             _result_note: dict = {}
 
@@ -1501,9 +2462,135 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             })
                             _result_ev.wait(timeout=600)
                             _app._unregister_approval_event(_result_ev)
+
+                        elif _is_save_action:
+                            # ── Boîte de confirmation JET DE SAUVEGARDE ([ACTION] flow) ──
+                            _sv2_results_display = _re.sub(r"\[__save_dmg_total__:\d+\]\n?", "", _results_part).strip()
+                            _sv2_dmg_m = _re.search(r"\[__save_dmg_total__:(\d+)\]", _results_part)
+                            _sv2_dmg_total = int(_sv2_dmg_m.group(1)) if _sv2_dmg_m else 0
+
+                            _sv2_ev  = _threading.Event()
+                            _sv2_res: dict = {}
+
+                            def _sv2_cb(target_saved2, mj_note_sv2="", _ev=_sv2_ev, _res=_sv2_res):
+                                _app._unregister_approval_event(_ev)
+                                _res["saved"] = target_saved2
+                                _res["note"]  = mj_note_sv2
+                                _ev.set()
+
+                            _app._register_approval_event(_sv2_ev)
+                            _app.msg_queue.put({
+                                "action":          "result_confirm",
+                                "char_name":       name,
+                                "type_label":      _sub["type_label"],
+                                "results_text":    _sv2_results_display,
+                                "mode":            "save",
+                                "resume_callback": _sv2_cb,
+                            })
+                            _sv2_ev.wait(timeout=600)
+                            _app._unregister_approval_event(_sv2_ev)
+
+                            _target_saved2 = _sv2_res.get("saved", False)
+                            _sv2_mj_note   = _sv2_res.get("note", "")
+                            _sv2_cible     = _sub["cible"] or "Cible"
+
+                            def _apply_save_dmg2(cible_s2, dmg_s2, label_s2):
+                                _dl2_ev  = _threading.Event()
+                                _dl2_res: dict = {}
+                                def _dl2_cb(final2, _ev=_dl2_ev, _res=_dl2_res):
+                                    _app._unregister_approval_event(_ev)
+                                    _res["amount"] = final2
+                                    _ev.set()
+                                _app._register_approval_event(_dl2_ev)
+                                _app.msg_queue.put({
+                                    "action": "damage_link", "sender": name, "char_name": name,
+                                    "cible": cible_s2, "dmg_text": label_s2,
+                                    "dmg_total": dmg_s2, "is_crit": False,
+                                    "resume_callback": _dl2_cb,
+                                })
+                                _dl2_ev.wait(timeout=300)
+                                _app._unregister_approval_event(_dl2_ev)
+                                _fd2 = _dl2_res.get("amount", dmg_s2)
+                                try:
+                                    if _app._combat_tracker is not None:
+                                        _app._combat_tracker.apply_damage_to_npc(cible_s2, _fd2)
+                                except Exception as _e2:
+                                    print(f"[SaveAction DmgApply] {_e2}")
+                                return _fd2
+
+                            if _target_saved2:
+                                _half2 = _sv2_dmg_total // 2
+                                if _half2 > 0:
+                                    _app2 = _apply_save_dmg2(
+                                        _sv2_cible, _half2,
+                                        f"Sauvegarde réussie — demi-dégâts ({_sv2_dmg_total}÷2)",
+                                    )
+                                    feedback = (
+                                        "[RÉSULTAT SYSTÈME — SAUVEGARDE RÉUSSIE]\n"
+                                        + _sv2_results_display
+                                        + "\n  → SAUVEGARDE RÉUSSIE ✅ (sort raté)"
+                                        + (f"\n  Note MJ : {_sv2_mj_note}" if _sv2_mj_note else "")
+                                        + f"\n  Demi-dégâts appliqués : {_app2}"
+                                        + "\n\n[INSTRUCTION NARRATIVE]\n"
+                                        + f"La cible a résisté. Narre en 1-2 phrases comment {_sv2_cible} "
+                                        + f"résiste partiellement. Ne mentionne pas les chiffres."
+                                    )
+                                else:
+                                    feedback = (
+                                        "[RÉSULTAT SYSTÈME — SAUVEGARDE RÉUSSIE]\n"
+                                        + _sv2_results_display
+                                        + "\n  → SAUVEGARDE RÉUSSIE ✅ (sort raté — aucun effet)"
+                                        + (f"\n  Note MJ : {_sv2_mj_note}" if _sv2_mj_note else "")
+                                        + "\n\n[INSTRUCTION NARRATIVE]\n"
+                                        + f"La cible résiste au sort. Narre en 1-2 phrases."
+                                    )
+                            else:
+                                if _sv2_dmg_total > 0:
+                                    _app2 = _apply_save_dmg2(
+                                        _sv2_cible, _sv2_dmg_total,
+                                        "Sauvegarde ratée — dégâts pleins",
+                                    )
+                                    feedback = (
+                                        "[RÉSULTAT SYSTÈME — SAUVEGARDE RATÉE]\n"
+                                        + _sv2_results_display
+                                        + "\n  → SAUVEGARDE RATÉE ❌ (sort touché)"
+                                        + (f"\n  Note MJ : {_sv2_mj_note}" if _sv2_mj_note else "")
+                                        + f"\n  Dégâts appliqués : {_app2}"
+                                        + "\n\n[INSTRUCTION NARRATIVE]\n"
+                                        + f"La cible a raté son jet. Narre en 1-2 phrases l'impact. "
+                                        + f"Ne mentionne pas les chiffres."
+                                    )
+                                else:
+                                    feedback = (
+                                        "[RÉSULTAT SYSTÈME — SAUVEGARDE RATÉE]\n"
+                                        + _sv2_results_display
+                                        + "\n  → SAUVEGARDE RATÉE ❌ (sort touché — effets actifs)"
+                                        + (f"\n  Note MJ : {_sv2_mj_note}" if _sv2_mj_note else "")
+                                        + "\n\n[INSTRUCTION NARRATIVE]\n"
+                                        + f"Le sort fait plein effet. Narre en 1-2 phrases."
+                                    )
+                            _result_note = {}  # pas de note supplémentaire à fusionner
+
+                        elif _is_healing_action:
+                            _result_ev   = _threading.Event()
+                            _result_note: dict = {}
+
+                            def _heal_action_cb(mj_note_heal="", _ev=_result_ev, _res=_result_note):
+                                _app._unregister_approval_event(_ev)
+                                _res["note"] = mj_note_heal
+                                _ev.set()
+
+                            _app._register_approval_event(_result_ev)
+                            _app.msg_queue.put({
+                                "action": "result_confirm", "char_name": name,
+                                "type_label": f"Sort — {_sub.get('intention', '')}",
+                                "results_text": _results_part,
+                                "mode": "healing", "resume_callback": _heal_action_cb,
+                            })
+                            _result_ev.wait(timeout=600)
+                            _app._unregister_approval_event(_result_ev)
+
                         else:
-                            # Mode non-attaque → pas d'affichage préliminaire
-                            # (⚙️ Système affichera le feedback complet juste après)
                             _result_note: dict = {}
 
                         _res_mj_note = _result_note.get("note", "")
@@ -1533,7 +2620,6 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             if _res_mj_note:
                                 feedback += f"\n[Modification MJ] {_res_mj_note}"
 
-                        # Mouvement → déplacer le token sur la carte
                         _move_match = _re.search(r'\[MOVE_TOKEN:([^:]+):(\d+):(\d+)\]', feedback)
                         if _move_match:
                             _mv_name = _move_match.group(1)
@@ -1545,10 +2631,8 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 if _cmap is not None:
                                     def _do_move(cmap=_cmap, n=_mv_name, c=_mv_col, r=_mv_row):
                                         msg = cmap.move_token(n, c, r)
-                                        # Si le token n'existe pas sur la carte, on skip silencieusement
-                                        # (pas de placement préalable = mécanique carte non applicable)
-                                        if msg and "introuvable" not in msg.lower():
-                                            _app.msg_queue.put({"sender": "🗺️ Carte", "text": msg, "color": "#64b5f6"})
+                                        if msg and "introuvable" in msg.lower():
+                                            _app.msg_queue.put({"sender": "⚠️ Carte", "text": msg, "color": "#ff9800"})
                                         try:
                                             _app._rebuild_agent_prompts()
                                         except Exception:
@@ -1574,36 +2658,156 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         )
 
                 else:
+                    # Action refusée par le MJ
+                    # Les ressources du tour NE sont PAS consommées — l'agent
+                    # doit redéclarer une action valide dans le même tour.
                     _note_txt = f" {_mj_note}" if _mj_note else ""
-                    feedback  = (f"[MJ → {name}] ❌ [{_sub['type_label']}] refusé.{_note_txt}\n\n"
-                                 f"[INSTRUCTION SYSTÈME]\n"
-                                 f"L'action de {name} a été refusée. Les ressources (Action, Bonus, etc.) pour cette action "
-                                 f"n'ont pas été consommées. Repense ton tour avec tes actions restantes et "
-                                 f"re-déclare tes intentions, en terminant par un nouveau [FIN_DE_TOUR].")
+
+                    # Inclure l'état du tour pour que l'agent sache ce qu'il lui reste
+                    _tec_refus = _build_tour_en_cours(name) if COMBAT_STATE["active"] else ""
+
+                    feedback = (
+                        f"[RÉSULTAT SYSTÈME — ACTION REFUSÉE PAR MJ]\n"
+                        f"[MJ → {name}] ❌ [{_sub['type_label']}] refusé.{_note_txt}\n\n"
+                        f"[INSTRUCTION SYSTÈME]\n"
+                        f"Ton action a été refusée par le MJ. Tes ressources de tour sont INTACTES "
+                        f"— tu n'as rien dépensé.\n"
+                        f"Tu DOIS déclarer une nouvelle action avec un bloc [ACTION] valide.\n"
+                        f"Ne répète PAS l'action refusée. Choisis une alternative différente.\n"
+                        + (f"\n{_tec_refus}" if _tec_refus else "")
+                    )
+
                     _app.msg_queue.put({"sender": "❌ MJ", "text": feedback, "color": "#ef9a9a"})
+
+                    # [GroupChat public] : note neutre — la directive interne reste privée
+                    _refus_public = f"{name} : action refusée par le MJ. Déclare une nouvelle action."
                     _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
                     _original_receive(
                         self_mgr,
+                        {"role": "user", "content": _refus_public, "name": "Alexis_Le_MJ"},
+                        sender, request_reply=False, silent=True,
+                    )
+                    # Injecter le feedback complet (privé) et forcer la réponse de l'agent
+                    # request_reply=True : AutoGen re-sélectionne l'agent pour qu'il
+                    # déclare immédiatement une nouvelle action (son tour n'est pas perdu).
+                    _original_receive(
+                        self_mgr,
                         {"role": "user", "content": feedback, "name": "Alexis_Le_MJ"},
-                        sender, request_reply=request_reply, silent=silent,
+                        sender, request_reply=True, silent=False,
                     )
                     return
 
-            # End of action subaction loop
-            if _turn_aborted:
-                pass
-            else:
+            # ── Fin du traitement du bloc [ACTION] ────────────────────────────
+
+            if not _turn_aborted:
+                _t_low_consume = _type_lbl.lower()
+                _combined_consume = (_t_low_consume + " " + _intention + " " + _regle).lower()
+                
+                _is_dash_consume = any(k in _combined_consume for k in ("dash", "foncer", "sprint"))
+                _is_move_consume = any(k in _combined_consume for k in ("mouvement", "déplace", "deplace", "avance", "recule", "dash", "sprint", "fonce"))
+                
+                _mv_ft_used = 0
+                if _is_move_consume:
+                    _ft_m = _re.search(r'(\d+)\s*(?:ft|feet|pieds)', _regle + " " + _intention, _re.IGNORECASE)
+                    _cs_m = _re.search(r'(\d+)\s*cases?', _regle + " " + _intention, _re.IGNORECASE)
+                    if _ft_m:
+                        _mv_ft_used = int(_ft_m.group(1))
+                    elif _cs_m:
+                        _mv_ft_used = int(_cs_m.group(1)) * 5
+                    elif "mouvement" in _t_low_consume:
+                        _mv_ft_used = 30 # Fallback si distance non précisée
+                        
+                    _tr_check = _get_turn_res(name)
+                    # Facturer le Dash s'il est utilisé (même s'il est caché sous "Type: Mouvement")
+                    if _is_dash_consume and _mv_ft_used > _tr_check["movement_ft"]:
+                        if name == "Thorne" and _tr_check["bonus"]:
+                            _consume_turn_res(name, "bonus")
+                        elif _tr_check["action"]:
+                            _consume_turn_res(name, "action")
+                            
+                    # Soustraire la distance manuellement de la réserve si le label principal n'était pas "Mouvement"
+                    if "mouvement" not in _t_low_consume and _mv_ft_used > 0:
+                        _tr_check["movement_ft"] = max(0, _tr_check["movement_ft"] - _mv_ft_used)
+                        
+                # Consommer le type de base de l'action
+                _consume_turn_res(name, _type_lbl, movement_ft=_mv_ft_used)
                 _app._update_agent_combat_prompts()
 
-            # FIN DE TOUR optionnel
-            if (not _turn_aborted
-                    and COMBAT_STATE["active"]
-                    and name == COMBAT_STATE.get("active_combatant")
-                    and "[FIN_DE_TOUR]" in str(content)):
-                _app.root.after(0, lambda n=name: _app._on_pc_turn_ended(n))
+            # ── [FIN_DE_TOUR] explicite ───────────────────────────────────────
+            _fin_tour = "[FIN_DE_TOUR]" in str(content)
+            if _fin_tour:
+                # L'agent a inclus [FIN_DE_TOUR] dans le même message que son action.
+                # On ignore cette fin de tour prématurée pour qu'il puisse narrer
+                # le résultat de son action et utiliser ses mouvements restants.
+                if COMBAT_STATE["active"] and name == COMBAT_STATE.get("active_combatant"):
+                    _app.msg_queue.put({
+                        "sender": "⚠️ Système",
+                        "text": f"{name} a inclus [FIN_DE_TOUR] avec une action. Fin de tour ignorée pour permettre la narration.",
+                        "color": "#ff9800"
+                    })
                 
-            _original_receive(self_mgr, message, sender, request_reply, silent)
+                content = str(content).replace("[FIN_DE_TOUR]", "")
+                if isinstance(message, dict):
+                    message["content"] = content
+                else:
+                    message = content
+                # On NE return PAS : on laisse le système injecter [TOUR EN COURS] et le trigger
 
+            # ── Narrative publique + trigger de tour (sans tableau de ressources) ──
+            # Le tableau [TOUR EN COURS] (Action/Bonus/Déplacement/Réaction) est
+            # PRIVÉ : il ne concerne que l'agent actif et est déjà dans son
+            # system_message via get_combat_prompt() → _rebuild_agent_prompts().
+            # Le GroupChat reçoit UNIQUEMENT une narrative lisible + un trigger neutre,
+            # de sorte que les autres agents voient "qui a fait quoi" sans voir
+            # les ressources internes du personnage actif.
+            if COMBAT_STATE["active"] and name == COMBAT_STATE.get("active_combatant"):
+                _tec_msg  = _build_tour_en_cours(name)
+                _tr       = _get_turn_res(name)
+                _has_res  = _tr["action"] or _tr["bonus"]
+
+                # [UI MJ] : tableau complet dans l'interface (pas dans le GroupChat)
+                _app.msg_queue.put({
+                    "sender": "⚔️ Combat",
+                    "text":   _tec_msg,
+                    "color":  "#5577aa",
+                })
+
+                # [GroupChat public] : narrative de l'action pour tous les agents
+                # _feedback_for_narr : résultat de l'action si disponible
+                _feedback_for_narr = locals().get("feedback", "")
+                _narr_action = _build_action_narrative(
+                    name, _type_lbl, _intention, _cible,
+                    _feedback_for_narr or "",
+                )
+                _original_receive(
+                    self_mgr,
+                    {"role": "user", "content": _narr_action, "name": "Alexis_Le_MJ"},
+                    sender, request_reply=False, silent=False,
+                )
+
+                # [Trigger de continuation] : simple, sans données de ressources
+                _app._pending_combat_trigger = (
+                    f"Tu as encore des actions disponibles. Continue ton tour, {name}."
+                    if _has_res else
+                    f"{name}, plus d'actions disponibles. Envoie[FIN_DE_TOUR] ou déclare un mouvement."
+                )
+                _gc_trigger = (
+                    f"Continue ton tour, {name}."
+                    if _has_res else
+                    f"{name}, plus d'actions disponibles. Envoie [FIN_DE_TOUR] ou déclare un mouvement."
+                )
+
+                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                _original_receive(
+                    self_mgr,
+                    {"role": "user", "content": _gc_trigger, "name": "Alexis_Le_MJ"},
+                    sender,
+                    request_reply=True,   # True → speaker selector re-sélectionne l'agent
+                    silent=False,
+                )
+                return
+
+            _original_receive(self_mgr, message, sender, request_reply, silent)
             return
 
         # ── [FIN_DE_TOUR] sans bloc [ACTION] ────────────────────────────────
@@ -1614,7 +2818,11 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                 and content
                 and "[FIN_DE_TOUR]" in str(content)
                 and not ACTION_PATTERN.search(str(content))):
-            _app.root.after(0, lambda n=name: _app._on_pc_turn_ended(n))
+            def _end_t3():
+                _trk = getattr(_app, "_combat_tracker_win", None) or getattr(_app, "_combat_tracker", None)
+                if _trk and hasattr(_trk, "advance_turn"):
+                    _trk.advance_turn()
+            _app.root.after(0, _end_t3)
 
         # ── DIRECTIVES MJ → héros (parseur regex + LLM) ─────────────────────
         if not is_system and name == "Alexis_Le_MJ" and content:
@@ -1696,33 +2904,123 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 or _stats.get("skills", {}).get(_carac_low)
                                 or 0
                             )
-                        _directive_json = _json_d.dumps(_d, ensure_ascii=False)
-                        _instr = (
-                            f"[DIRECTIVE SYSTÈME — JET] ⚠️ APPEL D'OUTIL OBLIGATOIRE\n"
-                            f"Destinataire : {_tgt} UNIQUEMENT\n"
-                            f"{_action_label} de {_carac}{_dc_str}\n\n"
-                            f"▶ {_tgt} : tu DOIS appeler roll_dice maintenant (règle 4 exception).\n"
-                            f"   Appel exact : roll_dice("
-                            f"character_name=\"{_tgt}\", "
-                            f"dice_type=\"{_de}\", "
-                            f"bonus={_real_bonus})\n\n"
-                            f"Après le résultat du dé, narre en 1 phrase comment "
-                            f"{_tgt} vit physiquement ce moment. "
-                            f"Ne mentionne pas le chiffre du résultat."
-                        )
+
+                        # ── Boîte skill_check_confirm pour le jet ─────────────
+                        # Le dé est lancé directement dans le widget UI.
+                        # Le MJ voit les deux d20, choisit Avantage/Normal/Désavantage,
+                        # valide ou refuse — le résultat est injecté à l'agent.
+                        import threading as _th_jet
+                        _jet_ev  = _th_jet.Event()
+                        _jet_res = {}
+
+                        def _jet_cb(confirmed, total=0, mj_note="",
+                                    _ev=_jet_ev, _res=_jet_res,
+                                    _tgt2=_tgt, _carac2=_carac, _dc2=_dc,
+                                    _bonus2=_real_bonus,
+                                    _label2=_action_label, _dc_str2=_dc_str):
+                            """
+                            Callback skill_check_confirm.
+                            confirmed=True  → total = résultat validé par le MJ.
+                            confirmed=False → jet refusé.
+                            """
+                            _res["confirmed"] = confirmed
+                            _res["total"]     = total
+                            _res["mj_note"]   = mj_note
+                            if confirmed:
+                                _sign = "+" if _bonus2 >= 0 else ""
+                                _raw  = total - _bonus2
+                                _crit = ""
+                                if _raw == 20: _crit = " 🎯 CRITIQUE!"
+                                elif _raw == 1: _crit = " ☠ FUMBLE"
+                                _dc_result = ""
+                                if _dc2:
+                                    try:
+                                        _dc_result = (
+                                            " ✅ SUCCÈS" if total >= int(_dc2) else " ❌ ÉCHEC"
+                                        )
+                                    except Exception:
+                                        pass
+                                _roll_txt = (
+                                    f"# {_tgt2} — {_label2} {_carac2}{_dc_str2}\n"
+                                    f"  Résultat : **{total}**{_crit}{_dc_result}"
+                                    + (f"\n  Note MJ : {mj_note}" if mj_note else "")
+                                )
+                                _app.msg_queue.put({
+                                    "sender": f"🎲 {_tgt2}",
+                                    "text":   _roll_txt,
+                                    "color":  "#aaddff",
+                                })
+                                # Stocker la directive narrative pour le thread AutoGen
+                                # NE PAS appeler _original_receive ici : on est dans le
+                                # thread Tk (callback bouton), ce qui bloquerait l'UI
+                                # le temps de l'appel LLM complet (polling make_thinking_wrapper).
+                                _res["narr_instr"] = (
+                                    f"[RÉSULTAT SYSTÈME — JET]\n"
+                                    f"{_label2} {_carac2}{_dc_str2} pour {_tgt2} : "
+                                    f"total = {total}{_crit}{_dc_result}"
+                                    + (f"\n\nNote MJ : {mj_note}" if mj_note else "")
+                                    + f"\n\n[INSTRUCTION]\nNarre en 1 phrase comment {_tgt2} vit "
+                                    f"physiquement ce moment. Ne mentionne pas le chiffre."
+                                )
+                            _ev.set()  # Débloque le thread AutoGen immédiatement
+
+                        # Détecter avantage/désavantage dans le contexte récent
+                        _has_adv_ctx = False
+                        _has_dis_ctx = False
+                        try:
+                            _gc_obj = _gc()
+                            for _ctx_m in reversed((_gc_obj.messages if _gc_obj else [])[-6:]):
+                                _ctx_c = str(_ctx_m.get("content", "")).lower()
+                                if any(k in _ctx_c for k in ("avantage", "advantage")):
+                                    _has_adv_ctx = True
+                                    break
+                                if any(k in _ctx_c for k in ("désavantage", "disadvantage")):
+                                    _has_dis_ctx = True
+                                    break
+                        except Exception:
+                            pass
+
+                        _app._register_approval_event(_jet_ev)
+                        _app.msg_queue.put({
+                            "action":           "skill_check_confirm",
+                            "char_name":        _tgt,
+                            "skill_label":      _carac or _action_label,
+                            "stat_label":       _carac,
+                            "bonus":            _real_bonus,
+                            "dc":               str(_dc) if _dc else None,
+                            "has_advantage":    _has_adv_ctx,
+                            "has_disadvantage": _has_dis_ctx,
+                            "resume_callback":  _jet_cb,
+                        })
+                        _jet_ev.wait(timeout=300)
+                        _app._unregister_approval_event(_jet_ev)
+                        # Injecter la directive narrative depuis le thread AutoGen
+                        # (pas depuis le callback Tk pour ne pas bloquer l'UI)
+                        _narr_to_inject = _jet_res.get("narr_instr", "")
+                        if _narr_to_inject:
+                            _original_receive(
+                                self_mgr,
+                                {"role": "user", "content": _narr_to_inject, "name": "Alexis_Le_MJ"},
+                                sender, request_reply=True, silent=False,
+                            )
+                        continue
                     else:
                         continue
-
-                    # Pour les jets de dés demandés explicitement par le MJ,
-                    # l'agent doit pouvoir appeler roll_dice sans confirmation MJ.
-                    if _d_action in ("jet_sauvegarde", "jet_competence", "jet_attaque"):
-                        _app._pending_auto_roll = True
 
                     _original_receive(
                         self_mgr,
                         {"role": "user", "content": _instr, "name": "Alexis_Le_MJ"},
                         sender, request_reply=False, silent=True,
                     )
+
+        # ── Rebuild prompts avant l'appel normal (messages MJ) ─────────────
+        # Garantit que les agents ont le contexte frais (scène, quêtes, sorts,
+        # inventaire, sessions…) avant chaque réponse, y compris [PAROLE_SPONTANEE].
+        if name == "Alexis_Le_MJ" and not is_system:
+            try:
+                _app._rebuild_agent_prompts()
+            except Exception:
+                pass
 
         # ── Appel normal ─────────────────────────────────────────────────────
         _original_receive(self_mgr, message, sender, request_reply, silent)

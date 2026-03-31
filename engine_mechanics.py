@@ -2,7 +2,7 @@
 engine_mechanics.py — Mécaniques D&D 5e : stats personnages, jets de dés, actions.
 
 Exporte :
-  CHAR_MECHANICS          — dict de stats D&D 5e niveau 15 pour chaque PJ
+  CHAR_MECHANICS          — dict de stats D&D 5e niveau 11 pour chaque PJ
   split_into_subactions   — décompose un bloc [ACTION] en sous-actions
   roll_attack_only        — Phase 1 : jet d'attaque uniquement (1d20)
   roll_damage_only        — Phase 2 : jets de dégâts confirmés
@@ -19,17 +19,17 @@ from engine_spell_mj import can_ritual_cast
 from class_data import get_no_roll_feature, get_feature_details
 
 
-# ─── Stats mécaniques D&D 5e 2014, niveau 15 ──────────────────────────────────
+# ─── Stats mécaniques D&D 5e 2014, niveau 11 ──────────────────────────────────
 CHAR_MECHANICS: dict = {
-    "Kaelen": {  # Paladin 15 — STR20 DEX14 CON16 INT10 WIS14 CHA18 — Prof+5
+    "Kaelen": {  # Paladin 11 — STR20 DEX14 CON16 INT10 WIS14 CHA18 — Prof+4
         "atk_melee": +11, "atk_ranged": +7, "atk_spell": +9,
-        "dmg_melee": (2, 6, +8), "n_attacks": 3, "save_dc": 18,
+        "dmg_melee": (2, 6, +8), "n_attacks": 2, "save_dc": 18,
         "skills": {"athlétisme":+10,"religion":+5,"persuasion":+9,
                    "perspicacité":+7,"intimidation":+9,"perception":+7},
         "saves":  {"force":+10,"dextérité":+7,"constitution":+8,
                    "intelligence":+5,"sagesse":+7,"charisme":+9},
     },
-    "Elara": {   # Mage 15 — STR8 DEX16 CON14 INT20 WIS14 CHA10 — Prof+5
+    "Elara": {   # Mage 11 — STR8 DEX16 CON14 INT20 WIS14 CHA10 — Prof+4
         "atk_melee": +3, "atk_ranged": +8, "atk_spell": +10,
         "dmg_melee": (1, 4, -1), "n_attacks": 1, "save_dc": 18,
         "skills": {"arcanes":+15,"histoire":+10,"investigation":+10,
@@ -37,7 +37,7 @@ CHAR_MECHANICS: dict = {
         "saves":  {"force":-1,"dextérité":+8,"constitution":+7,
                    "intelligence":+10,"sagesse":+7,"charisme":+5},
     },
-    "Thorne": {  # Voleur Assassin 15 — STR12 DEX20 CON14 INT16 WIS12 CHA14 — Prof+5
+    "Thorne": {  # Voleur Assassin 11 — STR12 DEX20 CON14 INT16 WIS12 CHA14 — Prof+4
         "atk_melee": +11, "atk_ranged": +11, "atk_spell": None,
         "dmg_melee": (1, 6, +5), "dmg_sneak": (8, 6, 0),
         "n_attacks": 2, "save_dc": None,
@@ -47,9 +47,9 @@ CHAR_MECHANICS: dict = {
         "saves":  {"force":+6,"dextérité":+10,"constitution":+7,
                    "intelligence":+8,"sagesse":+6,"charisme":+7},
     },
-    "Lyra": {    # Clerc Vie 15 — STR14 DEX12 CON14 INT12 WIS20 CHA16 — Prof+5
+    "Lyra": {    # Clerc Vie 11 — STR14 DEX12 CON14 INT12 WIS20 CHA16 — Prof+4
         "atk_melee": +7, "atk_ranged": +6, "atk_spell": +10,
-        "dmg_melee": (1, 8, +2), "n_attacks": 2, "save_dc": 18,
+        "dmg_melee": (1, 8, +2), "n_attacks": 1, "save_dc": 18,
         "skills": {"médecine":+15,"perspicacité":+10,"religion":+6,
                    "persuasion":+8,"perception":+10,"histoire":+6},
         "saves":  {"force":+7,"dextérité":+6,"constitution":+7,
@@ -78,6 +78,20 @@ def split_into_subactions(type_label: str, intention: str,
     regle_low  = regle.lower()
     combined   = type_low + " " + intent_low + " " + regle_low
 
+    # ── Ready Action (Se Tenir Prêt) — pas d'Extra Attack, pas de jets ──
+    _READY_KW = ("ready", "se tenir prêt", "tenir prêt", "me tenir prêt",
+                 "prépare une action", "préparer une action", "ready action",
+                 "action préparée", "se prépare à")
+    _is_ready = any(k in combined for k in _READY_KW)
+    if _is_ready:
+        return [{
+            "type_label": type_label or "Action",
+            "intention":  intention,
+            "regle":      regle.strip(),
+            "cible":      cible,
+            "ready_action": True,
+        }]
+
     # ── Détection Extra Attack (format structuré ou langage naturel) ──
     is_extra = (
         "extra attack" in combined
@@ -92,44 +106,58 @@ def split_into_subactions(type_label: str, intention: str,
     )
 
     if is_extra:
-        # Cas 1 : lignes "Attaque N : détail" dans le champ règle
-        lines = _re.findall(
-            r'attaque\s*(\d+)\s*:\s*([^\n]+)',
-            regle, _re.IGNORECASE
+        # Extraire le nombre d'attaques attendu (de base 2, ou défini dans les stats)
+        expected_n = 2
+        if char_mechanics and char_mechanics.get("n_attacks", 1) > 1:
+            expected_n = char_mechanics.get("n_attacks", 2)
+            
+        _n_m = (
+            _re.search(r'(?:attaque|frappe|coup|tir)[s]?\s*[×x]\s*(\d+)', combined)
+            or _re.search(r'(\d+)\s*(?:fois|attaques?|frappes?|coups?|tirs?)', intent_low)
         )
+        if _n_m:
+            expected_n = max(expected_n, int(_n_m.group(1)))
+        elif "deux" in combined or "2" in type_low:
+            expected_n = max(expected_n, 2)
+
+        # Cas 1 : lignes "Attaque N : détail" dans le champ règle (séparées par \n ou |)
+        parts = _re.split(r'\||\n', regle)
+        lines =[]
+        for p in parts:
+            m = _re.search(r'attaque\s*(\d+)\s*:\s*(.*)', p, _re.IGNORECASE)
+            if m:
+                lines.append((m.group(1), m.group(2).strip()))
+                
         if lines:
+            # Si le LLM n'a formaté qu'une seule attaque mais qu'on en attend 2+ (oubli fréquent)
+            if len(lines) < expected_n:
+                last_detail = lines[-1][1]
+                while len(lines) < expected_n:
+                    lines.append((str(len(lines)+1), last_detail))
+            
             total = len(lines)
-            return [
+            return[
                 {
                     "type_label":    f"Action — Attaque {i+1}/{total} (Extra Attack)",
                     "intention":     intention,
-                    "regle":         detail.strip(),
+                    "regle":         detail,
                     "cible":         cible,
                     "single_attack": True,
                 }
                 for i, (_, detail) in enumerate(lines)
             ]
 
-        # Cas 2 : pas de lignes structurées → déduire N depuis le texte
-        _n_m = (
-            _re.search(r'(?:attaque|frappe|coup|tir)[s]?\s*[×x]\s*(\d+)', combined)
-            or _re.search(r'(\d+)\s*(?:fois|attaques?|frappes?|coups?|tirs?)', intent_low)
-        )
-        n_attacks = int(_n_m.group(1)) if _n_m else (
-            2 if ("deux" in combined or "2" in type_low) else
-            int(_re.search(r'(\d)', type_low).group(1))
-            if _re.search(r'\d', type_low) else 2
-        )
+        # Cas 2 : pas de lignes structurées
         regle_clean = regle.strip()
-        return [
+        return[
             {
-                "type_label":    f"Action — Attaque {i+1}/{n_attacks} (Extra Attack)",
+                "type_label":    f"Action — Attaque {i+1}/{expected_n} (Extra Attack)",
                 "intention":     intention,
                 "regle":         regle_clean,
                 "cible":         cible,
                 "single_attack": True,
             }
-            for i in range(n_attacks)
+            for i in range(expected_n)
         ]
 
     # ── Bloc attaque + smite combiné dans un seul [ACTION] ──────────
@@ -159,18 +187,24 @@ def split_into_subactions(type_label: str, intention: str,
     )
     _has_generic_atk = any(k in combined for k in _GENERIC_ATK)
 
+    # Filtre pour éviter de multiplier les sorts (ex: "Je lance un sort d'attaque")
+    _SPELL_DETECT = ("sort", "magie", "incant", "sacred flame", "flamme sacrée")
+    _is_spell_atk = any(k in combined for k in _SPELL_DETECT)
+
     if _has_generic_atk:
         _n_atk = 1
-        if char_mechanics:
-            # char_mechanics peut être le dict global (clé = char_name) ou le dict du perso
-            _stats = char_mechanics if "n_attacks" in char_mechanics else {}
-            _n_atk = _stats.get("n_attacks", 1)
-        # Sécurité : si le texte mentionne explicitement un nombre
-        _n_m2 = _re.search(r'(\d)\s*(?:attaques?|frappes?|coups?)', combined)
-        if _n_m2:
-            _n_atk = max(_n_atk, int(_n_m2.group(1)))
+        if not _is_spell_atk:
+            if char_mechanics:
+                # char_mechanics peut être le dict global (clé = char_name) ou le dict du perso
+                _stats = char_mechanics if "n_attacks" in char_mechanics else {}
+                _n_atk = _stats.get("n_attacks", 1)
+            # Sécurité : si le texte mentionne explicitement un nombre
+            _n_m2 = _re.search(r'\b(\d)\s*(?:attaques?|frappes?|coups?)\b', combined)
+            if _n_m2:
+                _n_atk = max(_n_atk, int(_n_m2.group(1)))
+                
         if _n_atk <= 1:
-            return [{
+            return[{
                 "type_label":    type_label or "Action",
                 "intention":     intention,
                 "regle":         regle.strip(),
@@ -178,7 +212,7 @@ def split_into_subactions(type_label: str, intention: str,
                 "single_attack": True,
             }]
         else:
-            return [
+            return[
                 {
                     "type_label":    f"Action — Attaque {i+1}/{_n_atk}",
                     "intention":     intention,
@@ -360,6 +394,33 @@ def execute_action_mechanics(
 
     if mj_note:
         results.append(f"Note MJ : {mj_note}")
+
+    # ── COURT-CIRCUIT : Ready Action (Se Tenir Prêt) ──────────────────────────
+    # En D&D 5e, préparer une action NE déclenche aucun jet de dés.
+    # Les jets se font UNIQUEMENT quand le trigger se produit (via Réaction).
+    _READY_KW_EXEC = ("ready", "se tenir prêt", "tenir prêt", "me tenir prêt",
+                      "prépare une action", "préparer une action", "ready action",
+                      "action préparée", "se prépare à")
+    _combined_ready = (t_low + " " + i_low + " " + r_low).lower()
+    if any(k in _combined_ready for k in _READY_KW_EXEC):
+        results.append(f"⏳ {char_name} — Se Tenir Prêt (Ready Action)")
+        results.append(f"  Action préparée : {intention}")
+        if cible and cible.lower() not in ("soi-même", "self", "-", ""):
+            results.append(f"  Cible prévue : {cible}")
+        results.append(f"  Déclencheur : en attente du trigger défini par le joueur.")
+        results.append(f"  → Aucun jet de dés maintenant — les jets se feront quand le trigger se produit (coûtera la Réaction de {char_name}).")
+        results.append(f"  ⚠ Rappel 5e : pas d'Extra Attack sur une action préparée — une seule attaque si le trigger se déclenche.")
+        narrative_hint = (
+            f"{char_name} prépare son action et reste en alerte. "
+            f"Narre en 1-2 phrases comment {char_name} se tient prêt, "
+            f"décrivant sa posture et sa vigilance. Pas de jets, pas de résultat."
+        )
+        return (
+            "[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ]\n"
+            + "\n".join(results)
+            + "\n\n[INSTRUCTION NARRATIVE]\n"
+            + narrative_hint
+        )
 
     # ── COURT-CIRCUIT : Capacités de classe sans jet de dés ───────────────────
     # Vérifier EN PREMIER — avant toute classification is_spell/is_skill.
@@ -564,8 +625,10 @@ def execute_action_mechanics(
         is_heal   = any(k in r_low or k in i_low
                         for k in ("soin","soigne","heal","cure","guéri",
                                   "restaure","parole curative"))
-        is_atk_roll = any(k in r_low for k in ("jet d attaque de sort",
-                                                 "attaque de sort","rayon"))
+        is_atk_roll = (any(k in r_low for k in ("jet d attaque de sort",
+                                                  "attaque de sort"))
+                       or (not is_heal and "rayon" in r_low
+                           and not _re.search(r"rayon\s+de\s+\d+", r_low)))
         dc_val    = _extract_dc(regle)
 
         # Vérification liste de sorts préparés
@@ -596,8 +659,8 @@ def execute_action_mechanics(
                 pass
 
         if _sp_data:
-            # Jet d'attaque ?
-            if _sp_data.get("spell_attack") and not is_atk_roll:
+            # Jet d'attaque ? — jamais pour un sort de soin.
+            if _sp_data.get("spell_attack") and not is_atk_roll and not is_heal:
                 is_atk_roll = True
 
             # Sauvegarde ?
@@ -705,7 +768,8 @@ def execute_action_mechanics(
 
         # Jet d'attaque de sort → pré-roller les dégâts
         # Header distinct pour que le calling code utilise mode="attack"
-        if is_atk_roll:
+        # Guard : les sorts de soin ne passent JAMAIS par le chemin attaque.
+        if is_atk_roll and not is_heal:
             atk_spell = stats.get("atk_spell", +5)
             atk_res = roll_dice(char_name, "1d20", atk_spell)
             results.append(f"  [attaque sort] {atk_res}")
@@ -796,6 +860,7 @@ def execute_action_mechanics(
 
         # Dés de dégâts / soin
         all_d = _all_dice(regle)
+        _dmg_total_save = 0   # total brut pour la boite sauvegarde
         if all_d:
             dn2, df2, db2 = all_d[0]
             verb = "soin" if is_heal else "dégâts"
@@ -822,13 +887,51 @@ def execute_action_mechanics(
                         app.root.after(0, app._combat_tracker.sync_pc_hp_from_state)
                 except Exception:
                     pass
+            elif dc_val:
+                # Extraire le total pour la boîte de confirmation MJ
+                _m_tot_sv = _re.search(r"Total\s*=\s*(\d+)", res)
+                _dmg_total_save = int(_m_tot_sv.group(1)) if _m_tot_sv else 0
 
-        if dc_val and not is_atk_roll:
+        # ── Jet de sauvegarde avec cible → boite de confirmation MJ ──────────
+        if dc_val and not is_atk_roll and not is_heal:
             _save_stat = _save[0].upper() if (_sp_data and _sp_data.get("saving_throw")) else ""
             _save_hint = f" {_save_stat}" if _save_stat else ""
             results.append(
-                f"  → Cibles : jet de sauvegarde{_save_hint} DC {dc_val}. "
-                f"Le MJ gère la réussite/échec (dégâts divisés par 2 si réussi)."
+                f"  → Cibles : jet de sauvegarde{_save_hint} DC {dc_val}."
+            )
+            if _dmg_total_save:
+                results.append(
+                    f"  [Dégâts roulés : {_dmg_total_save} — "
+                    f"pleins si raté, divisés par 2 si réussi]"
+                )
+            else:
+                results.append(
+                    f"  [Aucun dégât — effets actifs uniquement si raté]"
+                )
+            # Annoter le total pour que engine_receive puisse extraire la valeur
+            results.append(f"  [__save_dmg_total__:{_dmg_total_save}]")
+            narrative_hint = (
+                f"Le MJ va confirmer le résultat du jet de sauvegarde. "
+                f"Attends la confirmation avant de narrer."
+            )
+            return (
+                "[RÉSULTAT SYSTÈME — JET DE SAUVEGARDE]\n"
+                + "\n".join(results)
+                + "\n\n[INSTRUCTION NARRATIVE]\n"
+                + narrative_hint
+            )
+
+        if is_heal:
+            narrative_hint = (
+                f"Le système a lancé les dés de soin. "
+                f"Narre en 1-2 phrases comment {char_name} canalise l énergie divine "
+                f"pour soigner {cible}. Ne mentionne pas les chiffres bruts."
+            )
+            return (
+                "[RÉSULTAT SYSTÈME — SOIN]\n"
+                + "\n".join(results)
+                + "\n\n[INSTRUCTION NARRATIVE]\n"
+                + narrative_hint
             )
 
         narrative_hint = (
@@ -849,40 +952,77 @@ def execute_action_mechanics(
 
         if is_move:
             # Récupérer la position courante du token
+            # Priorité 1 : fenêtre live (_combat_map_win.tokens) — toujours à jour
+            # Priorité 2 : _win_state["combat_map_data"] — fallback si fenêtre fermée
             _cur_col, _cur_row = 0, 0
+            _found_in_live = False
             try:
-                _map_data = app._win_state.get("combat_map_data", {})
-                for _tok in _map_data.get("tokens", []):
-                    if _tok.get("name") == char_name:
-                        _cur_col = int(round(_tok.get("col", 0)))
-                        _cur_row = int(round(_tok.get("row", 0)))
-                        break
+                _cmap_win = getattr(app, "_combat_map_win", None)
+                if _cmap_win is not None:
+                    for _tok in getattr(_cmap_win, "tokens", []):
+                        if _tok.get("name") == char_name:
+                            _cur_col = int(round(_tok.get("col", 0)))
+                            _cur_row = int(round(_tok.get("row", 0)))
+                            _found_in_live = True
+                            break
             except Exception:
                 pass
+            if not _found_in_live:
+                try:
+                    _map_data = app._win_state.get("combat_map_data", {})
+                    for _tok in _map_data.get("tokens", []):
+                        if _tok.get("name") == char_name:
+                            _cur_col = int(round(_tok.get("col", 0)))
+                            _cur_row = int(round(_tok.get("row", 0)))
+                            break
+                except Exception:
+                    pass
 
             _combined_mv = r_low_orig + " " + i_low + " " + cible.lower()
             _new_col, _new_row = _cur_col, _cur_row
 
-            # 1. Coordonnées absolues : "col X, lig Y"
-            _m_abs = _re.search(
-                r'col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)',
-                _combined_mv, _re.IGNORECASE
+            # FIX : priorité explicite "N cases / N m" dans le champ Règle 5e
+            # AVANT la recherche de coordonnées absolues.
+            # Problème original : si l'agent écrit "6 cases (9 m)" dans Règle 5e
+            # ET "Col 100, Lig 44" dans Cible, le regex abs matchait dans _combined_mv
+            # et ignorait la distance déclarée → déplacement × 5 incorrect.
+            _m_cases_regle = _re.search(r'(\d+)\s*cases?', r_low_orig, _re.IGNORECASE)
+            _m_met_regle   = _re.search(
+                r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\.|\b)', r_low_orig
             )
+            _has_relative_dist = bool(_m_cases_regle or _m_met_regle)
+
+            # 1. Coordonnées absolues : "col X, lig Y"
+            # Uniquement si le champ Règle 5e ne contient PAS déjà une distance relative.
+            # On cherche dans r_low_orig seulement (pas dans cible) pour éviter qu'un
+            # "Col X, Lig Y" mis dans Cible n'écrase la distance en cases.
+            _m_abs = None
+            if not _has_relative_dist:
+                _m_abs = _re.search(
+                    r'col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)',
+                    r_low_orig, _re.IGNORECASE
+                )
             if _m_abs:
                 _new_col = int(_m_abs.group(1)) - 1   # 1-based → 0-based
                 _new_row = int(_m_abs.group(2)) - 1
             else:
                 # 2. Distance + direction
-                _m_cases = _re.search(r'(\d+)\s*cases?', _combined_mv)
-                _m_met   = _re.search(
-                    r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\.|\b)', _combined_mv
-                )
-                if _m_cases:
-                    _dist = int(_m_cases.group(1))
-                elif _m_met:
-                    _dist = max(1, round(float(_m_met.group(1).replace(",", ".")) / 1.5))
+                if _m_cases_regle:
+                    _dist = int(_m_cases_regle.group(1))
+                elif _m_met_regle:
+                    _dist = max(1, round(float(_m_met_regle.group(1).replace(",", ".")) / 1.5))
                 else:
-                    _dist = 6  # 30 ft par défaut
+                    # Fallback : chercher dans le message complet
+                    _m_cases = _re.search(r'(\d+)\s*cases?', _combined_mv)
+                    _m_met   = _re.search(
+                        r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\.|\b)', _combined_mv
+                    )
+                    if _m_cases:
+                        _dist = int(_m_cases.group(1))
+                    elif _m_met:
+                        _dist = max(1, round(float(_m_met.group(1).replace(",", ".")) / 1.5))
+                    else:
+                        _dist = 6  # 30 ft par défaut
 
                 # Directions composées (tiret obligatoire) puis cardinales simples
                 _DIR_EXACT = [
@@ -912,7 +1052,11 @@ def execute_action_mechanics(
                 # 3. Vers un autre token
                 if _dcol == 0 and _drow == 0:
                     try:
-                        _map_tokens = app._win_state.get("combat_map_data", {}).get("tokens", [])
+                        _cmap_win2 = getattr(app, "_combat_map_win", None)
+                        _map_tokens = (
+                            getattr(_cmap_win2, "tokens", []) if _cmap_win2 is not None
+                            else app._win_state.get("combat_map_data", {}).get("tokens", [])
+                        )
                         for _other in _map_tokens:
                             _oname = _other.get("name", "").lower()
                             if (_oname and _oname in _combined_mv
@@ -950,11 +1094,17 @@ def execute_action_mechanics(
                 _new_row = _cur_row + _drow * _dist
 
             # Clamp à la grille
+            # Priorité : fenêtre live → _win_state → défauts larges
             try:
-                _grid_cols = app._win_state.get("combat_map_data", {}).get("cols", 30)
-                _grid_rows = app._win_state.get("combat_map_data", {}).get("rows", 20)
+                _cmap_win3 = getattr(app, "_combat_map_win", None)
+                if _cmap_win3 is not None:
+                    _grid_cols = getattr(_cmap_win3, "cols", None) or app._win_state.get("combat_map_data", {}).get("cols", 200)
+                    _grid_rows = getattr(_cmap_win3, "rows", None) or app._win_state.get("combat_map_data", {}).get("rows", 200)
+                else:
+                    _grid_cols = app._win_state.get("combat_map_data", {}).get("cols", 200)
+                    _grid_rows = app._win_state.get("combat_map_data", {}).get("rows", 200)
             except Exception:
-                _grid_cols, _grid_rows = 30, 20
+                _grid_cols, _grid_rows = 200, 200
             _new_col = max(0, min(_grid_cols - 1, _new_col))
             _new_row = max(0, min(_grid_rows - 1, _new_row))
 

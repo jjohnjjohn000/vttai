@@ -238,7 +238,7 @@ def get_subclass_spells(class_name: str, subclass_short: str, level: int) -> lis
 
 # ─── Combat Prompt Generator ─────────────────────────────────────────────────
 
-def get_combat_prompt(class_name: str, subclass_short: str = "", level: int = 15) -> str:
+def get_combat_prompt(class_name: str, subclass_short: str = "", level: int = 11) -> str:
     """
     Génère un bloc de texte formaté décrivant les capacités de combat
     de la classe, pour injection dans les system prompts des agents.

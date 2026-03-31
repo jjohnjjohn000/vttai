@@ -34,7 +34,7 @@ from state_manager import (
 from chat_log_writer import ChatLogWriter
 from combat_map_panel import get_map_prompt
 
-from engine_agents   import build_agents_and_tools, combat_speaker_selector
+from engine_agents   import build_agents_and_tools, combat_speaker_selector, build_regle_outils
 from engine_spell_mj import build_pnj_patterns
 from engine_receive  import EngineContext, build_patched_receive
 
@@ -155,6 +155,23 @@ class AutogenEngineMixin:
             name: agent.system_message
             for name, agent in self._agents.items()
         }
+
+        # Partie personnage uniquement (sans le bloc de règles) — utilisée par
+        # _rebuild_agent_prompts() pour reconstruire base avec la bonne version
+        # des règles (hors combat ou en combat) selon COMBAT_STATE["active"].
+        _hc_regle = build_regle_outils(combat_mode=False)
+        self._base_char_msgs = {
+            name: agent.system_message.replace(_hc_regle, "", 1)
+            for name, agent in self._agents.items()
+        }
+
+        # ── Rebuild initial : injecte le contexte dynamique dès le démarrage ──
+        # Sans ça, les agents répondent sans scène/quêtes/sorts jusqu'au premier
+        # message MJ qui déclenche le rebuild dans engine_receive.py.
+        try:
+            self._rebuild_agent_prompts()
+        except Exception as _e:
+            print(f"[Init] Erreur rebuild initial prompts : {_e}")
 
         # ── Détermination SPELL_CASTERS ───────────────────────────────────────
         PLAYER_NAMES = ["Kaelen", "Elara", "Thorne", "Lyra"]

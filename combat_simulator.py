@@ -149,7 +149,7 @@ C = {
     "enemy":      "#1a100d",
 }
 
-# Stats de base niveau 15 pour les PJ (bonus att, dés dégâts, nb attaques)
+# Stats de base niveau 11 pour les PJ (bonus att, dés dégâts, nb attaques)
 PC_DEFAULTS = {
     "Kaelen": {"atk": 11, "dmg": "2d6+8",  "n_attacks": 3, "side": "Héros", "color": "#a0c4ff", "ac": 20, "max_hp": 140},
     "Elara":  {"atk": 11, "dmg": "8d6",    "n_attacks": 1, "side": "Héros", "color": "#c8b8ff", "ac": 15, "max_hp": 95},

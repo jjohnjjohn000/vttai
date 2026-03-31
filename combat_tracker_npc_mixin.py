@@ -46,6 +46,16 @@ class CombatTrackerNPCMixin:
 
         bname = getattr(self, "_current_bestiary_name", "")
 
+        # ── Résolution du portrait (une fois pour tous les clones) ───────────
+        # On utilise bestiary_name en priorité car c'est la clé exacte du
+        # fichier dans images/portraits/.  Si absent, on essaie avec le nom.
+        portrait_path = ""
+        try:
+            from portrait_resolver import resolve_portrait
+            portrait_path = resolve_portrait(bname or name)
+        except Exception as _e:
+            print(f"[CombatTracker] portrait_resolver introuvable : {_e}")
+
         for i in range(qty):
             n    = f"{name} {i+1}" if qty > 1 else name
             init = int(fixed) if fixed.lstrip("-").isdigit() else 0
@@ -55,6 +65,9 @@ class CombatTrackerNPCMixin:
                              initiative=init, dex_bonus=dex_b,
                              color=col)
             c.bestiary_name = bname
+            # Portrait pré-résolu — partagé entre tous les clones (même image)
+            c.portrait = portrait_path
+
             # Alignement choisi dans le sélecteur H/N/A du panel
             try:
                 c.alignment = self._npc_alignment.get() or "hostile"
@@ -171,6 +184,7 @@ class CombatTrackerNPCMixin:
                       font=("Consolas", 7), bd=0, relief="flat",
                       cursor="hand2", padx=3,
                       command=_restore).pack(side=tk.RIGHT)
+
     def _combat_tracker(self):
         """Ouvre la fenêtre CombatTracker ou la ramène au premier plan si déjà ouverte."""
         from combat_tracker import CombatTracker

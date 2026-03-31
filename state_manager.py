@@ -11,10 +11,10 @@ STATE_FILE = "campaign_state.json"
 
 # ─── Mapping personnage → classe D&D 5e + stats spécifiques ──────────────────
 DEFAULT_CHARACTER_CLASSES = {
-    "Kaelen": {"class": "paladin", "subclass": "Devotion", "level": 15, "con_mod": 3, "ac": 20},
-    "Elara":  {"class": "wizard",  "subclass": "",         "level": 15, "con_mod": 1, "ac": 14},
-    "Thorne": {"class": "rogue",   "subclass": "Assassin",  "level": 15, "con_mod": 3, "ac": 18},
-    "Lyra":   {"class": "cleric",  "subclass": "Life",      "level": 15, "con_mod": 2, "ac": 17},
+    "Kaelen": {"class": "paladin", "subclass": "Devotion", "level": 11, "con_mod": 3, "ac": 20},
+    "Elara":  {"class": "wizard",  "subclass": "",         "level": 11, "con_mod": 1, "ac": 14},
+    "Thorne": {"class": "rogue",   "subclass": "Assassin",  "level": 11, "con_mod": 3, "ac": 18},
+    "Lyra":   {"class": "cleric",  "subclass": "Life",      "level": 11, "con_mod": 2, "ac": 17},
 }
 state_lock = threading.Lock()
 
@@ -317,12 +317,12 @@ def get_available_voices() -> list[str]:
 AVAILABLE_VOICES = _EDGE_TTS_VOICES
 
 # ============================================================
-# --- SORTS PAR DÉFAUT (niveau 15) ---
+# --- SORTS PAR DÉFAUT (niveau 11) ---
 # ============================================================
 # structure : {"name", "level" (0=tour), "school", "prepared", "description"}
 
 DEFAULT_SPELLS = {
-    "Kaelen": [  # Paladin niv 15 — slots 4/3/3/1
+    "Kaelen": [  # Paladin niv 11 — slots 4/3/3/1
         {"name": "Soin des blessures",       "level": 1, "school": "Évocation",     "prepared": True,  "description": "1d8 + mod. PV restaurés au toucher."},
         {"name": "Faveur divine",             "level": 1, "school": "Transmutation", "prepared": True,  "description": "Bonus 1d4 aux jets d'attaque pendant 1 minute."},
         {"name": "Bouclier de la foi",        "level": 1, "school": "Abjuration",    "prepared": True,  "description": "+2 CA pendant 10 minutes (concentration)."},
@@ -332,7 +332,7 @@ DEFAULT_SPELLS = {
         {"name": "Protection contre l'énergie","level": 3,"school": "Abjuration",    "prepared": True,  "description": "Résistance à un type de dégâts (acide, feu, foudre…) – concentration."},
         {"name": "Bannissement",              "level": 4, "school": "Abjuration",    "prepared": True,  "description": "Cible CHA DC 18 ou bannie dans un espace de demi-plan (concentration)."},
     ],
-    "Elara": [  # Mage niv 15 — slots 4/3/3/3/2/1/1/1
+    "Elara": [  # Mage niv 11 — slots 4/3/3/3/2/1
         {"name": "Prestidigitation",          "level": 0, "school": "Transmutation", "prepared": True,  "description": "Effets mineurs : sons, odeurs, taches, flamme, nettoyage."},
         {"name": "Trait de feu",              "level": 0, "school": "Évocation",     "prepared": True,  "description": "Attaque à distance : 1d10 feu."},
         {"name": "Projectile magique",        "level": 1, "school": "Évocation",     "prepared": True,  "description": "3 dards de force (1d4+1 chacun), frappe automatique."},
@@ -345,11 +345,9 @@ DEFAULT_SPELLS = {
         {"name": "Portail dimensionnel",      "level": 4, "school": "Invocation",    "prepared": True,  "description": "Téléportation jusqu'à 500m vers un lieu connu."},
         {"name": "Mur de force",              "level": 5, "school": "Évocation",     "prepared": True,  "description": "Mur ou sphère invisible et indestructible (concentration 10 min)."},
         {"name": "Désintégration",            "level": 6, "school": "Transmutation", "prepared": True,  "description": "10d6+40 dégâts de force — CON DC 16, réduit en poussière si mort."},
-        {"name": "Téléportation",             "level": 7, "school": "Invocation",    "prepared": True,  "description": "Transporte jusqu'à 8 créatures vers un lieu connu (erreur possible)."},
-        {"name": "Mot de pouvoir : Étourdissement","level": 8,"school": "Enchantement","prepared": True,"description": "Étourdit une cible ≤150 PV actuel jusqu'à ce qu'elle réussisse un jet de CON."},
     ],
     "Thorne": [],  # Voleur — pas de sorts
-    "Lyra": [  # Clerc de la Vie niv 15 — slots 4/3/3/3/2/1/1/1
+    "Lyra": [  # Clerc de la Vie niv 11 — slots 4/3/3/3/2/1
         {"name": "Lumière",                   "level": 0, "school": "Évocation",     "prepared": True,  "description": "Lumière brillante de 6m, toucher, 1 heure."},
         {"name": "Résistance",                "level": 0, "school": "Abjuration",    "prepared": True,  "description": "+1d4 à un jet de sauvegarde (concentration, avant la fin du tour)."},
         {"name": "Soin des blessures",        "level": 1, "school": "Évocation",     "prepared": True,  "description": "1d8 + mod. PV restaurés au toucher."},
@@ -362,7 +360,6 @@ DEFAULT_SPELLS = {
         {"name": "Restauration suprême",      "level": 5, "school": "Abjuration",    "prepared": True,  "description": "Supprime charme, pétrification, malédiction, réduction de stats ou réduction max PV."},
         {"name": "Sanctification",            "level": 5, "school": "Évocation",     "prepared": True,  "description": "Aura d'énergie divine : +1d4 dégâts à tous types, un type de créature désavantagé."},
         {"name": "Guérison",                  "level": 6, "school": "Évocation",     "prepared": True,  "description": "70 PV restaurés + fin de toutes les maladies et conditions négatives."},
-        {"name": "Résurrection",              "level": 7, "school": "Nécromancie",   "prepared": True,  "description": "Ramène un mort à la vie (max 100 ans). 300 gp de diamants. Affaibli 4 jours."},
     ],
 }
 
@@ -386,9 +383,9 @@ def load_state():
                 "scene_context": DEFAULT_SCENE.copy(),
                 "characters": {
                     "Kaelen": {"llm": "gemini-2.5-pro", "hp": 140, "max_hp": 140, "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 1}, "spells": DEFAULT_SPELLS["Kaelen"]},
-                    "Elara":  {"llm": "gemini-2.5-pro", "hp": 95,  "max_hp": 95,  "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1, "7": 1, "8": 1}, "spells": DEFAULT_SPELLS["Elara"]},
+                    "Elara":  {"llm": "gemini-2.5-pro", "hp": 95,  "max_hp": 95,  "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1}, "spells": DEFAULT_SPELLS["Elara"]},
                     "Thorne": {"llm": "groq/llama-4-scout-17b", "hp": 105, "max_hp": 105, "spell_slots": {}, "spells": []},
-                    "Lyra":   {"llm": "gemini-2.5-pro", "hp": 110, "max_hp": 110, "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1, "7": 1, "8": 1}, "spells": DEFAULT_SPELLS["Lyra"]},
+                    "Lyra":   {"llm": "gemini-2.5-pro", "hp": 110, "max_hp": 110, "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1}, "spells": DEFAULT_SPELLS["Lyra"]},
                 },
                 "memories": DEFAULT_MEMORIES,
                 "calendar": DEFAULT_CALENDAR.copy(),
@@ -1202,7 +1199,15 @@ def get_memories_prompt_compact(importance_min: int = 2) -> str:
     for cat_key, entries in by_cat.items():
         meta = MEMORY_CATEGORIES.get(cat_key, {"icon": "•", "label": cat_key})
         for m in entries:
-            lines.append(f"  {meta['icon']} {m['titre']} : {m['contenu'][:120]}{'…' if len(m['contenu']) > 120 else ''}")
+            text = m['contenu']
+            # Prendre la première phrase, ou jusqu'à 150 caractères sans couper les mots
+            if '.' in text:
+                short_text = text.split('.')[0] + '.'
+                if len(short_text) > 200:
+                    short_text = text[:150].rsplit(' ', 1)[0] + '…'
+            else:
+                short_text = text if len(text) <= 150 else text[:150].rsplit(' ', 1)[0] + '…'
+            lines.append(f"  {meta['icon']} {m['titre']} : {short_text}")
 
     return "\n".join(lines)
 
@@ -1351,9 +1356,11 @@ def get_session_logs_prompt(max_sessions: int = 3) -> str:
     recent = logs[-max_sessions:]
     lines = [
         "\n\n--- JOURNAL DES SESSIONS PRÉCÉDENTES [RÉFÉRENCE SILENCIEUSE] ---",
-        "⚠ Ces résumés de sessions passées sont fournis comme mémoire narrative silencieuse. "
+        "⚠ Ces résumés de sessions passées sont fournis comme mémoire narrative silencieuse. ",
         "NE les récite PAS, NE signale PAS que tu y as accès. "
         "Utilise-les uniquement pour enrichir tes réponses si la conversation y touche.",
+        "⛔ RÈGLE ABSOLUE : Ce journal est écrit à la 3e personne par un chroniqueur omniscient.",
+        "   TU NE DOIS JAMAIS ADOPTER CE TON LITTÉRAIRE. Reste enfermé dans l'esprit de ton personnage.",
     ]
     for log in recent:
         lines.append(f"\n📖 Session {log['session']}  ({log['date']})")
@@ -1460,7 +1467,15 @@ def get_spells_prompt(char_name: str) -> str:
                 desc = desc[:87] + "…"
             conc = " ◉" if sp_data.get("concentration") else ""
             rit  = " ®" if sp_data.get("ritual") else ""
-            entry = (name, f"{desc}{conc}{rit}")
+            
+            time_raw = sp_data.get("cast_time_raw", [])
+            time_str = ""
+            if time_raw and isinstance(time_raw, list):
+                _n = time_raw[0].get("number", 1)
+                _u = time_raw[0].get("unit", "action")
+                time_str = f"[{_n} {_u}] "
+                
+            entry = (name, f"{time_str}{desc}{conc}{rit}")
         else:
             lvl   = 0   # inconnu → traité comme cantrip (disponible à volonté)
             entry = (name, "")

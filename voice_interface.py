@@ -271,12 +271,12 @@ def _wav_duration_s(path: str) -> float:
 def _play_file(tmp_path):
     """
     Joue un fichier audio. Silencieux sauf erreurs.
-    WAV → aplay (PulseAudio), MP3/autre → ffplay.
+    WAV → aplay (ALSA/PulseAudio), MP3/autre → ffplay.
+    Gère le volume dynamiquement.
     """
     sz       = os.path.getsize(tmp_path) if os.path.exists(tmp_path) else 0
     is_wav   = tmp_path.lower().endswith(".wav")
-    player   = "aplay" if (is_wav and shutil.which("aplay")) else "ffplay"
-
+    
     proc = None
     try:
         if not _AUDIO_PAUSE_EVENT.is_set():
@@ -289,16 +289,32 @@ def _play_file(tmp_path):
         play_timeout = max(dur_s * 1.5 + 5.0, 8.0)
 
         vol = _GLOBAL_VOLUME
-        # aplay ne gère pas le volume nativement → on bascule sur ffplay
-        # dès que le volume est réduit pour conserver le contrôle précis.
-        if player == "aplay" and vol < 100:
+
+        # --- GESTION DU VOLUME ET DU LECTEUR ---
+        if is_wav:
+            # aplay ne gère pas le volume. On applique donc le volume directement 
+            # sur le fichier WAV avec ffmpeg (ultra-rapide, ~15ms) avant de le lire.
+            if vol < 100 and shutil.which("ffmpeg"):
+                vol_path = tmp_path.replace(".wav", "_vol.wav")
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", tmp_path, "-af", f"volume={vol/100.0}", vol_path],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                # Si le traitement a réussi, on remplace le fichier original
+                if os.path.exists(vol_path) and os.path.getsize(vol_path) > 44:
+                    os.replace(vol_path, tmp_path) 
+            
+            cmd = ["aplay", "-q", tmp_path]
+            player = "aplay"
+        else:
+            # Pour les MP3 (edge-tts), ffplay gère bien la fin du fichier et le volume
+            cmd = ["ffplay", "-nodisp", "-vn", "-sn", "-autoexit", "-loglevel", "quiet",
+                   "-volume", str(vol), tmp_path]
             player = "ffplay"
 
-        if player == "aplay":
-            cmd = ["aplay", "-q", tmp_path]
-        else:
-            cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet",
-                   "-volume", str(vol), tmp_path]
+        if not shutil.which(cmd[0]):
+            _log(player, f"✗ lecteur {cmd[0]} introuvable", "red")
+            return False
 
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         with _proc_lock:
@@ -320,7 +336,7 @@ def _play_file(tmp_path):
         return ok
 
     except Exception as e:
-        _log(player, f"✗ exception : {e}", "red")
+        _log(cmd[0] if 'cmd' in locals() else "play", f"✗ exception : {e}", "red")
         return False
     finally:
         try: os.remove(tmp_path)

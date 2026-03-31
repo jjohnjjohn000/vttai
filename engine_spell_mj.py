@@ -16,10 +16,22 @@ Exporte :
 """
 
 import re as _re
+import threading as _threading_spell
 
 from state_manager import load_state
 from app_config    import get_chronicler_config
 from llm_config    import build_llm_config, _default_model
+
+
+# ─── Client LLM partagé pour parse_mj_directives ─────────────────────────────
+# Créer un httpx.Client + openai.OpenAI par message MJ provoque une création de
+# SSLContext à chaque appel.  ssl.create_default_context() n'est pas thread-safe
+# sous Python 3.10 / OpenSSL 3.x → segfault si deux threads l'appellent en
+# même temps.  On résout le problème en construisant ces objets une seule fois
+# (lazy-init protégé par un lock) et en les réutilisant pour tous les appels.
+_PARSER_CLIENT_LOCK = _threading_spell.Lock()
+_parser_openai_client = None   # openai.OpenAI singleton (lazy)
+_parser_cfg0          = None   # config dict capturé à la première init
 
 
 # ─── Regex statiques (indépendants de la liste PNJ) ──────────────────────────
@@ -36,8 +48,8 @@ ACTION_PATTERN = _re.compile(
     r'\[ACTION\][ \t]*\n'
     r'(?:[ \t]*Type[ \t]*:[ \t]*(?P<type>[^\n]+)\n)?'
     r'[ \t]*Intention[ \t]*:[ \t]*(?P<intention>[^\n]+)\n'
-    r'[ \t]*R[eè]gle 5e[ \t]*:[ \t]*(?P<regle>.+?)\n'
-    r'[ \t]*Cible[ \t]*:[ \t]*(?P<cible>[^\n]+)',
+    r'[ \t]*R[eè]gle 5e[ \t]*:[ \t]*(?P<regle>.*?)'
+    r'(?:\n[ \t]*Cible[ \t]*:[ \t]*(?P<cible>[^\n]+)|\n\s*\n|\Z)',
     _re.IGNORECASE | _re.DOTALL
 )
 
@@ -104,11 +116,24 @@ PARSER_SYSTEM = (
 # ─── Helpers sorts ────────────────────────────────────────────────────────────
 
 def get_prepared_spell_names(char_name: str) -> list:
-    """Retourne la liste des noms de sorts préparés pour l'affichage."""
+    """Retourne la liste des noms de sorts préparés pour l'affichage (inclut domaine/serment)."""
     try:
         state = load_state()
-        return list(state.get("characters", {}).get(char_name, {})
-                    .get("spells_prepared", []))
+        char_data = state.get("characters", {}).get(char_name, {})
+        prepared = list(char_data.get("spells_prepared", []))
+        
+        c_class = char_data.get("class", "")
+        c_sub = char_data.get("subclass", "")
+        c_level = char_data.get("level", 1)
+        
+        if c_class and c_sub:
+            from class_data import get_subclass_spells
+            domain_spells = get_subclass_spells(c_class, c_sub, c_level)
+            for ds in domain_spells:
+                if ds not in prepared:
+                    prepared.append(ds)
+                    
+        return prepared
     except Exception:
         return []
 
@@ -176,13 +201,15 @@ def is_spell_prepared(char_name: str, spell_name: str) -> bool:
 
     try:
         state = load_state()
-        spell_names = (
-            state.get("characters", {})
-            .get(char_name, {})
-            .get("spells_prepared", None)
-        )
-        if spell_names is None:
+        char_data = state.get("characters", {}).get(char_name, {})
+        
+        # Le champ brut de la sauvegarde
+        raw_spells_prepared = char_data.get("spells_prepared", None)
+        if raw_spells_prepared is None:
             return True   # champ absent → pas de restriction
+
+        # Construit la liste (inclus les sorts de domaine)
+        spell_names = get_prepared_spell_names(char_name)
 
         needle = _norm(spell_name.strip())
         if not needle:
@@ -280,6 +307,16 @@ def validate_bonus_action_rule(char_name: str, spell_name: str, spell_level: int
     Vérifie la règle des actions bonus (PHB 5e) :
     'You can't cast another spell during the same turn, except for a cantrip with a casting time of 1 action.'
     """
+    # ── Vérifier si on est en combat ──
+    try:
+        from combat_tracker_state import COMBAT_STATE
+        if not COMBAT_STATE.get("active", False):
+            # Hors combat, le "tour" n'existe pas vraiment (6 secondes), 
+            # on lève la restriction pour le roleplay et l'exploration.
+            return True, ""
+    except ImportError:
+        pass
+
     if not cast_time_raw:
         return True, ""
     
@@ -491,7 +528,7 @@ def parse_mj_directives(mj_text: str,
     _SKILL_MAP = {
         "athlétisme":"force","acrobaties":"dextérité",
         "discrétion":"dextérité","escamotage":"dextérité",
-        "arcanes":"intelligence","histoire":"intelligence",
+        "arcanes":"intelligence","arcane":"intelligence","arcana":"intelligence","histoire":"intelligence",
         "investigation":"intelligence","nature":"intelligence","religion":"intelligence",
         "dressage":"sagesse","médecine":"sagesse","perception":"sagesse",
         "perspicacité":"sagesse","survie":"sagesse",
@@ -578,22 +615,33 @@ def parse_mj_directives(mj_text: str,
 
     # ── Passe 2 : LLM (OpenAI SDK) ──────────────────────────────────────
     try:
-        import httpx as _httpx
         import openai as _openai
-        _ac  = get_agent_config_fn("Thorne")   # modèle le plus léger
-        _cfg0 = build_llm_config(
-            _ac.get("model") or default_model_str, temperature=0
-        )["config_list"][0]
-        _http = _httpx.Client()
-        _oa   = _openai.OpenAI(
-            api_key    = _cfg0["api_key"],
-            base_url   = str(_cfg0.get("base_url", "https://api.openai.com/v1")),
-            http_client= _http,
-        )
+        global _parser_openai_client, _parser_cfg0
+
+        # Lazy-init thread-safe : on crée le client openai une seule fois.
+        # Le lock garantit qu'on n'entre pas deux fois dans le bloc init
+        # depuis deux threads distincts, ce qui créerait deux SSLContexts
+        # simultanément → segfault.
+        if _parser_openai_client is None:
+            with _PARSER_CLIENT_LOCK:
+                if _parser_openai_client is None:   # double-checked locking
+                    _ac   = get_agent_config_fn("Thorne")
+                    _cfg0 = build_llm_config(
+                        _ac.get("model") or default_model_str, temperature=0
+                    )["config_list"][0]
+                    _parser_cfg0 = _cfg0
+                    _parser_openai_client = _openai.OpenAI(
+                        api_key  = _cfg0["api_key"],
+                        base_url = str(_cfg0.get("base_url", "https://api.openai.com/v1")),
+                    )
+
+        _oa = _parser_openai_client
+        _model_name = _parser_cfg0["model"]
+
         from llm_config import _SSL_LOCK as _psl
         with _psl:
             _resp = _oa.chat.completions.create(
-                model    = _cfg0["model"],
+                model    = _model_name,
                 messages = [
                     {"role": "system", "content": PARSER_SYSTEM},
                     {"role": "user",   "content": mj_text},
@@ -601,7 +649,6 @@ def parse_mj_directives(mj_text: str,
                 temperature = 0,
                 max_tokens  = 400,
             )
-        _http.close()
         _raw = _resp.choices[0].message.content.strip()
         _raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", _raw).strip()
         _parsed = _json.loads(_raw)
