@@ -36,18 +36,16 @@ _SILENCE         = re.compile(r'^\s*\[SILENCE\]\s*$', re.IGNORECASE)
 
 # Patterns pour le filtrage TTS
 _ACTION_BLOCK_RE = re.compile(
-    r'\[ACTION\].*?(?=\n\n|\[ACTION\]|\[FIN_DE_TOUR\]|$)',
+    r'\[ACTION\].*?(?=\n\n|\[ACTION\]|$)',
     re.DOTALL | re.IGNORECASE,
 )
-_FIN_TOUR_RE = re.compile(r'\[FIN_DE_TOUR\]', re.IGNORECASE)
 _ERR_SYSTEM_RE = re.compile(r'\[Erreur système.*?\]', re.DOTALL | re.IGNORECASE)
 
 
 def strip_mechanical_blocks(text: str) -> str:
-    """Supprime les blocs [ACTION], [FIN_DE_TOUR] et [Erreur système] du texte avant envoi au TTS.
+    """Supprime les blocs mécaniques et [Erreur système] du texte avant envoi au TTS.
     Le roleplay narratif est conservé intégralement."""
     text = _ACTION_BLOCK_RE.sub('', text)
-    text = _FIN_TOUR_RE.sub('', text)
     text = _ERR_SYSTEM_RE.sub('', text)
     return text.strip()
 
@@ -110,7 +108,7 @@ class ChatLogWriter:
             lines = [l.strip() for l in c.splitlines() if l.strip()]
             if all(l.startswith(("[ACTION]", "Type", "Intention", "Règle", "Cible",
                                   "Action", "Bonus", "Mouvement", "Réaction",
-                                  "[FIN_DE_TOUR]", "⚔️")) for l in lines):
+                                  "⚔️")) for l in lines):
                 return False
         return True
 

@@ -129,6 +129,14 @@ class LLMControlMixin:
     # ─── Envoi de texte (entrée MJ) ──────────────────────────────────────────
 
     def send_text(self):
+        # ── Bloqué pendant la pause — aucun message ne doit atteindre les agents ──
+        if getattr(self, '_session_paused', False):
+            self.msg_queue.put({
+                "sender": "⏸ Session",
+                "text": "Session en pause — message non transmis aux agents. Appuyez sur ▶ Reprendre.",
+                "color": "#e67e22",
+            })
+            return
         text = self.entry.get().strip()
         self.entry.delete(0, tk.END)
         if self._llm_running and not self._waiting_for_mj:
@@ -215,8 +223,16 @@ class LLMControlMixin:
     # ─── Message privé MJ → agent ────────────────────────────────────────────
 
     def _send_private_message(self, char_name: str, message: str, inject_groupchat: bool = True):
-        import autogen  # lazy
         """Envoie un message secret directement à un agent (bypass groupchat). Affiché en chat côté MJ."""
+        import autogen  # lazy
+        # ── Bloqué pendant la pause ────────────────────────────────────────────
+        if getattr(self, '_session_paused', False):
+            self.msg_queue.put({
+                "sender": "⏸ Session",
+                "text": f"Session en pause — message privé vers {char_name} annulé.",
+                "color": "#e67e22",
+            })
+            return
         agent = self._agents.get(char_name)
         if agent is None:
             self.msg_queue.put({"sender": "Système", "text": f"❌ Agent {char_name} introuvable.", "color": "#F44336"})
@@ -334,12 +350,20 @@ class LLMControlMixin:
     # ─── Vote de groupe ───────────────────────────────────────────────────────
 
     def _run_vote(self, choices: list[str]):
-        import autogen  # lazy
         """
         Lance un vote simultané sur tous les agents joueurs.
         Chaque agent choisit parmi les options et justifie brièvement en roleplay.
         Les résultats s'affichent dans le chat avec un récapitulatif.
         """
+        import autogen  # lazy
+        # ── Bloqué pendant la pause ────────────────────────────────────────────
+        if getattr(self, '_session_paused', False):
+            self.msg_queue.put({
+                "sender": "⏸ Session",
+                "text": "Session en pause — vote annulé. Appuyez sur ▶ Reprendre.",
+                "color": "#e67e22",
+            })
+            return
         import re as _re_v
 
         PLAYER_NAMES = get_active_characters()   # uniquement les héros présents dans la scène
@@ -470,6 +494,14 @@ class LLMControlMixin:
         FIX : Le system prompt des agents interdit d'appeler roll_dice soi-même (règle 5).
         On sépare donc la narration (agent) et le lancer de dés (Python direct).
         """
+        # ── Bloqué pendant la pause ────────────────────────────────────────────
+        if getattr(self, '_session_paused', False):
+            self.msg_queue.put({
+                "sender": "⏸ Session",
+                "text": f"Session en pause — jet de compétence de {char_name} annulé.",
+                "color": "#e67e22",
+            })
+            return
         agent = self._agents.get(char_name)
         if agent is None:
             self.msg_queue.put({"sender": "Système", "text": f"❌ Agent {char_name} introuvable.", "color": "#F44336"})

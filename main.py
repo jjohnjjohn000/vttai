@@ -232,6 +232,10 @@ class DnDApp(
         # Nécessaire car root.after(0,...) peut s'exécuter AVANT que get_human_input soit appelé,
         # soit quand _waiting_for_mj est encore False → le trigger serait perdu sans ce buffer.
         self._pending_combat_trigger: str | None = None
+        # Retrigger IMPOSSIBLE : (char_name, instruction) stocké par append_message (thread Tk)
+        # quand un [RÉSULTAT SYSTÈME — * IMPOSSIBLE — NomAgent] est affiché.
+        # Consommé par gui_get_human_input (thread AutoGen).
+        self._pending_impossible_retrigger: tuple | None = None
 
         # --- PAUSE SESSION ---
         self._session_paused: bool = False
@@ -427,15 +431,15 @@ class DnDApp(
                     lines_slots.append("  ❌ AUCUN emplacement disponible — sorts à slot IMPOSSIBLES.")
                 if _empty:
                     lines_slots.append("  ❌ ÉPUISÉS     : " + ", ".join(f"niv.{k}" for k in _empty))
-                lines_slots += [
+                lines_slots +=[
                     "",
                     "RÈGLE OBLIGATOIRE — AVANT CHAQUE DÉCLARATION DE SORT :",
                     "  1. Identifie le niveau de base du sort que tu veux lancer.",
                     "  2. Vérifie dans la liste ✅ ci-dessus si ce niveau est disponible.",
-                    "  3a. Si OUI → déclare [SORT: <Nom> | Niveau: <N> | Cible: ...]",
+                    "  3a. Si OUI → déclare-le via un bloc [ACTION] classique en précisant le niveau dans la Règle 5e.",
                     "  3b. Si NON (niveau épuisé ❌) → DEUX options seulement :",
                     "        • UPCAST : prends le plus petit niveau ✅ supérieur dispo",
-                    "                   → déclare [SORT: <Nom> | Niveau: <X_sup> | Cible: ...]",
+                    "                   → déclare-le via un bloc [ACTION] en précisant ce niveau supérieur dans la Règle 5e.",
                     "        • AUTRE ACTION : sort inférieur ✅, tour de magie, ou attaque physique.",
                     "  ⛔ INTERDIT : déclarer un sort à un niveau ❌ épuisé. Le moteur rejettera l'action.",
                     "══════════════════════════════════════════════",
@@ -539,7 +543,7 @@ class DnDApp(
             f"C'est maintenant le tour de {char_name}. "
             f"{char_name}, décris et déclare ton action de combat "
             f"(attaque, sort, déplacement, action bonus…). "
-            f"Termine par [FIN_DE_TOUR] quand tu as terminé."
+            f"Envoie une [ACTION] de type 'Fin de tour' quand tu as terminé."
         )
 
         # 4. Stocker dans le buffer (consommé par gui_get_human_input)

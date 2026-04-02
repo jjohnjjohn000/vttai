@@ -244,8 +244,9 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
             "api_type": "openai",
         })
 
-    print("🛠️ DEBUG CONFIG LLM:", [c.get("model") for c in config_list])
-    print(f"🔑 Clés Gemini chargées : {len(_gemini_keys)} | Clés Groq : {len(_groq_keys)}")
+    # Debug désactivé — trop verbeux (se déclenche à chaque appel, y compris les recovery)
+    # print("🛠️ DEBUG CONFIG LLM:", [c.get("model") for c in config_list])
+    # print(f"🔑 Clés Gemini chargées : {len(_gemini_keys)} | Clés Groq : {len(_groq_keys)}")
 
     return {
         "config_list": config_list,

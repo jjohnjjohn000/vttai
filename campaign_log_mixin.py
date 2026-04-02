@@ -275,6 +275,14 @@ class CampaignLogMixin:
         ).start()
 
     def _do_archive_and_refresh(self, win: tk.Toplevel):
+        # ── Bloqué pendant la pause ────────────────────────────────────────────
+        if getattr(self, '_session_paused', False):
+            self.msg_queue.put({
+                "sender": "⏸ Session",
+                "text": "Session en pause — archivage différé. Appuyez sur ▶ Reprendre puis relancez.",
+                "color": "#e67e22",
+            })
+            return
         state = load_state()
         archived = auto_archive_if_needed(
             state         = state,
@@ -310,6 +318,10 @@ class CampaignLogMixin:
 
         Appelé en background thread depuis auto_archive_if_needed.
         """
+        # ── Bloqué pendant la pause — aucun appel LLM ne doit partir ──────────
+        if getattr(self, '_session_paused', False):
+            print("[CampaignLogMixin] Génération résumé annulée — session en pause.")
+            return ""  # campaign_log.py assure la concaténation brute en fallback
         try:
             import autogen
             from llm_config import build_llm_config, _default_model
@@ -378,6 +390,10 @@ class CampaignLogMixin:
         Vérifie si les session_logs dépassent la fenêtre glissante et archive
         les plus anciens. Doit être appelé depuis un thread non-UI (background).
         """
+        # ── Bloqué pendant la pause ────────────────────────────────────────────
+        if getattr(self, '_session_paused', False):
+            print("[CampaignLogMixin] Auto-archivage différé — session en pause.")
+            return
         state = load_state()
         archived = auto_archive_if_needed(
             state         = state,

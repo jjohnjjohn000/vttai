@@ -141,4 +141,8 @@ class CombatTrackerUtilsMixin:
                                         "(Le combat sera sauvegardé et reprendra à la prochaine ouverture.)"):  
                 return
         self._save_combat_state()
+        try:
+            self.root.unbind_all("<F3>")
+        except Exception:
+            pass
         self.win.destroy()

@@ -49,6 +49,9 @@ class CombatTrackerUIMixin:
         self._build_list_area()
         self._build_bottom_panel()
 
+        # Raccourci clavier global : F3 → Tour suivant (actif même sans focus sur cette fenêtre)
+        self.root.bind_all("<F3>", lambda e: self._next_turn())
+
     def _build_topbar(self):
         bar = tk.Frame(self.win, bg="#080a10", height=54)
         bar.pack(fill=tk.X)

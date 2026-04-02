@@ -34,7 +34,7 @@ MEMORY_CATEGORIES = {
 }
 
 # importance : 1 = mineur, 2 = notable, 3 = critique
-DEFAULT_MEMORIES = [
+DEFAULT_MEMORIES =[
     {
         "id": "mem_krezk",
         "categorie": "lieu",
@@ -45,7 +45,7 @@ DEFAULT_MEMORIES = [
             "Au nord du village se trouve une mare stagnante avec une faible aura de magie d'abjuration — "
             "Kaelen pense qu'un serment brisé en ce lieu est à l'origine du mal qui ronge la région."
         ),
-        "tags": ["Krezk", "village", "mare", "abjuration", "serment"],
+        "tags":["Krezk", "village", "mare", "abjuration", "serment"],
         "importance": 2,
         "session_ajout": 1,
         "visible": True,
@@ -102,7 +102,7 @@ DEFAULT_MEMORIES = [
             "Convoitait Ireena Kolyana, qu'il percevait comme la réincarnation de Tatyana, son amour perdu. "
             "Son existence semble n'être qu'un symptôme d'un mal cosmique plus profond."
         ),
-        "tags": ["Strahd", "vampire", "seigneur", "mort présumée", "Tatyana"],
+        "tags":["Strahd", "vampire", "seigneur", "mort présumée", "Tatyana"],
         "importance": 3,
         "session_ajout": 1,
         "visible": True,
@@ -117,7 +117,7 @@ DEFAULT_MEMORIES = [
             "La Détection du Bien et du Mal n'a révélé aucune influence externe — conflit purement spirituel. "
             "A refusé de se rendre à la mare sacrée lors de la dernière session."
         ),
-        "tags": ["Ireena", "morsure", "Tatyana", "conflit spirituel"],
+        "tags":["Ireena", "morsure", "Tatyana", "conflit spirituel"],
         "importance": 3,
         "session_ajout": 1,
         "visible": True,
@@ -131,7 +131,7 @@ DEFAULT_MEMORIES = [
             "S'est montré furieux quand Elara lui a demandé de convaincre Ireena d'aller à la mare malgré son état fragile. "
             "Est reparti seul vers le camp."
         ),
-        "tags": ["Ismark", "noble", "Barovia", "frère d'Ireena"],
+        "tags":["Ismark", "noble", "Barovia", "frère d'Ireena"],
         "importance": 2,
         "session_ajout": 1,
         "visible": True,
@@ -144,7 +144,7 @@ DEFAULT_MEMORIES = [
             "Amie d'Ireena, chasseuse de monstres réputée. "
             "Sa localisation actuelle est inconnue — la retrouver est l'un des objectifs de la quête principale."
         ),
-        "tags": ["Ezmerelda", "chasseuse", "introuvable"],
+        "tags":["Ezmerelda", "chasseuse", "introuvable"],
         "importance": 2,
         "session_ajout": 1,
         "visible": True,
@@ -157,7 +157,7 @@ DEFAULT_MEMORIES = [
             "Vieille diseuse de bonne aventure Vistani, probablement liée à des forces cosmiques. "
             "A tiré les cartes du Tarot de Barovie pour le groupe lors d'une session précédente."
         ),
-        "tags": ["Madam Eva", "Vistani", "tarot", "prophétie"],
+        "tags":["Madam Eva", "Vistani", "tarot", "prophétie"],
         "importance": 2,
         "session_ajout": 1,
         "visible": True,
@@ -211,7 +211,7 @@ DEFAULT_MEMORIES = [
             "Strahd croyait qu'Ireena était sa réincarnation. "
             "L'âme de Tatyana semble maintenant en conflit actif avec la psyché d'Ireena."
         ),
-        "tags": ["Tatyana", "réincarnation", "Ireena", "Strahd", "âme"],
+        "tags":["Tatyana", "réincarnation", "Ireena", "Strahd", "âme"],
         "importance": 2,
         "session_ajout": 1,
         "visible": True,
@@ -225,7 +225,7 @@ DEFAULT_MEMORIES = [
             "Les Héros de l'Aube Brisée les considèrent comme très puissantes. "
             "Le groupe n'a pas encore investigué."
         ),
-        "tags": ["hags", "moulin", "sorcières", "enfants", "danger"],
+        "tags":["hags", "moulin", "sorcières", "enfants", "danger"],
         "importance": 2,
         "session_ajout": 1,
         "visible": True,
@@ -238,7 +238,7 @@ DEFAULT_MEMORIES = [
             "Dori, fils du prêtre Donavich, était devenu un mort-vivant. "
             "Le groupe l'a éliminé. Quête secondaire complétée."
         ),
-        "tags": ["Dori", "Donavich", "mort-vivant", "éliminé"],
+        "tags":["Dori", "Donavich", "mort-vivant", "éliminé"],
         "importance": 1,
         "session_ajout": 1,
         "visible": True,
@@ -246,7 +246,7 @@ DEFAULT_MEMORIES = [
 ]
 
 # Voix Edge-TTS disponibles pour les PNJs (liste prédéfinie raisonnable)
-_EDGE_TTS_VOICES = [
+_EDGE_TTS_VOICES =[
     "fr-FR-HenriNeural",
     "fr-FR-DeniseNeural",
     "fr-FR-EloiseNeural",
@@ -290,7 +290,7 @@ def get_available_voices() -> list[str]:
         except Exception:
             models_dir = "piper_models"
 
-        voices = []
+        voices =[]
         if os.path.isdir(models_dir):
             for fname in sorted(os.listdir(models_dir)):
                 # Seuls les .onnx sont des modèles de voix (les .json sont les configs)
@@ -299,7 +299,7 @@ def get_available_voices() -> list[str]:
 
         if not voices:
             # Secours : modèles piper fr_FR officiels courants
-            voices = [
+            voices =[
                 "fr_FR-upmc-medium",
                 "fr_FR-siwis-medium",
                 "fr_FR-siwis-low",
@@ -322,7 +322,7 @@ AVAILABLE_VOICES = _EDGE_TTS_VOICES
 # structure : {"name", "level" (0=tour), "school", "prepared", "description"}
 
 DEFAULT_SPELLS = {
-    "Kaelen": [  # Paladin niv 11 — slots 4/3/3/1
+    "Kaelen":[  # Paladin niv 11 — slots 4/3/3/1
         {"name": "Soin des blessures",       "level": 1, "school": "Évocation",     "prepared": True,  "description": "1d8 + mod. PV restaurés au toucher."},
         {"name": "Faveur divine",             "level": 1, "school": "Transmutation", "prepared": True,  "description": "Bonus 1d4 aux jets d'attaque pendant 1 minute."},
         {"name": "Bouclier de la foi",        "level": 1, "school": "Abjuration",    "prepared": True,  "description": "+2 CA pendant 10 minutes (concentration)."},
@@ -332,7 +332,7 @@ DEFAULT_SPELLS = {
         {"name": "Protection contre l'énergie","level": 3,"school": "Abjuration",    "prepared": True,  "description": "Résistance à un type de dégâts (acide, feu, foudre…) – concentration."},
         {"name": "Bannissement",              "level": 4, "school": "Abjuration",    "prepared": True,  "description": "Cible CHA DC 18 ou bannie dans un espace de demi-plan (concentration)."},
     ],
-    "Elara": [  # Mage niv 11 — slots 4/3/3/3/2/1
+    "Elara":[  # Mage niv 11 — slots 4/3/3/3/2/1
         {"name": "Prestidigitation",          "level": 0, "school": "Transmutation", "prepared": True,  "description": "Effets mineurs : sons, odeurs, taches, flamme, nettoyage."},
         {"name": "Trait de feu",              "level": 0, "school": "Évocation",     "prepared": True,  "description": "Attaque à distance : 1d10 feu."},
         {"name": "Projectile magique",        "level": 1, "school": "Évocation",     "prepared": True,  "description": "3 dards de force (1d4+1 chacun), frappe automatique."},
@@ -346,8 +346,8 @@ DEFAULT_SPELLS = {
         {"name": "Mur de force",              "level": 5, "school": "Évocation",     "prepared": True,  "description": "Mur ou sphère invisible et indestructible (concentration 10 min)."},
         {"name": "Désintégration",            "level": 6, "school": "Transmutation", "prepared": True,  "description": "10d6+40 dégâts de force — CON DC 16, réduit en poussière si mort."},
     ],
-    "Thorne": [],  # Voleur — pas de sorts
-    "Lyra": [  # Clerc de la Vie niv 11 — slots 4/3/3/3/2/1
+    "Thorne":[],  # Voleur — pas de sorts
+    "Lyra":[  # Clerc de la Vie niv 11 — slots 4/3/3/3/2/1
         {"name": "Lumière",                   "level": 0, "school": "Évocation",     "prepared": True,  "description": "Lumière brillante de 6m, toucher, 1 heure."},
         {"name": "Résistance",                "level": 0, "school": "Abjuration",    "prepared": True,  "description": "+1d4 à un jet de sauvegarde (concentration, avant la fin du tour)."},
         {"name": "Soin des blessures",        "level": 1, "school": "Évocation",     "prepared": True,  "description": "1d8 + mod. PV restaurés au toucher."},
@@ -364,7 +364,7 @@ DEFAULT_SPELLS = {
 }
 
 
-DEFAULT_NPCS = [
+DEFAULT_NPCS =[
     {"name": "Ismark",    "voice": "fr-FR-AlainNeural",    "speed": "+0%",  "color": "#a0c4ff"},
     {"name": "Ireena",    "voice": "fr-FR-CelesteNeural",  "speed": "+5%",  "color": "#ffc8dd"},
     {"name": "Strahd",    "voice": "fr-FR-ClaudeNeural",   "speed": "-5%",  "color": "#c77dff"},
@@ -384,7 +384,7 @@ def load_state():
                 "characters": {
                     "Kaelen": {"llm": "gemini-2.5-pro", "hp": 140, "max_hp": 140, "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 1}, "spells": DEFAULT_SPELLS["Kaelen"]},
                     "Elara":  {"llm": "gemini-2.5-pro", "hp": 95,  "max_hp": 95,  "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1}, "spells": DEFAULT_SPELLS["Elara"]},
-                    "Thorne": {"llm": "groq/llama-4-scout-17b", "hp": 105, "max_hp": 105, "spell_slots": {}, "spells": []},
+                    "Thorne": {"llm": "groq/llama-4-scout-17b", "hp": 105, "max_hp": 105, "spell_slots": {}, "spells":[]},
                     "Lyra":   {"llm": "gemini-2.5-pro", "hp": 110, "max_hp": 110, "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1}, "spells": DEFAULT_SPELLS["Lyra"]},
                 },
                 "memories": DEFAULT_MEMORIES,
@@ -454,7 +454,7 @@ def load_state():
 # --- CALENDRIER BAROVIEN ---
 # ============================================================
 
-BAROVIAN_MONTHS = [
+BAROVIAN_MONTHS =[
     "Yinyavr", "Fivral", "Mart", "Apryl", "Mai", "Eyune",
     "Eyule", "Avgust", "Sintyavr", "Octyavr", "Noyavr", "Dekavr",
 ]
@@ -528,7 +528,7 @@ def get_calendar_prompt() -> str:
     # Note du jour si présente
     note_key = f"{year}-{month_idx}-{day}"
     note_txt = cal.get("notes", {}).get(note_key, "")
-    lines = [
+    lines =[
         f"\n\n--- DATE BAROVIENNE ---",
         f"📅 {day} {month_name}, An {year}  |  {icon} {phase_long}",
     ]
@@ -562,7 +562,7 @@ def save_state(state):
 def get_npcs() -> list:
     """Retourne la liste des PNJs avec leurs configs voix."""
     state = load_state()
-    return state.get("npcs", [])
+    return state.get("npcs",[])
 
 def save_npcs(npcs: list):
     """Sauvegarde la liste des PNJs."""
@@ -573,7 +573,7 @@ def save_npcs(npcs: list):
 def get_group_npcs() -> list:
     """Retourne la liste des PNJs actuellement dans le groupe (avec fiche monstre optionnelle)."""
     state = load_state()
-    return state.get("group_npcs", [])
+    return state.get("group_npcs",[])
 
 def save_group_npcs(npcs: list):
     """Sauvegarde les PNJs du groupe."""
@@ -594,7 +594,7 @@ def roll_dice(character_name: str, dice_type: str, bonus: int) -> str:
             return f"Erreur MJ : Format de dé invalide. Utilisez 'XdY' (ex: 1d20)."
         num_dice = int(match.group(1))
         sides = int(match.group(2))
-        rolls = [random.randint(1, sides) for _ in range(num_dice)]
+        rolls =[random.randint(1, sides) for _ in range(num_dice)]
         total = sum(rolls) + bonus
         return f"[RÉSULTAT SYSTÈME] {character_name} a lancé {dice_type} + {bonus}. Dés: {rolls}. Total = {total}"
     except Exception as e:
@@ -682,14 +682,14 @@ def add_temp_hp(character_name: str, amount: int) -> str:
 
 QUEST_STATUSES = ["active", "completed", "failed"]
 
-DEFAULT_QUESTS = [
+DEFAULT_QUESTS =[
     {
         "id": "q1",
         "title": "Escorter Ireena jusqu'à Vallaki",
         "status": "active",
         "category": "Principale",
         "description": "Ismark a demandé au groupe de protéger sa sœur Ireena Kolyana et de la conduire en sécurité à Vallaki, loin de l'emprise de Strahd.",
-        "objectives": [
+        "objectives":[
             {"text": "Parler à Ismark à la taverne du Sang de la Vigne", "done": True},
             {"text": "Escorter Ireena hors de Barovia", "done": False},
             {"text": "Atteindre Vallaki sains et saufs", "done": False},
@@ -702,7 +702,7 @@ DEFAULT_QUESTS = [
         "status": "active",
         "category": "Secondaire",
         "description": "Le manoir des Revenants doit être tenu contre les forces de Strahd. La défense actuelle est insuffisante.",
-        "objectives": [
+        "objectives":[
             {"text": "Évaluer les défenses du manoir", "done": False},
             {"text": "Recruter ou préparer des renforts", "done": False},
         ],
@@ -713,7 +713,7 @@ DEFAULT_QUESTS = [
 def get_quests() -> list:
     """Retourne toutes les quêtes."""
     state = load_state()
-    return state.get("quests", [])
+    return state.get("quests",[])
 
 def save_quests(quests: list):
     """Sauvegarde la liste des quêtes."""
@@ -728,7 +728,7 @@ def save_quests(quests: list):
 # Structure dans campaign_state.json :
 #   "group_inventory": {
 #     "currency": {"platinum": 0, "gold": 0, "electrum": 0, "silver": 0, "copper": 0},
-#     "items": [
+#     "items":[
 #       { "id": str, "name": str, "quantity": int, "category": str,
 #         "rarity": str, "weight": float, "description": str,
 #         "attuned": bool, "attunement_by": str, "notes": str }
@@ -741,11 +741,11 @@ def save_quests(quests: list):
 
 import uuid as _uuid
 
-_RARITY_ORDER = ["commun", "peu_commun", "rare", "très_rare", "légendaire", "artéfact"]
+_RARITY_ORDER =["commun", "peu_commun", "rare", "très_rare", "légendaire", "artéfact"]
 
 _EMPTY_INVENTORY = {
     "currency": {"platinum": 0, "gold": 0, "electrum": 0, "silver": 0, "copper": 0},
-    "items": [],
+    "items":[],
 }
 
 
@@ -759,7 +759,7 @@ def get_inventory() -> dict:
     inv.setdefault("currency", {})
     for coin in ("platinum", "gold", "electrum", "silver", "copper"):
         inv["currency"].setdefault(coin, 0)
-    inv.setdefault("items", [])
+    inv.setdefault("items",[])
     return inv
 
 
@@ -783,7 +783,7 @@ def get_inventory_prompt() -> str:
 
     # Monnaie
     coins = []
-    for coin, label in [("platinum","pp"), ("gold","po"), ("electrum","pe"),
+    for coin, label in[("platinum","pp"), ("gold","po"), ("electrum","pe"),
                          ("silver","pa"), ("copper","pc")]:
         v = cur.get(coin, 0)
         if v:
@@ -892,7 +892,7 @@ def update_currency(gold: int = 0, silver: int = 0, copper: int = 0,
     inv = get_inventory()
     cur = inv["currency"]
     changes = []
-    for coin, delta, label in [
+    for coin, delta, label in[
         ("platinum", platinum, "pp"), ("gold", gold, "po"),
         ("electrum", electrum, "pe"), ("silver", silver, "pa"), ("copper", copper, "pc"),
     ]:
@@ -916,15 +916,15 @@ def get_active_quests_prompt() -> str:
     Ne retourne que les quêtes actives avec leurs objectifs non-complétés.
     """
     quests = get_quests()
-    active = [q for q in quests if q.get("status") == "active"]
+    active =[q for q in quests if q.get("status") == "active"]
     if not active:
         return ""
 
-    lines = ["\n\n--- JOURNAL DE QUÊTES (À GARDER EN TÊTE) ---"]
+    lines =["\n\n--- JOURNAL DE QUÊTES (À GARDER EN TÊTE) ---"]
     for q in active:
         lines.append(f"\n🗺️ [{q.get('category','?')}] {q['title']}")
         lines.append(f"   {q.get('description','')}")
-        pending = [o['text'] for o in q.get('objectives', []) if not o.get('done')]
+        pending =[o['text'] for o in q.get('objectives',[]) if not o.get('done')]
         if pending:
             lines.append("   Objectifs en cours :")
             for obj in pending:
@@ -945,7 +945,7 @@ DEFAULT_SCENE = {
     "heure":      "Soir",
     "meteo":      "Brume dense, pas de lune visible.",
     "npcs_presents": ["Ismark Kolyanovich", "Arik le Barman"],
-    "objets_notables": ["Une lettre cachetée sur la table", "Des armes rouillées derrière le comptoir"],
+    "objets_notables":["Une lettre cachetée sur la table", "Des armes rouillées derrière le comptoir"],
     "menaces":    "Des espions de Strahd pourraient surveiller la taverne.",
     "notes_mj":   "",
     "location_image": "",   # Chemin absolu ou relatif vers une image du lieu (PNG/JPG/WEBP)
@@ -1004,10 +1004,10 @@ def get_scene_prompt() -> str:
     """
     s = get_scene()
 
-    npcs = s.get("npcs_presents", [])
+    npcs = s.get("npcs_presents",[])
     objets = s.get("objets_notables", [])
 
-    lines = ["\n\n--- CONTEXTE DE LA SCÈNE ACTUELLE ---"]
+    lines =["\n\n--- CONTEXTE DE LA SCÈNE ACTUELLE ---"]
     lines.append(f"📍 Lieu     : {s.get('lieu', '?')}")
     lines.append(f"🕐 Heure    : {s.get('heure', '?')}   |   🌫️ Météo : {s.get('meteo', '?')}")
     lines.append(f"🎭 Ambiance : {s.get('ambiance', '?')}")
@@ -1041,10 +1041,10 @@ def get_memories(categorie: str = None, importance_min: int = 1, visible_only: b
     state = load_state()
     mems = state.get("memories", [])
     if visible_only:
-        mems = [m for m in mems if m.get("visible", True)]
+        mems =[m for m in mems if m.get("visible", True)]
     if categorie:
-        mems = [m for m in mems if m.get("categorie") == categorie]
-    mems = [m for m in mems if m.get("importance", 1) >= importance_min]
+        mems =[m for m in mems if m.get("categorie") == categorie]
+    mems =[m for m in mems if m.get("importance", 1) >= importance_min]
     return mems
 
 
@@ -1077,13 +1077,13 @@ def add_memory(
         "categorie": categorie,
         "titre": titre,
         "contenu": contenu,
-        "tags": tags or [],
+        "tags": tags or[],
         "importance": max(1, min(3, importance)),
         "session_ajout": session_ajout,
         "visible": True,
     }
     state = load_state()
-    state.setdefault("memories", []).append(entry)
+    state.setdefault("memories",[]).append(entry)
     save_state(state)
     return entry
 
@@ -1146,7 +1146,7 @@ def get_memories_prompt(
     Retourne une chaîne vide si aucune mémoire ne correspond.
     """
     cats = categories or list(MEMORY_CATEGORIES.keys())
-    lines = ["\n\n--- MÉMOIRES DU GROUPE (CE QUE TU SAIS) ---"]
+    lines =["\n\n--- MÉMOIRES DU GROUPE (CE QUE TU SAIS) ---"]
     any_content = False
 
     for cat_key in cats:
@@ -1191,10 +1191,10 @@ def get_memories_prompt_compact(importance_min: int = 2) -> str:
     if not mems:
         return ""
 
-    lines = ["\n\n--- MÉMOIRES CLÉS ---"]
+    lines =["\n\n--- MÉMOIRES CLÉS ---"]
     by_cat: dict = {}
     for m in mems:
-        by_cat.setdefault(m["categorie"], []).append(m)
+        by_cat.setdefault(m["categorie"],[]).append(m)
 
     for cat_key, entries in by_cat.items():
         meta = MEMORY_CATEGORIES.get(cat_key, {"icon": "•", "label": cat_key})
@@ -1237,7 +1237,7 @@ def get_contextual_memories_prompt(
     text_lower = text.lower()
     all_mems   = get_memories(importance_min=1, visible_only=True)
 
-    matched: list[dict] = []
+    matched: list[dict] =[]
     new_ids: set = set()
 
     for m in all_mems:
@@ -1252,7 +1252,7 @@ def get_contextual_memories_prompt(
 
         # Correspondance sur les tags (chaque tag ≥ 4 caractères pour éviter
         # les faux positifs sur des mots trop courts comme "lu", "de", "à")
-        for tag in m.get("tags", []):
+        for tag in m.get("tags",[]):
             if len(tag) >= 4 and tag.lower() in text_lower:
                 matched.append(m)
                 new_ids.add(m["id"])
@@ -1264,7 +1264,7 @@ def get_contextual_memories_prompt(
     # Trier par importance décroissante puis par catégorie
     matched.sort(key=lambda m: (-m.get("importance", 1), m.get("categorie", "")))
 
-    lines = ["\n\n--- MÉMOIRES ACTIVÉES PAR LE CONTEXTE ---"]
+    lines =["\n\n--- MÉMOIRES ACTIVÉES PAR LE CONTEXTE ---"]
     lines.append("(Ces informations viennent d'être mentionnées — utilise-les pour enrichir tes réactions.)")
 
     for m in matched:
@@ -1283,7 +1283,7 @@ def get_contextual_memories_prompt(
 def get_active_characters() -> list[str]:
     """Retourne la liste des noms de personnages actifs (dans la scène)."""
     state = load_state()
-    return [
+    return[
         name for name, data in state.get("characters", {}).items()
         if data.get("active", True)
     ]
@@ -1319,7 +1319,7 @@ def is_character_active(char_name: str) -> bool:
 def get_session_logs() -> list:
     """Retourne la liste complète des journaux de sessions passées."""
     state = load_state()
-    return state.get("session_logs", [])
+    return state.get("session_logs",[])
 
 
 def save_session_log(resume: str) -> int:
@@ -1330,7 +1330,7 @@ def save_session_log(resume: str) -> int:
     """
     import datetime
     state = load_state()
-    logs = state.setdefault("session_logs", [])
+    logs = state.setdefault("session_logs",[])
     session_num = (logs[-1]["session"] + 1) if logs else 1
     logs.append({
         "session": session_num,
@@ -1354,8 +1354,8 @@ def get_session_logs_prompt(max_sessions: int = 3) -> str:
         return ""
 
     recent = logs[-max_sessions:]
-    lines = [
-        "\n\n--- JOURNAL DES SESSIONS PRÉCÉDENTES [RÉFÉRENCE SILENCIEUSE] ---",
+    lines =[
+        "\n\n--- JOURNAL DES SESSIONS PRÉCÉDENTES[RÉFÉRENCE SILENCIEUSE] ---",
         "⚠ Ces résumés de sessions passées sont fournis comme mémoire narrative silencieuse. ",
         "NE les récite PAS, NE signale PAS que tu y as accès. "
         "Utilise-les uniquement pour enrichir tes réponses si la conversation y touche.",
@@ -1449,7 +1449,7 @@ def get_spells_prompt(char_name: str) -> str:
     char  = state.get("characters", {}).get(char_name, {})
 
     # ── Nouvelle structure : liste de noms seulement ─────────────────────────
-    spell_names = char.get("spells_prepared", [])
+    spell_names = char.get("spells_prepared",[])
     slots       = char.get("spell_slots", {})
 
     if not spell_names:
@@ -1468,23 +1468,29 @@ def get_spells_prompt(char_name: str) -> str:
             conc = " ◉" if sp_data.get("concentration") else ""
             rit  = " ®" if sp_data.get("ritual") else ""
             
-            time_raw = sp_data.get("cast_time_raw", [])
+            time_raw = sp_data.get("cast_time_raw",[])
             time_str = ""
             if time_raw and isinstance(time_raw, list):
-                _n = time_raw[0].get("number", 1)
-                _u = time_raw[0].get("unit", "action")
-                time_str = f"[{_n} {_u}] "
+                _u = time_raw[0].get("unit", "action").lower()
+                # On formate exactement comme le LLM doit l'écrire dans [ACTION] Type:
+                if "bonus" in _u:
+                    _u_fr = "Action Bonus"
+                elif "reaction" in _u:
+                    _u_fr = "Réaction"
+                else:
+                    _u_fr = "Action"
+                time_str = f"[{_u_fr}] "
                 
             entry = (name, f"{time_str}{desc}{conc}{rit}")
         else:
             lvl   = 0   # inconnu → traité comme cantrip (disponible à volonté)
             entry = (name, "")
-        by_level.setdefault(lvl, []).append(entry)
+        by_level.setdefault(lvl,[]).append(entry)
 
     if not by_level:
         return ""
 
-    lines = [
+    lines =[
         f"\n\n╔══════════════════════════════════════════════════════",
         f"║  FICHE DE SORTS — {char_name.upper()} — SORTS DISPONIBLES AUJOURD'HUI",
         f"╠══════════════════════════════════════════════════════",
@@ -1496,7 +1502,7 @@ def get_spells_prompt(char_name: str) -> str:
 
     # Emplacements disponibles
     if slots:
-        parts = []
+        parts =[]
         for k in sorted(slots.keys(), key=lambda x: int(x)):
             v = slots[k]
             parts.append(f"Niv.{k}×{v}" if v > 0 else f"~~Niv.{k}(0)~~")
@@ -1509,7 +1515,12 @@ def get_spells_prompt(char_name: str) -> str:
         if lvl == 0:
             header = "║  TOURS DE MAGIE (à volonté, pas d'emplacement)"
         else:
-            header = f"║  NIVEAU {lvl}  [{nb_slots} emplacement(s) disponible(s)]"
+            # --- MODIFICATION ICI ---
+            if str(nb_slots) == "0":
+                header = f"║  NIVEAU {lvl}[❌ ÉPUISÉ — UPCAST OBLIGATOIRE : précise un niveau sup. dispo dans 'Règle 5e']"
+            else:
+                header = f"║  NIVEAU {lvl}[{nb_slots} emplacement(s) disponible(s)]"
+            # ------------------------
         lines.append(header)
         for spell_name, desc in entries:
             lines.append(f"║    • {spell_name}" + (f" — {desc}" if desc else ""))

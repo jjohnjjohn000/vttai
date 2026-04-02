@@ -347,7 +347,7 @@ class CharacterMixin:
                            font=("Consolas", 9))
 
             # Sections groupées par fournisseur
-            _sections = [
+            _sections =[
                 ("🌐 Gemini",      lambda m: not any(m.startswith(p) for p in ("groq/","openrouter/","deepseek/"))),
                 ("🧠 DeepSeek",    lambda m: m.startswith("deepseek/")),
                 ("⚡ Groq",        lambda m: m.startswith("groq/")),
@@ -355,7 +355,7 @@ class CharacterMixin:
             ]
             first_section = True
             for section_label, predicate in _sections:
-                models_in_section = [m for m in _KM if predicate(m)]
+                models_in_section =[m for m in _KM if predicate(m)]
                 if not models_in_section:
                     continue
                 if not first_section:
@@ -461,7 +461,7 @@ class CharacterMixin:
             phdr.pack(fill=tk.X)
             tk.Label(phdr, text=feat_name, bg=color, fg="#0d0d0d",
                      font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=12)
-            _badges = []
+            _badges =[]
             if feat_data.get("level"):
                 _badges.append(f"Niv. {feat_data['level']}")
             if feat_data.get("source"):
@@ -550,7 +550,7 @@ class CharacterMixin:
         try:
             _profs = get_proficiencies(char_class)
         except Exception:
-            _profs = {"armor": [], "weapons": [], "saves": []}
+            _profs = {"armor": [], "weapons": [], "saves":[]}
 
         if any(_profs.values()):
             prof_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
@@ -560,10 +560,10 @@ class CharacterMixin:
 
             _save_names = {"str": "FOR", "dex": "DEX", "con": "CON",
                            "int": "INT", "wis": "SAG", "cha": "CHA"}
-            _prof_items = [
+            _prof_items =[
                 ("Armures",    ", ".join(a.title() for a in _profs.get("armor", []))),
-                ("Armes",      ", ".join(w.title() for w in _profs.get("weapons", []))),
-                ("Sauvegardes", ", ".join(_save_names.get(s, s.upper()) for s in _profs.get("saves", []))),
+                ("Armes",      ", ".join(w.title() for w in _profs.get("weapons",[]))),
+                ("Sauvegardes", ", ".join(_save_names.get(s, s.upper()) for s in _profs.get("saves",[]))),
             ]
             for _lbl, _val in _prof_items:
                 if _val:
@@ -578,7 +578,7 @@ class CharacterMixin:
         try:
             _all_feats = get_all_feature_details(char_class, char_subclass, char_level)
         except Exception:
-            _all_feats = []
+            _all_feats =[]
 
         if _all_feats:
             feat_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
@@ -586,7 +586,7 @@ class CharacterMixin:
 
             _n_class = sum(1 for f in _all_feats if f["type"] == "class")
             _n_sub   = sum(1 for f in _all_feats if f["type"] == "subclass")
-            _title_parts = []
+            _title_parts =[]
             if _n_class:
                 _title_parts.append(f"{_n_class} classe")
             if _n_sub:
@@ -643,7 +643,7 @@ class CharacterMixin:
             try:
                 _dom_spells = get_subclass_spells(char_class, char_subclass, char_level)
             except Exception:
-                _dom_spells = []
+                _dom_spells =[]
             if _dom_spells:
                 dom_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
                 dom_sec.pack(fill=tk.X, padx=8, pady=(2, 2))
@@ -932,7 +932,7 @@ class CharacterMixin:
                 f"d{hit_die} + {con_mod:+d} CON par dé    (disponibles : {avail}/{level})",
                 minvalue=1, maxvalue=avail, parent=win)
             if not nb: return
-            rolls  = [max(1, _r.randint(1, hit_die) + con_mod) for _ in range(nb)]
+            rolls  =[max(1, _r.randint(1, hit_die) + con_mod) for _ in range(nb)]
             healed = sum(rolls)
             new_hp = min(mh, h + healed)
             d2["hp"] = new_hp
@@ -1047,7 +1047,7 @@ class CharacterMixin:
             return list(load_state()
                         .get("characters", {})
                         .get(char_name, {})
-                        .get("spells_prepared", []))
+                        .get("spells_prepared",[]))
 
         def _set_prepared(names: list):
             s = load_state()

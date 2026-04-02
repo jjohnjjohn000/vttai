@@ -108,6 +108,24 @@ class CombatTrackerFlowMixin:
         self._refresh_list()
         self._log_turn()
         self._save_combat_state()
+
+        # ── Marque la position dans le chat au début du combat ──
+        # Utilisée pour nettoyer le chat si le MJ refuse la sauvegarde en fin de combat.
+        try:
+            cd = getattr(self.app, "chat_display", None)
+            if cd:
+                cd.mark_set("combat_start", tk.END)
+                cd.mark_gravity("combat_start", tk.LEFT)
+        except Exception:
+            pass
+
+        # ── Basculer les agents PJ vers le modèle combat (léger/rapide) ──
+        try:
+            if self.app is not None and hasattr(self.app, "_set_combat_llm"):
+                self.app._set_combat_llm(True)
+        except Exception as e:
+            print(f"[CombatTracker] Erreur switch LLM combat : {e}")
+
         # ── Déclenche automatiquement le tour si c'est un PJ ──
         self._trigger_pc_turn_if_needed()
         # ── Déclenche l'affichage PNJ ──
@@ -262,6 +280,40 @@ class CombatTrackerFlowMixin:
 
         self._log("🏁 COMBAT TERMINÉ\n" + summary)
         self._save_combat_state()
+
+        # ── Restaurer les configs LLM d'origine des agents PJ ───────────────
+        try:
+            if self.app is not None and hasattr(self.app, "_set_combat_llm"):
+                self.app._set_combat_llm(False)
+        except Exception as e:
+            print(f"[CombatTracker] Erreur restauration LLM : {e}")
+
+        # ── Confirmation de sauvegarde du journal ────────────────────────────
+        if messagebox.askyesno(
+            "Sauvegarder le journal ?",
+            "Voulez-vous sauvegarder le journal de cette session ?\n\n"
+            "Non → le chat du combat sera effacé pour tous les agents.",
+            icon="question",
+            parent=self.win,
+        ):
+            try:
+                if self.app is not None and hasattr(self.app, "trigger_save"):
+                    self.app.trigger_save()
+            except Exception as e:
+                print(f"[CombatTracker] Erreur sauvegarde chat : {e}")
+        else:
+            # Nettoyage du chat depuis le début du combat
+            try:
+                cd = getattr(self.app, "chat_display", None)
+                if cd and "combat_start" in cd.mark_names():
+                    cd.config(state=tk.NORMAL)
+                    cd.delete("combat_start", tk.END)
+                    cd.config(state=tk.DISABLED)
+            except Exception as e:
+                print(f"[CombatTracker] Erreur nettoyage chat : {e}")
+            # Purge de l'historique de combat partagé
+            COMBAT_STATE.pop("combat_history", None)
+
         if self.chat_queue:
             self.chat_queue.put({
                 "sender": "⚔️ Combat",

@@ -255,8 +255,8 @@ def get_map_prompt(win_state: dict, for_hero: str = "") -> str:
         dalt  = abs(int(t1.get("altitude_ft", 0)) - int(t2.get("altitude_ft", 0)))
         if d3d <= 5.0:
             return "mêlée ✅ (≤5ft 3D)"
-        if d3d <= 10.0:
-            return "mêlée Reach ✅ (≤10ft 3D)"
+        #if d3d <= 10.0:
+        #    return "mêlée Reach ✅ (≤10ft 3D)"
         return f"portée distance 🏹 ({d3d:.0f}ft 3D)"
 
     lines = [
@@ -264,8 +264,8 @@ def get_map_prompt(win_state: dict, for_hero: str = "") -> str:
         "  • L'axe des Colonnes (Col) va de GAUCHE (1) vers la DROITE (est).",
         "  • L'axe des Rangées/Lignes (Lig) va du HAUT (1) vers le BAS (sud).",
         "  • Les distances intègrent l'ALTITUDE (vol 3D) : dist_3D = √(horiz²+Δalt²).",
-        "  • Portée de mêlée : ≤5ft en 3D. Reach : ≤10ft en 3D.",
-        "  • Un token en vol ne peut être attaqué en mêlée que si la dist 3D ≤ 5ft (ou 10ft Reach).",
+        "  • Portée de mêlée : ≤5ft en 3D.",
+        "  • Un token en vol ne peut être attaqué en mêlée que si la dist 3D ≤ 5ft.",
     ]
 
     # ── Positions des alliés (héros + PNJ alliés) ─────────────────────────────

@@ -74,21 +74,32 @@ class SessionPauseMixin:
         if _drained:
             print(f"[Pause] {_drained} entrée(s) audio drainée(s)")
 
-        # ── 2. Interrompre le LLM si actif (pas en attente MJ) ───────────────
+        # ── 2. Désactiver la zone de saisie (feedback visuel immédiat) ──────────
+        # Bloque toute entrée clavier/voix AVANT même que send_text() ne soit
+        # appelé — les gardes dans LLMControlMixin doublent cette protection.
+        try:
+            import tkinter as tk
+            self.entry.config(state=tk.DISABLED)
+            self.btn_voice.config(state=tk.DISABLED)
+        except Exception as e:
+            print(f"[Pause] Erreur désactivation saisie : {e}")
+
+        # ── 3. Interrompre le LLM si actif (pas en attente MJ) ───────────────
         self._was_llm_running_at_pause = self._llm_running
         if self._llm_running and not self._waiting_for_mj:
             # Injecte StopLLMRequested dans le thread autogen via ctypes
             # Le thread retombera dans wait_for_input() — pas de perte d'historique
             self._inject_stop_for_pause()
 
-        # ── 3. Feedback UI ────────────────────────────────────────────────────
+        # ── 4. Feedback UI ────────────────────────────────────────────────────
         self.msg_queue.put({
             "sender": "⏸ Session",
             "text": (
                 "Session mise en pause.\n"
                 "• Audio stoppé — les voix en attente ont été annulées.\n"
+                "• Zone de saisie verrouillée — aucun message ne parviendra aux agents.\n"
                 "• LLMs suspendus — l'historique est conservé.\n"
-                "• Combat tracker en attente.\n"
+                "• Chroniqueur IA bloqué — aucun appel LLM en arrière-plan.\n"
                 "Appuyez sur ▶ Reprendre pour continuer."
             ),
             "color": "#e67e22",
@@ -108,14 +119,22 @@ class SessionPauseMixin:
         """
         self._session_paused = False
 
-        # ── 1. Débloquer l'audio ──────────────────────────────────────────────
+        # ── 1. Réactiver la zone de saisie ────────────────────────────────────
+        try:
+            import tkinter as tk
+            self.entry.config(state=tk.NORMAL)
+            self.btn_voice.config(state=tk.NORMAL)
+        except Exception as e:
+            print(f"[Reprise] Erreur réactivation saisie : {e}")
+
+        # ── 2. Débloquer l'audio ──────────────────────────────────────────────
         try:
             from voice_interface import resume_audio
             resume_audio()
         except Exception as e:
             print(f"[Reprise] Erreur reprise audio : {e}")
 
-        # ── 2. Feedback UI ────────────────────────────────────────────────────
+        # ── 3. Feedback UI ────────────────────────────────────────────────────
         self.msg_queue.put({
             "sender": "▶ Session",
             "text":   "Session reprise. Tout reprend normalement.",
@@ -123,7 +142,7 @@ class SessionPauseMixin:
         })
         self.root.after(0, self._update_pause_button)
 
-        # ── 3. Si le LLM avait été interrompu → on attend que le MJ envoie ──
+        # ── 4. Si le LLM avait été interrompu → on attend que le MJ envoie ──
         # un message pour reprendre (autogen est en wait_for_input()).
         # Si le LLM était déjà en attente MJ → rien à faire, déjà bloqué.
         if getattr(self, "_was_llm_running_at_pause", False):

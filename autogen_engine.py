@@ -39,8 +39,85 @@ from engine_spell_mj import build_pnj_patterns
 from engine_receive  import EngineContext, build_patched_receive
 
 
+_COMBAT_LLM_MODEL    = "gemini-3.1-flash-lite-preview"
+_PLAYER_NAMES_COMBAT = ["Kaelen", "Elara", "Thorne", "Lyra"]
+
+
 class AutogenEngineMixin:
     """Mixin pour DnDApp — moteur AutoGen complet."""
+
+    def _set_combat_llm(self, active: bool) -> None:
+        """Bascule les agents PJ vers le modèle léger en combat, ou restaure.
+
+        active=True  → _COMBAT_LLM_MODEL pour tous les PJ
+        active=False → llm_config + client d'origine restaurés
+
+        Réplique le pattern du fallback automatique : met à jour llm_config
+        ET recrée le OpenAIWrapper (client) pour que la prochaine complétion
+        utilise immédiatement le nouveau modèle.
+        Appel thread-safe depuis le thread Tk (même pattern que _rebuild_agent_prompts).
+        """
+        agents = getattr(self, "_agents", None)
+        if not agents:
+            return  # moteur pas encore démarré — silencieux
+
+        try:
+            import autogen as _ag
+        except ImportError:
+            return
+
+        if active:
+            # ── Sauvegarde one-shot des configs originales ────────────────────
+            if not hasattr(self, "_pre_combat_llm") or not self._pre_combat_llm:
+                self._pre_combat_llm = {
+                    name: {
+                        "llm_config": agents[name].llm_config,
+                        "client":     agents[name].client,
+                    }
+                    for name in _PLAYER_NAMES_COMBAT
+                    if name in agents
+                }
+
+            # ── Création de la config combat ──────────────────────────────────
+            combat_cfg = build_llm_config(_COMBAT_LLM_MODEL, temperature=0.7)
+
+            for name in _PLAYER_NAMES_COMBAT:
+                agent = agents.get(name)
+                if agent is None:
+                    continue
+                try:
+                    agent.llm_config = combat_cfg
+                    agent.client = _ag.OpenAIWrapper(
+                        **{k: v for k, v in combat_cfg.items() if k != "functions"}
+                    )
+                except Exception as _e:
+                    print(f"[CombatLLM] Erreur switch agent {name} : {_e}")
+
+            self.msg_queue.put({
+                "sender": "⚙️ Système",
+                "text":   f"⚔️ Mode combat — PJ basculés vers `{_COMBAT_LLM_MODEL}`",
+                "color":  "#ff9944",
+            })
+
+        else:
+            # ── Restauration des configs d'origine ───────────────────────────
+            saved = getattr(self, "_pre_combat_llm", {})
+            for name, snap in saved.items():
+                agent = agents.get(name)
+                if agent is None:
+                    continue
+                try:
+                    agent.llm_config = snap["llm_config"]
+                    agent.client     = snap["client"]
+                except Exception as _e:
+                    print(f"[CombatLLM] Erreur restauration agent {name} : {_e}")
+            self._pre_combat_llm = {}
+
+            self.msg_queue.put({
+                "sender": "⚙️ Système",
+                "text":   "🏕 Mode exploration — PJ restaurés vers leur modèle d'origine",
+                "color":  "#44bb88",
+            })
 
     def run_autogen(self):
         import autogen  # lazy — gRPC démarre ici, bien après Tk.mainloop()

@@ -302,6 +302,10 @@ class ToolEventMixin:
         menu.add_command(label=alt_lbl,
                          command=lambda: self._edit_token_altitude(tok))
 
+        # ─── AURA ───
+        menu.add_command(label="🌀 Configurer l'aura",
+                         command=lambda: self._edit_token_aura(tok))
+
         menu.add_separator()
         menu.add_command(label="✕  Supprimer",
                          command=lambda: self._delete_single_token(tok))

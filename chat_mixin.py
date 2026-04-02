@@ -33,7 +33,12 @@ class ChatMixin:
         self.chat_display.tag_config("sender", foreground="#ffcc00", font=("Consolas", 11, "bold"))
         self.chat_display.tag_config("text", foreground=color)
         self.chat_display.config(state=tk.DISABLED)
-        self.root.after_idle(lambda: self.chat_display.yview_moveto(1.0))
+        def _force_scroll():
+            try:
+                self.chat_display.update_idletasks()
+                self.chat_display.yview_moveto(1.0)
+            except Exception: pass
+        self.chat_display.after(50, _force_scroll)
 
     # ─── Worker audio (thread daemon) ─────────────────────────────────────────
 
@@ -159,6 +164,8 @@ class ChatMixin:
                         msg["results_text"],
                         msg["resume_callback"],
                         mode=msg.get("mode", "damage"),
+                        target=msg.get("target"),
+                        damage=msg.get("damage"),
                     )
                 elif action == "action_confirm":
                     self._append_action_confirm(
@@ -291,8 +298,12 @@ class ChatMixin:
                                      underline=False)
 
         self.chat_display.config(state=tk.DISABLED)
-        self.root.after_idle(lambda: self.chat_display.yview_moveto(1.0))
-
+        def _force_scroll():
+            try:
+                self.chat_display.update_idletasks()
+                self.chat_display.yview_moveto(1.0)
+            except Exception: pass
+        self.chat_display.after(50, _force_scroll)
         self.messages_index.append({
             "id":     msg_id,
             "sender": sender,
@@ -304,6 +315,31 @@ class ChatMixin:
         # ── Purge des anciens messages (anti-segfault explosion de tags Tk) ─────
         if len(self.messages_index) > self._MAX_MESSAGES:
             self._purge_oldest_messages(self._MAX_MESSAGES // 10)
+
+        # ── Détection [RÉSULTAT SYSTÈME — * IMPOSSIBLE — NomAgent] ───────────
+        # Quand un tel message est affiché, engine_receive.py va ensuite injecter
+        # ce résultat dans le GroupChat → custom_speaker_selection route vers le
+        # MJ → gui_get_human_input est appelé. MAIS AutoGen passe à cette fonction
+        # une chaîne générique ("Provide feedback to..."), pas le contenu du message.
+        # Solution : on stocke ici le retrigger sur app (thread Tk), gui_get_human_input
+        # le consomme depuis le thread AutoGen un instant plus tard.
+        import re as _re_imp
+        _imp_m = _re_imp.search(
+            r'\[RÉSULTAT SYSTÈME\s*[—\-][^\]\n—]*IMPOSSIBLE\s*[—\-]\s*(\w+)',
+            text,
+            _re_imp.IGNORECASE,
+        )
+        if _imp_m:
+            _char = _imp_m.group(1)
+            _instr_m = _re_imp.search(
+                r'\[INSTRUCTION\]\s*(.*?)(?=\n\[|\Z)',
+                text,
+                _re_imp.IGNORECASE | _re_imp.DOTALL,
+            )
+            _instr = _instr_m.group(1).strip() if _instr_m else \
+                "Annule cette tentative et déclare une action valide."
+            # Stocké comme tuple (char_name, instruction) — consommé par gui_get_human_input
+            self._pending_impossible_retrigger = (_char, _instr)
 
         # ── Noms de sorts cliquables ─────────────────────────────────────────
         # Seulement pour les messages narratifs des agents joueurs et du MJ.
@@ -579,7 +615,13 @@ class ChatMixin:
 
         self.chat_display.insert(tk.END, "\n", tag_name)
         self.chat_display.config(state=tk.DISABLED)
-        self.root.after_idle(lambda: self.chat_display.yview_moveto(1.0))
+        def _force_scroll():
+            try:
+                self.chat_display.update_idletasks()
+                self.chat_display.yview_moveto(1.0)
+            except Exception: pass
+        self.chat_display.after(50, _force_scroll)
+        self.chat_display.after(250, _force_scroll)
 
         self.messages_index.append({
             "id":     self.msg_counter,
@@ -686,7 +728,12 @@ class ChatMixin:
                                    lambda e: self.chat_display.config(cursor=""))
 
         self.chat_display.config(state=tk.DISABLED)
-        self.root.after_idle(lambda: self.chat_display.yview_moveto(1.0))
+        def _force_scroll():
+            try:
+                self.chat_display.update_idletasks()
+                self.chat_display.yview_moveto(1.0)
+            except Exception: pass
+        self.chat_display.after(50, _force_scroll)
 
     def _remove_tag_line(self, tag_name: str):
         """Supprime la ligne entière d'un tag dans le chat."""
@@ -899,7 +946,9 @@ class ChatMixin:
 
     def _append_result_confirm(self, char_name: str, type_label: str,
                                 results_text: str, resume_callback,
-                                mode: str = "damage"):
+                                mode: str = "damage",
+                                target: str | None = None,
+                                damage: int | None = None):
         """
         Affiche une carte de confirmation après le lancer de dés.
 
@@ -1144,6 +1193,32 @@ class ChatMixin:
                         "#aaaacc",
                     )
                 resume_callback(note)
+
+                # ── Appliquer les dégâts dans le combat tracker ──────────────
+                # Résout la cible et le montant depuis les paramètres explicites
+                # ou, en fallback, depuis une regex sur results_text.
+                _tgt = target
+                _dmg = damage
+                if _tgt is None or _dmg is None:
+                    import re as _re
+                    # Format attendu : "… → NomCible : 27 dégâts …"
+                    _m = _re.search(
+                        r'→\s*(.+?)\s*:\s*(\d+)\s*dégât',
+                        results_text,
+                        _re.IGNORECASE,
+                    )
+                    if _m:
+                        if _tgt is None:
+                            _tgt = _m.group(1).strip()
+                        if _dmg is None:
+                            _dmg = int(_m.group(2))
+                if _tgt and _dmg is not None and _dmg > 0:
+                    _tracker = getattr(self, "_combat_tracker_win", None)
+                    if _tracker is not None:
+                        try:
+                            _tracker.apply_damage_to_npc(_tgt, _dmg)
+                        except Exception as _e:
+                            print(f"[ChatMixin] apply_damage_to_npc failed: {_e}")
 
             def _cancel(event=None):
                 if _callback_done[0]:
@@ -2068,13 +2143,34 @@ class ChatMixin:
                     parts.append(str(v))
             return total, '+'.join(parts).replace('+-', '-')
 
+        def _double_dice_expr(expr: str) -> str:
+            """Coup critique D&D 5e : double tous les dés, garde les modificateurs fixes.
+            Ex : '2d6+3'  → '4d6+3'
+                 '8d6+1d8+5' → '16d6+2d8+5'
+            """
+            def _dbl(m):
+                n     = int(m.group(1)) if m.group(1) else 1
+                sides = m.group(2)
+                return f"{n * 2}d{sides}"
+            return _re.sub(r'(\d*)d(\d+)', _dbl, expr)
+
         def _send(text: str, color: str = GOLD):
-            if self.chat_queue:
-                self.chat_queue.put({
+            if hasattr(self, "msg_queue") and self.msg_queue:
+                self.msg_queue.put({
                     "sender": f"⚔ {c_name}",
                     "text":   text,
                     "color":  color,
                 })
+            
+            # ── Ajout à l'historique de combat (Jets des PNJ) ──
+            try:
+                from combat_tracker import COMBAT_STATE
+                if COMBAT_STATE.get("active"):
+                    import re as _re_send
+                    clean_txt = _re_send.sub(r'\*\*', '', text).replace('\n', ' | ')
+                    COMBAT_STATE.setdefault("combat_history",[]).append(f"• {c_name} : {clean_txt}")
+            except Exception:
+                pass
 
         # ── Variable de cible (partagée par tous les boutons) ─────────────────
         target_var = tk.StringVar(
@@ -2098,10 +2194,28 @@ class ChatMixin:
         hdr = tk.Frame(outer, bg=BG_HDR, padx=8, pady=5)
         hdr.pack(fill=tk.X)
 
-        tk.Label(hdr, text=f"⚔  Tour de {c_name}",
+        tk.Label(hdr, text="⚔  Tour de ",
                  bg=BG_HDR, fg=GOLD,
                  font=("Consolas", 9, "bold"), anchor="w"
                  ).pack(side=tk.LEFT)
+
+        def _open_npc_sheet(event=None, _n=c_name, _b=bname):
+            try:
+                from npc_bestiary_panel import MonsterSheetWindow
+                MonsterSheetWindow(
+                    self.root, _n, _b or None,
+                    chat_queue=getattr(self, "msg_queue", None),
+                    audio_queue=getattr(self, "audio_queue", None),
+                )
+            except Exception as e:
+                print(f"[NPC Sheet] Erreur ouverture fiche : {e}")
+
+        _name_lbl = tk.Label(hdr, text=c_name,
+                             bg=BG_HDR, fg=GOLD,
+                             font=("Consolas", 9, "bold", "underline"),
+                             cursor="hand2", anchor="w")
+        _name_lbl.pack(side=tk.LEFT)
+        _name_lbl.bind("<Button-1>", _open_npc_sheet)
 
         meta_txt = f"  {m_type}  ·  FP {cr_str}  ·  CA {ac_str}  ·  PV {hp_avg}"
         if hp_expr:
@@ -2181,6 +2295,9 @@ class ChatMixin:
                 btns = tk.Frame(arow, bg=BG_ACT)
                 btns.pack(side=tk.LEFT, fill=tk.X)
 
+                # ── État critique par action (D&D 5e : dés doublés) ──────────
+                crit_var = tk.BooleanVar(value=False)
+
                 def _qbtn(txt, row_bg, fg, cmd, parent=btns):
                     b = tk.Button(
                         parent, text=txt,
@@ -2202,11 +2319,24 @@ class ChatMixin:
                     bonus = rolls["hit"]
                     sign  = "+" if bonus >= 0 else ""
 
-                    def _atk(b=bonus, n=aname):
+                    # Indicateur visuel du statut critique
+                    crit_lbl = tk.Label(
+                        btns, text="", bg=BG_ACT, fg="#ff4444",
+                        font=("Consolas", 7, "bold"), padx=4)
+                    # Sera inséré après le bouton Atk — on le crée maintenant
+                    # mais on le pack après le bouton Atk via _pack_crit_lbl()
+
+                    def _set_crit(is_crit: bool, cv=crit_var, lbl=crit_lbl):
+                        cv.set(is_crit)
+                        lbl.config(text="🎯 CRIT" if is_crit else "")
+
+                    def _atk(b=bonus, n=aname, set_c=_set_crit):
                         d20  = _rnd.randint(1, 20)
                         tot  = d20 + b
                         s    = "+" if b >= 0 else ""
-                        crit = (" 🎯 CRITIQUE!" if d20 == 20
+                        is_crit = d20 == 20
+                        set_c(is_crit)
+                        crit = (" 🎯 CRITIQUE!" if is_crit
                                 else " ☠ FUMBLE"  if d20 == 1 else "")
                         tgt  = target_var.get()
                         msg  = (f"**{n}** → {tgt}\n"
@@ -2215,18 +2345,40 @@ class ChatMixin:
 
                     _qbtn(f"⚔ Atk {sign}{bonus}", BG_ATK, RED, _atk)
 
-                # Bouton(s) dégâts
+                    # Bouton toggle manuel "🎯" — le MJ peut forcer/annuler un crit
+                    def _toggle_crit(set_c=_set_crit, cv=crit_var):
+                        set_c(not cv.get())
+                    tk.Button(
+                        btns, text="🎯",
+                        bg=BG_ATK, fg="#cc4444",
+                        activebackground="#3a0808", activeforeground="#ff6666",
+                        font=("Consolas", 7), relief="flat", bd=0,
+                        padx=3, pady=2, cursor="hand2",
+                        command=_toggle_crit
+                    ).pack(side=tk.LEFT, padx=(0, 4))
+
+                    # Indicateur crit (vide jusqu'au premier crit)
+                    crit_lbl.pack(side=tk.LEFT, padx=(0, 6))
+
+                # Bouton(s) dégâts — doubles les dés si crit_var est actif
                 for i, (expr, dmg_type) in enumerate(rolls["damages"]):
                     t_lbl = f" {dmg_type}" if dmg_type else ""
                     btn_t = (f"💥 {expr}{t_lbl}" if i == 0
                              else f"+ {expr}{t_lbl}")
 
-                    def _dmg(e=expr, t=dmg_type, n=aname):
-                        total, detail = _roll_dice(e)
-                        ts  = f" {t}" if t else ""
-                        msg = (f"**{n}** — Dégâts{ts}\n"
-                               f"  {e} → {detail} = **{total}**")
+                    def _dmg(e=expr, t=dmg_type, n=aname, cv=crit_var,
+                             set_c=_set_crit if rolls["hit"] is not None else None):
+                        is_crit  = cv.get()
+                        eff_expr = _double_dice_expr(e) if is_crit else e
+                        total, detail = _roll_dice(eff_expr)
+                        ts         = f" {t}" if t else ""
+                        crit_note  = " *(CRITIQUE — dés ×2)*" if is_crit else ""
+                        msg = (f"**{n}** — Dégâts{ts}{crit_note}\n"
+                               f"  {eff_expr} → {detail} = **{total}**")
                         _send(msg, ORANGE)
+                        # Reset le flag critique après chaque lancer de dégâts
+                        if set_c is not None:
+                            set_c(False)
 
                     _qbtn(btn_t, BG_DMG, ORANGE, _dmg)
 
@@ -2303,7 +2455,13 @@ class ChatMixin:
         self.chat_display.window_create(tk.END, window=outer)
         self.chat_display.insert(tk.END, "\n")
         self.chat_display.config(state=tk.DISABLED)
-        self.root.after_idle(lambda: self.chat_display.yview_moveto(1.0))
+        def _force_scroll():
+            try:
+                self.chat_display.update_idletasks()
+                self.chat_display.yview_moveto(1.0)
+            except Exception: pass
+        self.chat_display.after(50, _force_scroll)
+        self.chat_display.after(250, _force_scroll)
 
 
 from damage_link_ui_handler import (

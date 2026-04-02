@@ -45,11 +45,11 @@ SORT_PATTERN = _re.compile(
 # Détecte un ou plusieurs blocs [ACTION] (multiligne).
 # Capture optionnelle du champ Type et règle multiligne (Extra Attack).
 ACTION_PATTERN = _re.compile(
-    r'\[ACTION\][ \t]*\n'
-    r'(?:[ \t]*Type[ \t]*:[ \t]*(?P<type>[^\n]+)\n)?'
-    r'[ \t]*Intention[ \t]*:[ \t]*(?P<intention>[^\n]+)\n'
-    r'[ \t]*R[eè]gle 5e[ \t]*:[ \t]*(?P<regle>.*?)'
-    r'(?:\n[ \t]*Cible[ \t]*:[ \t]*(?P<cible>[^\n]+)|\n\s*\n|\Z)',
+    r'(?:\*\*)?\[\s*ACTION\s*\](?:\*\*)?\s*'
+    r'(?:Type|Action|Type d\'action)\s*:\s*(?P<type>[^\n]*)\s*'
+    r'Intention\s*:\s*(?P<intention>.*?)\s*'
+    r'R[eéè]gle\s*(?:5e)?\s*:\s*(?P<regle>.*?)\s*'
+    r'(?:Cible\s*:\s*(?P<cible>.*?))?(?=\n\s*\n|\[ACTION\]|$)',
     _re.IGNORECASE | _re.DOTALL
 )
 

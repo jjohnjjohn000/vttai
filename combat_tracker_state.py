@@ -114,11 +114,9 @@ def get_combat_prompt(agent_name: str) -> str:
         # Rappels spécifiques par personnage
         _char_hints = {
             "Kaelen": (
-                "  🗡 EXTRA ATTACK : ton Action = 2 attaques — déclare-les toutes les deux.\n"
-                "  ✦ DIVINE SMITE : décision APRÈS le jet d'attaque — le système te propose de l'appliquer.\n"
-                "    ⚠ Format OBLIGATOIRE : inclure 'Divine Smite niv.X si touche' dans la Règle 5e.\n"
-                "    ⚠ JAMAIS de [ACTION] séparé pour le smite — toujours dans le bloc de l'attaque.\n"
-                "  ◈ ACTION BONUS : sort smite PRÉ-CAST (Wrathful Smite…) si non lancé avant.\n"
+                "  🗡 EXTRA ATTACK : ton Action te donne 2 attaques, mais tu DOIS les déclarer SÉPARÉMENT (1 seule attaque par message).\n"
+                "  ✦ CHÂTIMENT DIVIN : Ajoute simplement '| Divine Smite niv.X si touche' dans la Règle 5e de ton attaque.\n"
+                "  ◈ SORTS (Action Bonus) : Si tu veux lancer un sort de châtiment ou Faveur Divine, fais-le dans un bloc[ACTION] séparé AVANT ton attaque.\n"
             ),
             "Elara": (
                 "  🔮 ACTION : choisis le sort le plus efficace pour la situation.\n"
@@ -191,14 +189,13 @@ def get_combat_prompt(agent_name: str) -> str:
             "FORMAT STRICT — DÉCLARE UNE SEULE ACTION À LA FOIS :\n"
             "Termine ton message par UN SEUL bloc [ACTION]. N'essaie PAS de faire toute ton économie d'action d'un coup.\n\n"
             "  [ACTION]\n"
-            "  Type      : <Action / Action Bonus / Réaction>\n"
+            "  Type      : <Action / Extra Attack / Action Bonus / Réaction / Mouvement / Fin de tour>\n"
             "  Intention : <ce que ton personnage fait, en une phrase claire>\n"
             "  Règle 5e  : <mécanique exacte : attaque + bonus + dégâts, sort + niveau, etc.>\n"
-            "  Cible     : <sur qui ou quoi>\n\n"
-            "Si tu as Attaque Supplémentaire, déclare toutes les frappes dans le même bloc :\n"
-            "  Type      : Action — Attaque × 2 (Extra Attack)\n"
-            "  Règle 5e  : Attaque 1 : corps-à-corps +11, 2d6+8 radiants\n"
-            "              Attaque 2 : corps-à-corps +11, 2d6+8 radiants\n\n"
+            "  Cible     : <sur qui ou quoi> (Optionnel)\n\n"
+            "Si tu as Attaque Supplémentaire (Extra Attack) ou te bats à deux armes :\n"
+            "  Tu DOIS déclarer ta première attaque, attendre le résultat du MJ, puis déclarer ta seconde attaque dans un NOUVEAU message.\n"
+            "  Ne groupe JAMAIS plusieurs attaques dans le même bloc.\n\n"
             "Joue avec intensité et concision."
         )
 

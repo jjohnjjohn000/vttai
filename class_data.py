@@ -258,23 +258,27 @@ def get_combat_prompt(class_name: str, subclass_short: str = "", level: int = 11
     lines.append(f"  • Dé de vie : d{hd}")
 
     # Caster progression
-    caster = get_caster_progression(class_name_lower)
-    if caster:
-        slots = get_spell_slots(class_name_lower, level)
-        slots_str = "/".join(str(s) for s in slots.values()) if slots else "—"
-        lines.append(f"  • Lanceur de sorts ({caster}) — emplacements : {slots_str}")
+    #caster = get_caster_progression(class_name_lower)
+    #if caster:
+    #    slots = get_spell_slots(class_name_lower, level)
+    #    slots_str = "/".join(str(s) for s in slots.values()) if slots else "—"
+    #    lines.append(f"  • Lanceur de sorts ({caster}) — emplacements : {slots_str}")
 
     # Features de classe
     class_feats = get_class_features(class_name_lower, level)
     if class_feats:
         # Regrouper — filtrer les doublons et les features de gestion
         seen = set()
-        clean = []
+        clean =[]
         for f in class_feats:
             base = re.sub(r'\s*\([^)]*\)', '', f)  # "Destroy Undead (CR 1)" → "Destroy Undead"
             if base not in seen:
                 seen.add(base)
-                clean.append(f)
+                # On ajoute une consigne agressive directement accolée à l'Extra Attack
+                if "Extra Attack" in base:
+                    clean.append("Extra Attack[⚠️ INTERDIT DE GROUPER : déclare une SEULE attaque par message]")
+                else:
+                    clean.append(f)
         lines.append(f"  • Capacités de classe : {', '.join(clean)}")
 
     # Subclass features

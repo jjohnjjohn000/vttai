@@ -64,170 +64,75 @@ def split_into_subactions(type_label: str, intention: str,
                           regle: str, cible: str,
                           char_mechanics: dict | None = None) -> list:
     """
-    Décompose un bloc [ACTION] en sous-actions individuelles.
-
-    • Extra Attack (Attaque × N) → une carte de confirmation par attaque.
-    • Bloc attaque + smite combiné → single_attack=True (flow Phase 1/2/3).
-    • Toute autre attaque détectée   → N cartes single_attack=True (N depuis char_mechanics).
-    • Tout autre bloc → une seule carte.
-
-    Retourne une liste de dict {type_label, intention, regle, cible}.
+    Retourne l'action déclarée.
+    Plus de duplication automatique d'attaques : chaque bloc [ACTION] 
+    correspond à UNE SEULE action ou attaque, comme demandé dans le prompt.
     """
     type_low   = (type_label or "").lower()
     intent_low = intention.lower()
     regle_low  = regle.lower()
     combined   = type_low + " " + intent_low + " " + regle_low
 
-    # ── Ready Action (Se Tenir Prêt) — pas d'Extra Attack, pas de jets ──
+    # ── Court-circuit Mouvement ──
+    # Si le Type est explicitement "Mouvement", on ne scan pas l'intention
+    # pour éviter que des mots comme "attaquer" dans "pour pouvoir l'attaquer"
+    # déclenchent un is_physical_attack = True.
+    if "mouvement" in type_low:
+        return [{
+            "type_label": type_label or "Mouvement",
+            "intention":  intention,
+            "regle":      regle.strip() if regle else "",
+            "cible":      cible,
+            "single_attack": False,
+        }]
+
+    # ── Ready Action (Se Tenir Prêt) ──
     _READY_KW = ("ready", "se tenir prêt", "tenir prêt", "me tenir prêt",
                  "prépare une action", "préparer une action", "ready action",
                  "action préparée", "se prépare à")
-    _is_ready = any(k in combined for k in _READY_KW)
-    if _is_ready:
-        return [{
+    if any(k in combined for k in _READY_KW):
+        return[{
             "type_label": type_label or "Action",
             "intention":  intention,
             "regle":      regle.strip(),
             "cible":      cible,
             "ready_action": True,
+            "single_attack": False,
         }]
 
-    # ── Détection Extra Attack (format structuré ou langage naturel) ──
-    is_extra = (
-        "extra attack" in combined
-        or bool(_re.search(r'(?:attaque|frappe|coup|tir)[s]?\s*[×x]\s*\d+', combined))
-        or bool(_re.search(r'\d+\s*(?:attaques?|frappes?|coups?|tirs?)', combined))
-        or "deux fois" in intent_low
-        or "deux attaques" in intent_low
-        or "two attacks" in combined
-        or "deux frappes" in intent_low
-        or "deux coups" in intent_low
-        or "deux tirs" in intent_low
-    )
-
-    if is_extra:
-        # Extraire le nombre d'attaques attendu (de base 2, ou défini dans les stats)
-        expected_n = 2
-        if char_mechanics and char_mechanics.get("n_attacks", 1) > 1:
-            expected_n = char_mechanics.get("n_attacks", 2)
-            
-        _n_m = (
-            _re.search(r'(?:attaque|frappe|coup|tir)[s]?\s*[×x]\s*(\d+)', combined)
-            or _re.search(r'(\d+)\s*(?:fois|attaques?|frappes?|coups?|tirs?)', intent_low)
-        )
-        if _n_m:
-            expected_n = max(expected_n, int(_n_m.group(1)))
-        elif "deux" in combined or "2" in type_low:
-            expected_n = max(expected_n, 2)
-
-        # Cas 1 : lignes "Attaque N : détail" dans le champ règle (séparées par \n ou |)
-        parts = _re.split(r'\||\n', regle)
-        lines =[]
-        for p in parts:
-            m = _re.search(r'attaque\s*(\d+)\s*:\s*(.*)', p, _re.IGNORECASE)
-            if m:
-                lines.append((m.group(1), m.group(2).strip()))
-                
-        if lines:
-            # Si le LLM n'a formaté qu'une seule attaque mais qu'on en attend 2+ (oubli fréquent)
-            if len(lines) < expected_n:
-                last_detail = lines[-1][1]
-                while len(lines) < expected_n:
-                    lines.append((str(len(lines)+1), last_detail))
-            
-            total = len(lines)
-            return[
-                {
-                    "type_label":    f"Action — Attaque {i+1}/{total} (Extra Attack)",
-                    "intention":     intention,
-                    "regle":         detail,
-                    "cible":         cible,
-                    "single_attack": True,
-                }
-                for i, (_, detail) in enumerate(lines)
-            ]
-
-        # Cas 2 : pas de lignes structurées
-        regle_clean = regle.strip()
-        return[
-            {
-                "type_label":    f"Action — Attaque {i+1}/{expected_n} (Extra Attack)",
-                "intention":     intention,
-                "regle":         regle_clean,
-                "cible":         cible,
-                "single_attack": True,
-            }
-            for i in range(expected_n)
-        ]
-
-    # ── Bloc attaque + smite combiné dans un seul [ACTION] ──────────
-    _SMITE_DETECT = ("smite", "châtiment", "chatiment", "courroux divin",
-                     "frappe tonnerre", "frappe lumière", "branding smite",
-                     "divine smite", "smite divin")
-    _ATK_DETECT   = ("attaque", "frappe", "coup", "tir", "corps-à-corps",
-                     "poignarde", "tranche", "assaut")
-    _has_smite = any(k in combined for k in _SMITE_DETECT)
-    _has_atk   = any(k in combined for k in _ATK_DETECT)
-    if _has_smite and _has_atk:
-        return [{
-            "type_label":    type_label or "Action",
-            "intention":     intention,
-            "regle":         regle.strip(),
-            "cible":         cible,
-            "single_attack": True,
-        }]
-
-    # ── Attaque simple (ou Sneak Attack, Reckless Attack, etc.) ──────────────
-    # Toute action qui contient un indicateur d'attaque passe en Phase 1/2/3.
-    # On crée N sous-actions distinctes selon char_mechanics["n_attacks"].
+    # ── Détection Attaque Physique ──
     _GENERIC_ATK = (
         "attaque", "frappe", "coup", "tir", "poignarde", "tranche",
         "assaut", "perfore", "lacère", "abat", "sneak attack", "sournoise",
         "reckless", "téméraire", "deux armes", "dual wield",
+        "corps-à-corps",
     )
+    _SPELL_DETECT = ("sort", "magie", "incant", "sacred flame", "flamme sacrée", 
+                     "divine favor", "faveur divine", "bless", "bénédiction")
+    _SMITE_SPELLS = ("wrathful smite", "courroux divin", "thunderous smite", 
+                     "frappe tonnerre", "branding smite", "frappe lumière")
+    
+    _is_spell = any(k in combined for k in _SPELL_DETECT) or any(k in combined for k in _SMITE_SPELLS)
     _has_generic_atk = any(k in combined for k in _GENERIC_ATK)
+    
+    # "divine smite" n'est pas un sort, c'est une feature ajoutée à une attaque
+    _is_divine_smite = any(k in combined for k in ("divine smite", "smite divin", "châtiment divin", "chatiment divin"))
+    
+    # C'est une attaque physique si :
+    # 1. Mots-clés d'attaque présents OU "divine smite"
+    # 2. ET ce n'est pas un sort d'attaque ou un sort de smite
+    is_physical_attack = (_has_generic_atk or _is_divine_smite) and not _is_spell
 
-    # Filtre pour éviter de multiplier les sorts (ex: "Je lance un sort d'attaque")
-    _SPELL_DETECT = ("sort", "magie", "incant", "sacred flame", "flamme sacrée")
-    _is_spell_atk = any(k in combined for k in _SPELL_DETECT)
+    # On nettoie le type_label pour enlever "1/2" ou "Extra Attack" s'il y en a, 
+    # pour garder l'UI propre, bien que l'agent ne devrait plus les générer.
+    clean_type = _re.sub(r'\s*\d+/\d+\s*', ' ', type_label).strip()
 
-    if _has_generic_atk:
-        _n_atk = 1
-        if not _is_spell_atk:
-            if char_mechanics:
-                # char_mechanics peut être le dict global (clé = char_name) ou le dict du perso
-                _stats = char_mechanics if "n_attacks" in char_mechanics else {}
-                _n_atk = _stats.get("n_attacks", 1)
-            # Sécurité : si le texte mentionne explicitement un nombre
-            _n_m2 = _re.search(r'\b(\d)\s*(?:attaques?|frappes?|coups?)\b', combined)
-            if _n_m2:
-                _n_atk = max(_n_atk, int(_n_m2.group(1)))
-                
-        if _n_atk <= 1:
-            return[{
-                "type_label":    type_label or "Action",
-                "intention":     intention,
-                "regle":         regle.strip(),
-                "cible":         cible,
-                "single_attack": True,
-            }]
-        else:
-            return[
-                {
-                    "type_label":    f"Action — Attaque {i+1}/{_n_atk}",
-                    "intention":     intention,
-                    "regle":         regle.strip(),
-                    "cible":         cible,
-                    "single_attack": True,
-                }
-                for i in range(_n_atk)
-            ]
-
-    return [{
-        "type_label": type_label or "Action",
+    return[{
+        "type_label": clean_type or "Action",
         "intention":  intention,
         "regle":      regle.strip(),
         "cible":      cible,
+        "single_attack": is_physical_attack,
     }]
 
 
@@ -416,7 +321,7 @@ def execute_action_mechanics(
             f"décrivant sa posture et sa vigilance. Pas de jets, pas de résultat."
         )
         return (
-            "[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ]\n"
+            f"[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ — {char_name}]\n"
             + "\n".join(results)
             + "\n\n[INSTRUCTION NARRATIVE]\n"
             + narrative_hint
@@ -437,14 +342,14 @@ def execute_action_mechanics(
             pass
         results.append(f"✨ {char_name} — {_feat_name}")
         if _feat_details and _feat_details.get("text"):
-            results.append(f"  [Mécanique officielle]\n{_feat_details['text']}")
+            results.append(f"[Mécanique officielle]\n{_feat_details['text']}")
         else:
             results.append(f"  [Capacité de classe — aucun jet de dés requis]")
         if cible and cible.lower() not in ("soi-même", "self", "-", ""):
             results.append(f"  Cible : {cible}")
         narrative_hint = _narr_hint.format(name=char_name)
         return (
-            "[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ]\n"
+            f"[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ — {char_name}]\n"
             + "\n".join(results)
             + "\n\n[INSTRUCTION NARRATIVE]\n"
             + narrative_hint
@@ -487,7 +392,8 @@ def execute_action_mechanics(
     SPELL_KW = ("sort","magie","incant","boule","projectile","éclair","feu",
                 "soin","soigne","heal","cure","guéri","restaure","parole",
                 "contresort","dissipation","bannissement","désintégration",
-                "lumière","ténèbres","sacré","nécro","évocation","abjuration")
+                "lumière","ténèbres","sacré","nécro","évocation","abjuration",
+                "divine favor", "faveur divine", "bless", "bénédiction")
     ATK_KW   = ("attaque","frappe","coup","tir","tire","charge","poignarde",
                 "tranche","abat","corps-à-corps","distance","assaut","offensive")
     SKILL_KW = ("jet","check","compétence","sauvegarde","save","arcanes",
@@ -497,19 +403,18 @@ def execute_action_mechanics(
                 "dressage","survie","escamotage","force","dextérité",
                 "constitution","intelligence","sagesse","charisme")
 
-    # Mots-clés smite — augmentent une attaque, PAS des sorts indépendants.
-    _SMITE_BOOST_KW = ("divine smite", "smite divin", "châtiment divin", "chatiment divin",
-                       "wrathful smite", "courroux divin", "thunderous smite",
-                       "frappe tonnerre", "branding smite", "frappe lumière")
-    _is_smite_boost = any(k in r_low or k in i_low for k in _SMITE_BOOST_KW)
+    _SMITE_SPELLS = ("wrathful smite", "courroux divin", "thunderous smite",
+                     "frappe tonnerre", "branding smite", "frappe lumière")
+                     
+    _DIVINE_SMITE = ("divine smite", "smite divin", "châtiment divin", "chatiment divin")
 
-    is_spell = any(k in r_low or k in i_low for k in SPELL_KW) and not _is_smite_boost
+    is_spell = any(k in r_low or k in i_low for k in SPELL_KW) or any(k in r_low or k in i_low for k in _SMITE_SPELLS)
     # Garde mouvement : si type_label est explicitement "Mouvement", aucun jet de compétence
     # ne doit être déclenché — le LLM met parfois "analyser / détecter" dans l'intention
     # d'un déplacement, ce qui ferait firer is_skill avant la branche mouvement.
     # Défini AVANT is_atk pour éviter "referenced before assignment".
     is_move_action = "mouvement" in t_low
-    is_atk   = (any(k in r_low or k in i_low for k in ATK_KW) or _is_smite_boost) and not is_spell and not is_move_action
+    is_atk   = (any(k in r_low or k in i_low for k in ATK_KW) or any(k in r_low or k in i_low for k in _DIVINE_SMITE)) and not is_spell and not is_move_action
     is_skill = (any(k in r_low or k in i_low for k in SKILL_KW)
                 and not is_atk and not is_spell and not is_move_action)
 
@@ -638,7 +543,7 @@ def execute_action_mechanics(
                 _avail = get_prepared_spell_names_fn(char_name)
                 _avail_str = ", ".join(_avail) if _avail else "aucun sort préparé trouvé"
                 _no_prep_msg = (
-                    f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n"
+                    f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE — {char_name}]\n"
                     f"« {_spell_name_candidate} » n'est pas dans la liste de sorts "
                     f"préparés de {char_name}. Ce sort ne peut pas être lancé aujourd'hui.\n\n"
                     f"[SORTS AUTORISÉS POUR {char_name.upper()}]\n"
@@ -647,7 +552,7 @@ def execute_action_mechanics(
                     f"Choisis UNIQUEMENT parmi les sorts listés ci-dessus. "
                     f"Déclare une nouvelle action avec [ACTION]."
                 )
-                return "[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE]\n" + _no_prep_msg
+                return _no_prep_msg
 
         # Injection des mécaniques depuis spell_data.py
         _sp_data = None
@@ -706,10 +611,6 @@ def execute_action_mechanics(
             "frappe tonnerre":  ("2d6",  "tonnerre",   "Thunderous Smite"),
             "branding smite":   ("2d6",  "radiant",    "Branding Smite"),
             "frappe lumière":   ("2d6",  "radiant",    "Branding Smite"),
-            "divine smite":     (None,   "radiant",    "Divine Smite"),
-            "smite divin":      (None,   "radiant",    "Divine Smite"),
-            "châtiment divin":  (None,   "radiant",    "Divine Smite"),
-            "chatiment divin":  (None,   "radiant",    "Divine Smite"),
         }
         _smite_match = next(
             ((dice, typ, lbl)
@@ -739,7 +640,7 @@ def execute_action_mechanics(
                 f"prête à se décharger sur le prochain coup."
             )
             return (
-                "[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ]\n"
+                f"[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ — {char_name}]\n"
                 + "\n".join(results)
                 + "\n\n[INSTRUCTION NARRATIVE]\n"
                 + narrative_hint
@@ -762,7 +663,7 @@ def execute_action_mechanics(
                         f"{char_name} n a plus de slot de niveau {lvl}. "
                         f"Narre en 1 phrase qu il réalise qu il est à court d énergie magique."
                     )
-                    return ("[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ]\n"
+                    return (f"[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ — {char_name}]\n"
                             + "\n".join(results)
                             + "\n\n[INSTRUCTION NARRATIVE]\n" + narrative_hint)
 
@@ -815,7 +716,7 @@ def execute_action_mechanics(
                 f"Si raté : narre l'esquive ou la résistance. Ne mentionne pas les chiffres."
             )
             return (
-                "[RÉSULTAT SYSTÈME — ATTAQUE DE SORT]\n"
+                f"[RÉSULTAT SYSTÈME — ATTAQUE DE SORT — {char_name}]\n"
                 + "\n".join(results)
                 + "\n\n[INSTRUCTION NARRATIVE]\n"
                 + narrative_hint
@@ -831,7 +732,7 @@ def execute_action_mechanics(
                 f"  [Projectile Magique — niv.{_mm_lvl}] "
                 f"{_mm_darts} projectile(s) — touche(nt) automatiquement"
             )
-            _mm_totals = []
+            _mm_totals =[]
             for _i in range(1, _mm_darts + 1):
                 _dart_res = roll_dice(char_name, "1d4", 1)   # 1d4+1 force
                 _dart_m   = _re.search(r"Total\s*=\s*(\d+)", _dart_res)
@@ -852,7 +753,7 @@ def execute_action_mechanics(
                 f"Ne mentionne pas les chiffres individuels des dés."
             )
             return (
-                "[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ]\n"
+                f"[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ — {char_name}]\n"
                 + "\n".join(results)
                 + "\n\n[INSTRUCTION NARRATIVE]\n"
                 + narrative_hint
@@ -901,21 +802,21 @@ def execute_action_mechanics(
             )
             if _dmg_total_save:
                 results.append(
-                    f"  [Dégâts roulés : {_dmg_total_save} — "
+                    f"[Dégâts roulés : {_dmg_total_save} — "
                     f"pleins si raté, divisés par 2 si réussi]"
                 )
             else:
                 results.append(
-                    f"  [Aucun dégât — effets actifs uniquement si raté]"
+                    f"[Aucun dégât — effets actifs uniquement si raté]"
                 )
             # Annoter le total pour que engine_receive puisse extraire la valeur
-            results.append(f"  [__save_dmg_total__:{_dmg_total_save}]")
+            results.append(f"[__save_dmg_total__:{_dmg_total_save}]")
             narrative_hint = (
                 f"Le MJ va confirmer le résultat du jet de sauvegarde. "
                 f"Attends la confirmation avant de narrer."
             )
             return (
-                "[RÉSULTAT SYSTÈME — JET DE SAUVEGARDE]\n"
+                f"[RÉSULTAT SYSTÈME — JET DE SAUVEGARDE — {char_name}]\n"
                 + "\n".join(results)
                 + "\n\n[INSTRUCTION NARRATIVE]\n"
                 + narrative_hint
@@ -928,7 +829,7 @@ def execute_action_mechanics(
                 f"pour soigner {cible}. Ne mentionne pas les chiffres bruts."
             )
             return (
-                "[RÉSULTAT SYSTÈME — SOIN]\n"
+                f"[RÉSULTAT SYSTÈME — SOIN — {char_name}]\n"
                 + "\n".join(results)
                 + "\n\n[INSTRUCTION NARRATIVE]\n"
                 + narrative_hint
@@ -1084,7 +985,7 @@ def execute_action_mechanics(
                     results.append(f"  ⚠ Destination '{cible}' non résoluble — token non déplacé.")
                     results.append(f"  → Précise : Col X, Lig Y  OU  direction (nord/sud/est/ouest)")
                     return (
-                        "[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ]\n"
+                        f"[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ — {char_name}]\n"
                         + "\n".join(results)
                         + "\n\n[INSTRUCTION NARRATIVE]\n"
                         + narrative_hint
@@ -1138,7 +1039,7 @@ def execute_action_mechanics(
         )
 
     return (
-        "[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ]\n"
+        f"[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ — {char_name}]\n"
         + "\n".join(results)
         + "\n\n[INSTRUCTION NARRATIVE]\n"
         + narrative_hint

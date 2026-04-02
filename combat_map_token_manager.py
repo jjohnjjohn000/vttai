@@ -19,6 +19,52 @@ from combat_map_constants import _sep, _darken_rgb, _darken_rgb_tuple, _compress
 # Les PhotoImage stockés ici ne sont jamais collectés par le GC.
 _PORTRAIT_CACHE: dict[tuple, object] = {}
 
+# ─── Cache d'images d'Aura ───────────────────────────────────────────────────
+_AURA_CACHE = {}
+
+def _get_aura_image(color_hex: str, diameter_px: int):
+    """
+    Génère une image PIL avec un vrai canal alpha (transparence douce) pour l'aura.
+    Mise en cache pour les performances (évite de recalculer à chaque zoom).
+    """
+    if not PIL_AVAILABLE or diameter_px < 2:
+        return None
+        
+    key = (color_hex, diameter_px)
+    if key in _AURA_CACHE:
+        return _AURA_CACHE[key]
+        
+    try:
+        from PIL import Image, ImageTk, ImageDraw
+        
+        # Créer une image vide avec fond transparent (RGBA)
+        img = Image.new('RGBA', (diameter_px, diameter_px), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        
+        # Convertir la couleur HEX (ex: "#00ccff") en RGB
+        h = color_hex.lstrip('#')
+        r, g, b = (int(h[i:i+2], 16) for i in (0, 2, 4)) if len(h) == 6 else (0, 255, 255)
+        
+        # --- RÉGLAGE DE LA TRANSPARENCE ---
+        # 255 = totalement opaque | 0 = invisible.
+        # 40 donne une couleur très douce et moderne (~15% d'opacité).
+        alpha = 40 
+        
+        # Dessiner le cercle avec la couleur et l'opacité alpha
+        draw.ellipse((0, 0, diameter_px-1, diameter_px-1), fill=(r, g, b, alpha))
+        
+        photo = ImageTk.PhotoImage(img)
+        _AURA_CACHE[key] = photo
+        
+        # Nettoyage automatique du cache si on zoom/dézoom trop (protection RAM)
+        if len(_AURA_CACHE) > 150:
+            for k in list(_AURA_CACHE.keys())[:50]:
+                del _AURA_CACHE[k]
+                
+        return photo
+    except Exception as e:
+        print(f"[Aura] Erreur création image transparente : {e}")
+        return None
 
 def _make_circular_portrait(path: str, diameter: int):
     """
@@ -124,9 +170,11 @@ class TokenManagerMixin:
             tok.get("hp", -1), tok.get("max_hp", -1),
             tuple(tok.get("conditions", [])),
             tok.get("altitude_ft", 0),
+            tok.get("aura_radius", 0),
+            tok.get("aura_color", ""),
             tok.get("source_name", ""),  # source name — redraw if it changes
-        tok.get("token_art", ""),    # token art path — redraw if it changes
-        tok.get("portrait", ""),     # portrait path — redraw if it changes
+            tok.get("token_art", ""),    # token art path — redraw if it changes
+            tok.get("portrait", ""),     # portrait path — redraw if it changes
             zoom, cp,
             id(tok) in sel,
         )
@@ -171,6 +219,39 @@ class TokenManagerMixin:
         outline = _rgb_to_hex(style["outline"])
         tag     = f"tok_{id(tok)}"
         ids     = []
+
+        # ── Aura du token ─────────────────────────────────────────────────────
+        aura_radius = float(tok.get("aura_radius", 0))
+        if aura_radius > 0:
+            aura_color = tok.get("aura_color", "#00ffff")
+            aura_px = (aura_radius / 5.0 + size / 2.0) * cp
+            
+            # Utilisation de l'image transparente (si PIL est installé)
+            if PIL_AVAILABLE:
+                diameter = int(aura_px * 2)
+                aura_img = _get_aura_image(aura_color, diameter)
+                if aura_img:
+                    # Garder une référence dans le dico du token pour éviter que 
+                    # le ramasse-miettes (Garbage Collector) de Python ne l'efface
+                    tok["_aura_photo"] = aura_img  
+                    
+                    ids.append(self.canvas.create_image(
+                        base_cx, base_cy, image=aura_img,
+                        anchor="center", tags=("token", "aura", tag)))
+            else:
+                # Fallback de sécurité (stipple) si la librairie PIL venait à manquer
+                ids.append(self.canvas.create_oval(
+                    base_cx - aura_px, base_cy - aura_px,
+                    base_cx + aura_px, base_cy + aura_px,
+                    fill=aura_color, outline="", stipple="gray12",
+                    tags=("token", "aura", tag)))
+            
+            # Bordure pointillée de l'aura
+            ids.append(self.canvas.create_oval(
+                base_cx - aura_px, base_cy - aura_px,
+                base_cx + aura_px, base_cy + aura_px,
+                outline=aura_color, width=2, dash=(4, 4), fill="",
+                tags=("token", "aura", tag)))
 
         # ── Ombre au sol (projeté sous le token) ──────────────────────────────
         if flying:
@@ -511,6 +592,79 @@ class TokenManagerMixin:
         tok["size"] = size_val
         self._redraw_one_token(tok)
         self._save_state()
+
+    def _edit_token_aura(self, tok):
+        """Dialogue pour configurer l'aura d'un token."""
+        dw = tk.Toplevel(self.win)
+        dw.title(f"Aura — {tok.get('name','?')}")
+        dw.geometry("280x220")
+        dw.configure(bg="#0d1018")
+        dw.resizable(False, False)
+        dw.wait_visibility()
+        dw.grab_set()
+
+        tk.Label(dw, text=f"🌀 Aura de {tok.get('name','?')}",
+                 bg="#0d1018", fg="#00ccff",
+                 font=("Consolas", 10, "bold")).pack(pady=(12, 6))
+
+        frm = tk.Frame(dw, bg="#0d1018")
+        frm.pack(pady=5)
+
+        # Rayon de l'aura
+        tk.Label(frm, text="Rayon (ft) :", bg="#0d1018", fg="#aaaacc",
+                 font=("Consolas", 9)).grid(row=0, column=0, pady=5, sticky="e")
+        
+        radius_var = tk.StringVar(value=str(tok.get("aura_radius", 0)))
+        spx = tk.Spinbox(frm, from_=0, to=150, increment=5,
+                         textvariable=radius_var, width=8, 
+                         bg="#252538", fg="#00ccff", font=("Consolas", 10, "bold"),
+                         buttonbackground="#252538", relief="flat")
+        spx.grid(row=0, column=1, padx=5, pady=5)
+
+        # Couleur de l'aura
+        tk.Label(frm, text="Couleur :", bg="#0d1018", fg="#aaaacc",
+                 font=("Consolas", 9)).grid(row=1, column=0, pady=5, sticky="e")
+        
+        COLORS = {
+            "Bleu / Cyan (Défaut)": "#00ccff",
+            "Or / Jaune (Paladin)": "#ffcc00",
+            "Vert (Poison/Soin)": "#4caf50",
+            "Rouge (Feu/Hostile)": "#f44336",
+            "Violet (Magie/Ombre)": "#ce93d8",
+            "Blanc (Lumière)": "#ffffff"
+        }
+        
+        color_var = tk.StringVar()
+        current_color = tok.get("aura_color", "#00ccff")
+        # Trouver le nom correspondant à la couleur actuelle
+        color_name = next((name for name, hex_c in COLORS.items() if hex_c == current_color), "Bleu / Cyan (Défaut)")
+        color_var.set(color_name)
+
+        color_menu = tk.OptionMenu(frm, color_var, *COLORS.keys())
+        color_menu.config(bg="#252538", fg="#aaaacc", font=("Consolas", 9), relief="flat", highlightthickness=0)
+        color_menu["menu"].config(bg="#0d1018", fg="#aaaacc", font=("Consolas", 9))
+        color_menu.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+
+        def _apply(event=None):
+            try:
+                val = max(0, int(radius_var.get()))
+            except ValueError:
+                val = 0
+                
+            tok["aura_radius"] = val
+            tok["aura_color"] = COLORS.get(color_var.get(), "#00ccff")
+            
+            dw.destroy()
+            self._redraw_one_token(tok)
+            self._save_state()
+
+        tk.Button(dw, text="✅ Appliquer",
+                  bg="#003344", fg="#00ccff", font=("Consolas", 9, "bold"),
+                  relief="flat", padx=12, pady=5, cursor="hand2",
+                  command=_apply).pack(pady=15)
+        
+        dw.bind("<Return>", _apply)
+        dw.bind("<Escape>", lambda e: dw.destroy())
 
     def _edit_token_altitude(self, tok):
         """Dialogue pour régler l'altitude d'un token (en pieds D&D, 0 = au sol)."""

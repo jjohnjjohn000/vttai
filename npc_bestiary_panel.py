@@ -1341,6 +1341,229 @@ class MonsterSheetWindow:
                      wraplength=520, justify=tk.LEFT).pack(fill=tk.X)
         self._action_roll_widget(parent, a_name, rolls, monster, self.BG)
 
+    # ── Spellcasting ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _clean_spell_name(raw: str) -> str:
+        """Extrait le nom lisible d'un tag {@spell nom} ou retourne la chaîne brute."""
+        import re as _re
+        m = _re.search(r'\{@spell\s+([^|}]+)', raw)
+        return m.group(1).strip() if m else raw.strip()
+
+    def _spellcasting_block(self, parent, sc: dict, monster: dict):
+        """
+        Rend un bloc spellcasting complet (standard ou inné) :
+          • En-tête descriptif avec boutons DD / Attaque de sort
+          • Cantrips (niveau 0, à volonté)
+          • Emplacements par niveau (1-9)
+          • Sorts inné : à volonté, X/jour
+        """
+        import re as _re
+
+        SPELL_LEVEL_FR = {
+            "0": "Sorts mineurs",
+            "1": "Niveau 1", "2": "Niveau 2", "3": "Niveau 3",
+            "4": "Niveau 4", "5": "Niveau 5", "6": "Niveau 6",
+            "7": "Niveau 7", "8": "Niveau 8", "9": "Niveau 9",
+        }
+        ABILITY_FR = {
+            "int": "INT", "wis": "SAG", "cha": "CHA",
+            "str": "FOR", "dex": "DEX", "con": "CON",
+        }
+        SPELL_BG   = "#0d0d1f"
+        SPELL_FG   = "#b39ddb"
+        CANTRIP_FG = "#9b8fc7"
+        SLOT_FG    = "#ce93d8"
+        INNATE_FG  = "#80cbc4"
+        HDR_FG     = "#e0d0ff"
+
+        sc_name = sc.get("name", "Spellcasting")
+        ability = sc.get("ability", "int")
+        header_entries = sc.get("headerEntries", [])
+        header_text = _fmt_entries(header_entries)
+
+        # Extraire DC et bonus d'attaque depuis le header
+        dc_m   = _re.search(r'\{@dc\s+(\d+)\}',  header_text + " ".join(str(e) for e in header_entries))
+        hit_m  = _re.search(r'\{@hit\s+(-?\d+)\}', " ".join(str(e) for e in header_entries))
+        spell_dc  = int(dc_m.group(1))  if dc_m  else None
+        spell_hit = int(hit_m.group(1)) if hit_m else None
+
+        # ── Titre de section ──────────────────────────────────────────────────
+        title_row = tk.Frame(parent, bg=SPELL_BG)
+        title_row.pack(fill=tk.X, padx=8, pady=(6, 0))
+
+        tk.Label(title_row, text=f"✨ {sc_name}",
+                 bg=SPELL_BG, fg=SPELL_FG,
+                 font=("Consolas", 9, "bold"), anchor="w").pack(side=tk.LEFT, padx=4)
+
+        ability_lbl = ABILITY_FR.get(ability, ability.upper())
+        tk.Label(title_row, text=f"({ability_lbl})",
+                 bg=SPELL_BG, fg=self.FG_DIM,
+                 font=("Consolas", 8)).pack(side=tk.LEFT, padx=2)
+
+        # Boutons DD et Attaque de sort
+        if spell_dc is not None or spell_hit is not None:
+            btn_row = tk.Frame(title_row, bg=SPELL_BG)
+            btn_row.pack(side=tk.RIGHT, padx=4)
+
+            if spell_dc is not None:
+                dc_val = spell_dc
+                def _show_dc(dc=dc_val, ab=ability_lbl, name=sc_name):
+                    self._send_to_chat(
+                        f"✨ **{name}** — DD de sauvegarde\n  DD {dc} ({ab}) — les cibles doivent réussir !",
+                        "#9b8fc7")
+                tk.Button(btn_row, text=f"DD {spell_dc}",
+                          bg="#1a0d2e", fg="#ce93d8",
+                          font=("Consolas", 8, "bold"), relief="flat",
+                          padx=6, pady=2, cursor="hand2",
+                          command=_show_dc).pack(side=tk.LEFT, padx=(0, 4))
+
+            if spell_hit is not None:
+                hit_val = spell_hit
+                sign    = "+" if hit_val >= 0 else ""
+                def _roll_spell_attack(b=hit_val, name=sc_name):
+                    import random as _rnd
+                    d20  = _rnd.randint(1, 20)
+                    tot  = d20 + b
+                    s    = "+" if b >= 0 else ""
+                    crit = " 🎯 CRITIQUE!" if d20 == 20 else (" ☠ FUMBLE" if d20 == 1 else "")
+                    self._send_to_chat(
+                        f"✨ **{name}** — Attaque de sort\n  d20({d20}){s}{b} = **{tot}**{crit}",
+                        "#ce93d8")
+                tk.Button(btn_row, text=f"Attaque {sign}{hit_val}",
+                          bg="#1a0d2e", fg="#b39ddb",
+                          font=("Consolas", 8, "bold"), relief="flat",
+                          padx=6, pady=2, cursor="hand2",
+                          command=_roll_spell_attack).pack(side=tk.LEFT)
+
+        # ── Description / header ──────────────────────────────────────────────
+        clean_header = _re.sub(r'\{@(?:dc|hit)\s+[^}]+\}',
+                               lambda mo: (f"DD {mo.group(0)[4:-1]}" if "@dc" in mo.group(0)
+                                           else f"+{mo.group(0)[5:-1]}"),
+                               header_text)
+        clean_header = _re.sub(r'\{@[^}]+\}', '', clean_header).strip()
+        if clean_header:
+            tk.Label(parent, text=clean_header,
+                     bg=SPELL_BG, fg=self.FG_DIM,
+                     font=("Consolas", 8, "italic"), anchor="w",
+                     padx=14, wraplength=520, justify=tk.LEFT).pack(fill=tk.X)
+
+        def _spell_btn(wrap, spell_raw: str, fg: str):
+            """
+            Groupe sort : [Nom du sort ──────────][▶]
+              • Clic sur le nom  → ouvre SpellSheetWindow (fiche lecture seule)
+              • Clic sur ▶       → envoie "Lancé : X" dans le chat
+            """
+            name = self._clean_spell_name(spell_raw)
+
+            # Conteneur groupé (nom + bouton cast collés)
+            grp = tk.Frame(wrap, bg="#130d24", bd=0, highlightthickness=0)
+            grp.pack(side=tk.LEFT, padx=2, pady=1)
+
+            def _open_sheet(n=name):
+                try:
+                    from spell_data import SpellSheetWindow, get_spell
+                    sp = get_spell(n)
+                    if sp:
+                        SpellSheetWindow(self.win, sp)
+                    else:
+                        self._send_to_chat(f"✨ {n}  (fiche de sort introuvable)", "#b39ddb")
+                except ImportError:
+                    self._send_to_chat(f"✨ {n}", "#b39ddb")
+
+            def _cast(n=name):
+                self._send_to_chat(f"✨ **Lancé :** {n}", "#b39ddb")
+
+            # ── Bouton nom → fiche ────────────────────────────────────────────
+            tk.Button(grp, text=name,
+                      bg="#130d24", fg=fg,
+                      font=("Consolas", 8), relief="flat",
+                      padx=5, pady=1, cursor="hand2",
+                      command=_open_sheet).pack(side=tk.LEFT)
+
+            # ── Petit bouton carré → lancer ───────────────────────────────────
+            tk.Button(grp, text="▶",
+                      bg="#1a0f30", fg="#9b8fc7",
+                      font=("Consolas", 7, "bold"), relief="flat",
+                      padx=3, pady=1, cursor="hand2",
+                      command=_cast).pack(side=tk.LEFT)
+
+        # ── Emplacements de sorts (standard) ─────────────────────────────────
+        spells_by_level = sc.get("spells", {})
+        for lvl_key in sorted(spells_by_level.keys(), key=lambda x: int(x)):
+            lvl_data  = spells_by_level[lvl_key]
+            spell_list = lvl_data.get("spells", [])
+            if not spell_list:
+                continue
+            slots = lvl_data.get("slots")
+            lvl_int = int(lvl_key)
+
+            # Label de niveau
+            row_lbl = tk.Frame(parent, bg=SPELL_BG)
+            row_lbl.pack(fill=tk.X, padx=14, pady=(4, 0))
+
+            lvl_fr = SPELL_LEVEL_FR.get(lvl_key, f"Niveau {lvl_key}")
+            fg_lbl = CANTRIP_FG if lvl_int == 0 else SLOT_FG
+            lbl_txt = lvl_fr
+            if slots is not None:
+                lbl_txt += f"  ({slots} emplacement{'s' if slots > 1 else ''})"
+
+            tk.Label(row_lbl, text=lbl_txt,
+                     bg=SPELL_BG, fg=fg_lbl,
+                     font=("Arial", 8, "bold"), anchor="w").pack(side=tk.LEFT)
+
+            # Emplacements visuels (petits carrés)
+            if slots:
+                for _ in range(min(slots, 9)):
+                    tk.Label(row_lbl, text="□",
+                             bg=SPELL_BG, fg=SLOT_FG,
+                             font=("Consolas", 9)).pack(side=tk.LEFT, padx=1)
+
+            # Boutons des sorts
+            spell_wrap = tk.Frame(parent, bg=SPELL_BG)
+            spell_wrap.pack(fill=tk.X, padx=24, pady=(1, 2))
+            for sp in spell_list:
+                _spell_btn(spell_wrap, sp, fg_lbl)
+
+        # ── Sorts inné : à volonté (will) ─────────────────────────────────────
+        will_spells = sc.get("will", [])
+        if will_spells:
+            row_lbl = tk.Frame(parent, bg=SPELL_BG)
+            row_lbl.pack(fill=tk.X, padx=14, pady=(4, 0))
+            tk.Label(row_lbl, text="À volonté",
+                     bg=SPELL_BG, fg=INNATE_FG,
+                     font=("Arial", 8, "bold"), anchor="w").pack(side=tk.LEFT)
+            spell_wrap = tk.Frame(parent, bg=SPELL_BG)
+            spell_wrap.pack(fill=tk.X, padx=24, pady=(1, 2))
+            for sp in will_spells:
+                _spell_btn(spell_wrap, sp, INNATE_FG)
+
+        # ── Sorts innés : X/jour ───────────────────────────────────────────────
+        daily = sc.get("daily", {})
+        DAILY_LABELS = {
+            "1": "1/jour", "1e": "1/jour chacun",
+            "2": "2/jour", "2e": "2/jour chacun",
+            "3": "3/jour", "3e": "3/jour chacun",
+            "4": "4/jour", "4e": "4/jour chacun",
+        }
+        for freq_key in sorted(daily.keys()):
+            freq_spells = daily[freq_key]
+            if not freq_spells:
+                continue
+            freq_lbl = DAILY_LABELS.get(freq_key, f"{freq_key}/jour")
+            row_lbl = tk.Frame(parent, bg=SPELL_BG)
+            row_lbl.pack(fill=tk.X, padx=14, pady=(4, 0))
+            tk.Label(row_lbl, text=freq_lbl,
+                     bg=SPELL_BG, fg=INNATE_FG,
+                     font=("Arial", 8, "bold"), anchor="w").pack(side=tk.LEFT)
+            spell_wrap = tk.Frame(parent, bg=SPELL_BG)
+            spell_wrap.pack(fill=tk.X, padx=24, pady=(1, 2))
+            for sp in freq_spells:
+                _spell_btn(spell_wrap, sp, INNATE_FG)
+
+        # Ligne de séparation finale
+        tk.Frame(parent, bg="#2a1a4a", height=1).pack(fill=tk.X, padx=8, pady=(6, 0))
+
     def _show_monster(self, name: str):
         m = get_monster(name)
         if not m:
@@ -1464,6 +1687,16 @@ class MonsterSheetWindow:
             for t in traits:
                 self._action_block(self._inner, t, m, self.PURPLE, self.BG)
             self._sep()
+
+        # ── SORTS (SPELLCASTING) ─────────────────────────────────────────────
+        spellcasting = m.get("spellcasting", [])
+        if spellcasting:
+            self._section("Sorts", "#b39ddb")
+            spell_outer = tk.Frame(self._inner, bg="#0d0d1f")
+            spell_outer.pack(fill=tk.X, padx=4, pady=(0, 4))
+            for sc in spellcasting:
+                self._spellcasting_block(spell_outer, sc, m)
+            self._sep(color="#2a1a4a")
 
         # ── ACTIONS ─────────────────────────────────────────────────────────
         actions = m.get("action", [])
