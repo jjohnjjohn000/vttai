@@ -23,6 +23,7 @@ Prérequis sur l'instance hôte (DnDApp) :
 """
 
 import threading
+import copy
 
 from llm_config    import build_llm_config, _default_model, StopLLMRequested
 from app_config    import (get_agent_config, get_chronicler_config,
@@ -57,6 +58,7 @@ class AutogenEngineMixin:
         utilise immédiatement le nouveau modèle.
         Appel thread-safe depuis le thread Tk (même pattern que _rebuild_agent_prompts).
         """
+
         agents = getattr(self, "_agents", None)
         if not agents:
             return  # moteur pas encore démarré — silencieux
@@ -71,7 +73,7 @@ class AutogenEngineMixin:
             if not hasattr(self, "_pre_combat_llm") or not self._pre_combat_llm:
                 self._pre_combat_llm = {
                     name: {
-                        "llm_config": agents[name].llm_config,
+                        "llm_config": copy.deepcopy(agents[name].llm_config),
                         "client":     agents[name].client,
                     }
                     for name in _PLAYER_NAMES_COMBAT
@@ -86,9 +88,20 @@ class AutogenEngineMixin:
                 if agent is None:
                     continue
                 try:
-                    agent.llm_config = combat_cfg
+                    old_cfg = agent.llm_config or {}
+                    new_cfg = copy.deepcopy(combat_cfg)
+                    
+                    # PRÉSERVATION DES OUTILS CRITIQUE 
+                    # Sinon, les agents perdent la capacité d'attaquer ou lancer des sorts en combat.
+                    if "tools" in old_cfg:
+                        new_cfg["tools"] = copy.deepcopy(old_cfg["tools"])
+                    if "functions" in old_cfg:
+                        new_cfg["functions"] = copy.deepcopy(old_cfg["functions"])
+
+                    agent.llm_config = new_cfg
                     agent.client = _ag.OpenAIWrapper(
-                        **{k: v for k, v in combat_cfg.items() if k != "functions"}
+                        # Exclusion des clés tools/functions pour éviter les TypeErrors sur l'instanciation de l'API OpenAI
+                        **{k: v for k, v in new_cfg.items() if k not in ("functions", "tools")}
                     )
                 except Exception as _e:
                     print(f"[CombatLLM] Erreur switch agent {name} : {_e}")
@@ -511,7 +524,10 @@ class AutogenEngineMixin:
                         if exhausted_model is None:
                             for _cn in PLAYER_NAMES:
                                 _m = get_agent_config(_cn).get("model", "")
-                                if _m and any(kw in err_msg for kw in ["gemini","groq","llama","arcee"]):
+                                # Extraire le nom de base du modèle (après le dernier "/")
+                                _base_model = _m.split("/")[-1].split(":")[0].lower() if _m else ""
+                                # Chercher si un morceau du nom du modèle configuré est dans l'erreur
+                                if _m and (_base_model in err_msg.lower() or any(kw in err_msg.lower() for kw in ["gemini", "groq", "llama", "arcee", "gemma", "deepseek"])):
                                     exhausted_model = _m
                                     break
 
@@ -552,11 +568,16 @@ class AutogenEngineMixin:
                                         continue
                                     try:
                                         _new_cfg = build_llm_config(next_model, temperature=0.7)
+                                        # On sécurise à nouveau les tools
+                                        old_cfg = _agent_obj.llm_config or {}
+                                        if "tools" in old_cfg: _new_cfg["tools"] = copy.deepcopy(old_cfg["tools"])
+                                        if "functions" in old_cfg: _new_cfg["functions"] = copy.deepcopy(old_cfg["functions"])
+                                        
                                         _agent_obj.llm_config = _new_cfg
                                         import autogen as _ag
                                         _agent_obj.client = _ag.OpenAIWrapper(
                                             **{k: v for k, v in _new_cfg.items()
-                                               if k != "functions"}
+                                               if k not in ("functions", "tools")}
                                         )
                                         print(f"[Auto-Fallback] Agent {_cn} mis à jour en mémoire → {next_model}")
                                     except Exception as _me:

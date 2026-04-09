@@ -139,6 +139,14 @@ class LLMControlMixin:
             return
         text = self.entry.get().strip()
         self.entry.delete(0, tk.END)
+        # ── Historique des entrées (navigation ↑/↓) ───────────────────────────
+        if text:
+            hist = getattr(self, '_chat_history', [])
+            if not hist or hist[-1] != text:
+                hist.append(text)
+                self._chat_history = hist
+            self._chat_hist_idx = -1
+            self._chat_hist_draft = ""
         if self._llm_running and not self._waiting_for_mj:
             if not text:
                 self.stop_llms()
@@ -200,6 +208,24 @@ class LLMControlMixin:
                 return
             threading.Thread(target=self._send_private_message, args=(real_name, private_text), daemon=True).start()
             return
+
+        # ── Commande /dmg [nom] [valeur] [type_dégâts] ────────────────────────
+        _pd = _re_msg.match(r'^/dmg(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
+        if _pd:
+            self._cmd_damage(_pd.group(1) or "")
+            return
+
+        # ── Commande /heal [nom] [valeur] ─────────────────────────────────────
+        _ph = _re_msg.match(r'^/heal(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
+        if _ph:
+            self._cmd_heal(_ph.group(1) or "")
+            return
+
+        # ── Commande /round ───────────────────────────────────────────────────
+        if _re_msg.match(r'^/round$', text, _re_msg.IGNORECASE):
+            self._cmd_round()
+            return
+
         # ── Enter vide → parole spontanée ────────────────────────────────
         # [PAROLE_SPONTANEE] est un marqueur reconnu par le sélecteur de
         # speaker dans autogen_engine : il déclenche directement la rotation
@@ -485,6 +511,288 @@ class LLMControlMixin:
             inject = f"[RÉSULTAT DU VOTE] Égalité entre {' et '.join(winners)} — le MJ tranchera."
         self.user_input = inject
         self.input_event.set()
+
+    # ─── Commandes chat rapides (/dmg, /heal, /round) ────────────────────────
+
+    # ─── Commandes chat rapides (/dmg, /heal, /round) ────────────────────────
+
+    def _apply_hp_change(self, target: str, delta: int) -> str:
+        """
+        Applique un changement de PV à target et met à jour TOUTES les sources :
+          • PJ  → state_manager.update_hp()  (les popouts refreshent auto toutes les 2s)
+                  + sync du Combatant dans COMBAT_STATE si le tracker est ouvert
+          • PNJ → combat_tracker_win.apply_damage_to_npc() pour les dégâts
+                  + mise à jour directe du Combatant dans COMBAT_STATE pour les soins
+        delta > 0 = soin, delta < 0 = dégâts.
+        Retourne un message de résultat prêt à afficher dans le chat.
+        """
+        if delta == 0:
+            return f"[RÉSULTAT SYSTÈME] {target} : aucun changement (0 PV)."
+
+        PC_NAMES = set(getattr(self, 'CHAR_COLORS', {}).keys())
+        tracker  = getattr(self, '_combat_tracker_win', None)
+
+        # ── PJ ────────────────────────────────────────────────────────────────
+        if target in PC_NAMES:
+            from state_manager import update_hp as _upd_hp
+            result_msg = _upd_hp(target, delta)   # sauvegarde dans campaign_state.json
+
+            # Sync immédiate du Combatant dans COMBAT_STATE (barre PV du tracker)
+            if tracker is not None:
+                try:
+                    from state_manager import load_state as _ls
+                    _new_hp = _ls().get("characters", {}).get(target, {}).get("hp", None)
+                    if _new_hp is not None:
+                        for _c in tracker.combatants:
+                            if _c.name == target:
+                                _c.hp = _new_hp
+                                break
+                        # Rafraîchit la ligne du tracker sans rebuild complet
+                        if hasattr(tracker, '_refresh_list'):
+                            tracker._refresh_list()
+                        elif hasattr(tracker, '_sort_and_refresh'):
+                            tracker._sort_and_refresh()
+                        # Persiste l'état du tracker
+                        if hasattr(tracker, '_save_combat_state'):
+                            tracker._save_combat_state()
+                except Exception as _e:
+                    print(f"[HP sync] Erreur sync tracker pour {target} : {_e}")
+            return result_msg
+
+        # ── PNJ ───────────────────────────────────────────────────────────────
+        if tracker is not None:
+            try:
+                if delta < 0:
+                    # apply_damage_to_npc gère tout : hp, barre, save, mort
+                    tracker.apply_damage_to_npc(target, abs(delta))
+                else:
+                    # Soin : mise à jour directe du Combatant + refresh
+                    for _c in tracker.combatants:
+                        if _c.name == target:
+                            _c.hp = min(_c.hp + delta, _c.max_hp)
+                            break
+                    else:
+                        # Chercher aussi dans le kill_pool au cas où
+                        for _c in getattr(tracker, 'kill_pool', []):
+                            if _c.name == target:
+                                _c.hp = min(_c.hp + delta, _c.max_hp)
+                                break
+                    if hasattr(tracker, '_refresh_list'):
+                        tracker._refresh_list()
+                    elif hasattr(tracker, '_sort_and_refresh'):
+                        tracker._sort_and_refresh()
+                    if hasattr(tracker, '_save_combat_state'):
+                        tracker._save_combat_state()
+
+                # Récupère les PV actuels pour le message de résultat
+                _cur = next(
+                    (_c.hp for _c in tracker.combatants if _c.name == target), None
+                )
+                _max = next(
+                    (_c.max_hp for _c in tracker.combatants if _c.name == target), None
+                )
+                _action = "soigné" if delta > 0 else "blessé"
+                _pv_txt = f"  PV actuels : {_cur}/{_max}." if _cur is not None else ""
+                return (
+                    f"[RÉSULTAT SYSTÈME] {target} a été {_action} de {abs(delta)}.{_pv_txt}"
+                )
+            except Exception as _e:
+                print(f"[HP apply] Erreur PNJ {target} : {_e}")
+                return f"[Erreur] Mise à jour PV de {target} : {_e}"
+
+        # Tracker non ouvert → mise à jour directe dans COMBAT_STATE
+        try:
+            from combat_tracker import COMBAT_STATE as _CS
+            for _c in _CS.get("combatants", []):
+                _name = _c.get("name") if isinstance(_c, dict) else getattr(_c, "name", "")
+                if _name == target:
+                    if isinstance(_c, dict):
+                        _c["hp"] = max(0, min(_c.get("hp", 0) + delta, _c.get("max_hp", 9999)))
+                    else:
+                        _c.hp = max(0, min(_c.hp + delta, _c.max_hp))
+                    break
+        except Exception as _e:
+            print(f"[HP apply] COMBAT_STATE non accessible pour {target} : {_e}")
+
+        _action = "soigné" if delta > 0 else "blessé"
+        return f"[RÉSULTAT SYSTÈME] {target} a été {_action} de {abs(delta)}. (Tracker fermé — PV mis à jour en mémoire)"
+
+    def _cmd_damage(self, args: str):
+        """
+        /dmg [nom_personnage] [valeur] [type_dégâts]
+        Ouvre la boite de dégâts pré-remplie avec les arguments fournis.
+        """
+        parts = args.strip().split() if args.strip() else []
+        _all_names = list(getattr(self, 'CHAR_COLORS', {}).keys())
+
+        char_name = "?"
+        valeur    = 0
+        dmg_type  = ""
+
+        i = 0
+        if parts:
+            maybe = next(
+                (n for n in _all_names if n.lower().startswith(parts[0].lower())),
+                None,
+            )
+            if maybe:
+                char_name = maybe
+                i = 1
+        if i < len(parts):
+            try:
+                valeur = int(parts[i])
+                i += 1
+            except ValueError:
+                pass
+        if i < len(parts):
+            dmg_type = " ".join(parts[i:])
+
+        detail = "Dégâts manuels — MJ" + (f"\nType : {dmg_type}" if dmg_type else "")
+
+        def _on_confirm(final, selected_cible=None):
+            # selected_cible vient du dropdown du popup (peut être None si
+            # l'appel provient d'un callback ancien à 1 argument)
+            _target = (
+                selected_cible
+                if selected_cible and selected_cible not in ("—", "?", "")
+                else char_name
+            )
+            type_txt = f" ({dmg_type})" if dmg_type else ""
+
+            # ── Appliquer les dégâts dans toutes les sources de données ──────
+            if final > 0:
+                result = self._apply_hp_change(_target, -final)
+            else:
+                result = f"[RÉSULTAT SYSTÈME] {_target} : aucun dégât appliqué."
+
+            self.msg_queue.put({
+                "sender": "⚔️ MJ — Dégâts",
+                "text": (
+                    f"{char_name} → {_target} : "
+                    f"{final} dégât{'s' if final != 1 else ''}{type_txt}\n"
+                    f"{result}"
+                ),
+                "color": "#ff6644",
+            })
+
+            # Rebuild des system prompts agents si une session est active
+            if getattr(self, '_agents', None):
+                try:
+                    self._rebuild_agent_prompts()
+                except Exception:
+                    pass
+
+        self.root.after(0, lambda: self._open_damage_popup(
+            char_name, "—", detail, valeur, False, _on_confirm,
+            mode="damage", dmg_type=dmg_type
+        ))
+
+    def _cmd_heal(self, args: str):
+        """
+        /heal [nom_personnage] [valeur]
+        Ouvre la boite de soins pré-remplie avec les arguments fournis.
+        """
+        parts = args.strip().split() if args.strip() else []
+        _all_names = list(getattr(self, 'CHAR_COLORS', {}).keys())
+
+        char_name = "?"
+        valeur    = 0
+
+        i = 0
+        if parts:
+            maybe = next(
+                (n for n in _all_names if n.lower().startswith(parts[0].lower())),
+                None,
+            )
+            if maybe:
+                char_name = maybe
+                i = 1
+        if i < len(parts):
+            try:
+                valeur = int(parts[i])
+            except ValueError:
+                pass
+
+        def _on_confirm(final, selected_target=None):
+            # selected_target vient du dropdown du popup (peut être None si
+            # l'appel provient d'un callback ancien à 1 argument)
+            _healed = (
+                selected_target
+                if selected_target and selected_target not in ("—", "?", "")
+                else char_name
+            )
+
+            # ── Appliquer les soins dans toutes les sources de données ────────
+            if final > 0:
+                result = self._apply_hp_change(_healed, final)
+            else:
+                result = f"[RÉSULTAT SYSTÈME] {_healed} : aucun soin appliqué."
+
+            self.msg_queue.put({
+                "sender": "💚 MJ — Soins",
+                "text": f"{_healed} récupère {final} PV\n{result}",
+                "color": "#44cc88",
+            })
+
+            # Rebuild des system prompts agents si une session est active
+            if getattr(self, '_agents', None):
+                try:
+                    self._rebuild_agent_prompts()
+                except Exception:
+                    pass
+
+        self.root.after(0, lambda: self._open_damage_popup(
+            char_name, "—", "Soin manuel — MJ", valeur, False, _on_confirm,
+            mode="heal"
+        ))
+
+    def _cmd_round(self):
+        """/round — envoie « Tour de table pour vous tous. » dans le groupchat."""
+        msg = "Tour de table pour vous tous."
+        self.msg_queue.put({"sender": "Alexis_Le_MJ", "text": msg, "color": "#4CAF50"})
+        self.user_input = msg
+        self.input_event.set()
+
+    # ─── Navigation dans l'historique des entrées chat ────────────────────────
+
+    def _on_hist_up(self, event=None):
+        """Touche ↑ sur l'entrée chat — rappelle la saisie précédente."""
+        hist = getattr(self, '_chat_history', [])
+        if not hist:
+            return "break"
+        idx = getattr(self, '_chat_hist_idx', -1)
+        if idx == -1:
+            # Sauvegarder le brouillon en cours avant de naviguer
+            self._chat_hist_draft = self.entry.get()
+            idx = len(hist) - 1
+        elif idx > 0:
+            idx -= 1
+        self._chat_hist_idx = idx
+        self.entry.delete(0, tk.END)
+        self.entry.insert(0, hist[idx])
+        self.entry.icursor(tk.END)
+        return "break"
+
+    def _on_hist_down(self, event=None):
+        """Touche ↓ sur l'entrée chat — avance vers la saisie suivante."""
+        hist = getattr(self, '_chat_history', [])
+        idx  = getattr(self, '_chat_hist_idx', -1)
+        if idx == -1:
+            return "break"
+        if idx < len(hist) - 1:
+            idx += 1
+            self._chat_hist_idx = idx
+            self.entry.delete(0, tk.END)
+            self.entry.insert(0, hist[idx])
+        else:
+            # Fin de l'historique → restaurer le brouillon
+            self._chat_hist_idx = -1
+            self.entry.delete(0, tk.END)
+            draft = getattr(self, '_chat_hist_draft', '')
+            if draft:
+                self.entry.insert(0, draft)
+        self.entry.icursor(tk.END)
+        return "break"
 
     # ─── Jet de compétence ───────────────────────────────────────────────────
 

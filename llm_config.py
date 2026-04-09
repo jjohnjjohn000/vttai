@@ -6,6 +6,7 @@ Préfixes reconnus dans le champ "llm" de campaign_state.json :
   groq/*                 → Groq            (GROQ_API_KEY)    gratuit, très rapide
   openrouter/*           → OpenRouter      (OPENROUTER_API_KEY) modèles :free disponibles
   deepseek/*             → DeepSeek direct (DEEPSEEK_API_KEY)  pas de frais OpenRouter
+  ollama/*               → Ollama local    (aucune clé requise, localhost:11434)
 
 Exemples de valeurs :
   "gemini-2.5-pro"
@@ -14,6 +15,16 @@ Exemples de valeurs :
   "openrouter/meta-llama/llama-3.3-70b-instruct:free"
   "deepseek/deepseek-chat"      ← DeepSeek V3.2, supporte tool calls
   "deepseek/deepseek-reasoner"  ← DeepSeek V3.2 mode thinking (pas de temperature)
+  "ollama/gemma4:e4b"           ← Gemma 4 local via Ollama (RX 6700 XT, 12 GB VRAM)
+  "ollama/gemma4:e2b"           ← Gemma 4 edge local (ultra-léger)
+
+Notes Ollama :
+  • Ollama expose une API OpenAI-compatible sur http://localhost:11434/v1
+  • La clé API peut être n'importe quelle chaîne non-vide (Ollama l'ignore)
+  • Pour les modèles Ollama, il n'y a PAS de fallback automatique vers les
+    fournisseurs cloud — Ollama est intentionnellement isolé (usage offline,
+    confidentialité, coût zéro).
+  • OLLAMA_HOST peut remplacer localhost si Ollama tourne sur une autre machine.
 """
 
 import os
@@ -65,6 +76,11 @@ def _make_no_keepalive_http_client() -> httpx.Client:
 # Solution : utiliser l'endpoint OpenAI-compatible de Gemini pour que le retry marche vraiment.
 _GEMINI_OPENAI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
+# Endpoint Ollama local (OpenAI-compatible).
+# Peut être surchargé via la variable d'environnement OLLAMA_HOST.
+# Exemple : OLLAMA_HOST=http://192.168.1.50:11434 pour une machine distante.
+_OLLAMA_BASE = os.getenv("OLLAMA_HOST", "http://localhost:11434") + "/v1"
+
 
 def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
     """
@@ -83,6 +99,11 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
       4. gemini-2.5-flash              (toutes les clés)
       5. groq/meta-llama/llama-4-scout-17b-16e-instruct
       6. OpenRouter (llama + mistral + arcee trinity)
+
+    Modèles Ollama (préfixe "ollama/") :
+      Pas de fallback cloud — Ollama est intentionnellement isolé.
+      Si Ollama n'est pas disponible, l'appel échoue immédiatement (pas de
+      basculement silencieux vers un fournisseur payant).
 
     NOTE IMPORTANTE : Tous les modèles Gemini utilisent l'endpoint OpenAI-compatible
     de Google afin que le mécanisme de retry config_list d'AutoGen se déclenche
@@ -172,16 +193,53 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
             "http_client": _make_no_keepalive_http_client(),
         }
 
+    def _ollama(model: str) -> dict:
+        """
+        Entrée config_list pour un modèle Ollama local.
+
+        Ollama expose une API OpenAI-compatible sur /v1.
+        La clé API doit être une chaîne non-vide (AutoGen l'exige même si
+        Ollama l'ignore côté serveur) — on utilise "ollama" par convention.
+
+        Timeout augmenté à 300 s : les modèles locaux peuvent être lents
+        à la première génération (chargement en VRAM) ou sur des prompts longs.
+        Ajustez OLLAMA_TIMEOUT dans .env si nécessaire.
+        """
+        timeout_s = float(os.getenv("OLLAMA_TIMEOUT", "300"))
+        client = _NoKeepaliveHttpClient.__new__(_NoKeepaliveHttpClient)
+        httpx.Client.__init__(
+            client,
+            limits=httpx.Limits(max_keepalive_connections=0, max_connections=10),
+            timeout=httpx.Timeout(timeout_s),
+        )
+        client.__class__ = _NoKeepaliveHttpClient
+
+        return {
+            "model":       model,
+            "api_key":     "ollama",   # valeur arbitraire — Ollama n'authentifie pas
+            "base_url":    _OLLAMA_BASE,
+            "api_type":    "openai",
+            "http_client": client,
+        }
+
     # ── 1. Modèle principal demandé ───────────────────────────────────────────
-    if m.startswith("groq/"):
+    if m.startswith("ollama/"):
+        # Modèle local Ollama — pas de fallback cloud
+        ollama_model = m[len("ollama/"):]
+        config_list.append(_ollama(ollama_model))
+
+    elif m.startswith("groq/"):
         config_list.extend(_groq_all_keys(m[len("groq/"):]))
+
     elif m.startswith("openrouter/"):
         if router_key:
             config_list.append(_openrouter(m[len("openrouter/"):]))
+
     elif m.startswith("deepseek/"):
         deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
         if deepseek_key:
             config_list.append(_deepseek(m[len("deepseek/"):]))
+
     else:  # Gemini — une entrée par clé disponible (rotation multi-comptes)
         config_list.extend(_gemini_all_keys(m))
 
@@ -197,8 +255,13 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
     # Pour les modèles Gemini, chaque modèle de la chaîne est ajouté avec
     # TOUTES les clés disponibles — AutoGen épuise tous les comptes pour un
     # modèle avant de passer au suivant.
+    #
+    # Pour les modèles Ollama, pas de fallback — Ollama est isolé intentionnellement.
 
-    if m.startswith("groq/"):
+    if m.startswith("ollama/"):
+        pass  # pas de fallback pour les modèles locaux
+
+    elif m.startswith("groq/"):
         pass  # pas de fallback Groq
 
     elif m.startswith("openrouter/"):
@@ -372,3 +435,36 @@ def format_openrouter_status(data: dict) -> str:
     lines.append(f"modèles :free — limite : {free_daily_limit} req/jour  |  tier : {tier_label}")
 
     return "\n                     ".join(lines)
+
+
+# ─── Utilitaires Ollama ────────────────────────────────────────────────────────
+
+def check_ollama_available() -> bool:
+    """
+    Vérifie rapidement si le serveur Ollama répond sur localhost.
+    Utilisé par le panneau de config pour afficher l'état du service.
+    Timeout très court (2 s) — ne doit pas bloquer l'UI.
+    """
+    try:
+        import requests as _req
+        host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        r = _req.get(f"{host}/api/tags", timeout=2)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def list_ollama_models() -> list[str]:
+    """
+    Retourne la liste des modèles installés sur Ollama (noms complets).
+    Retourne une liste vide si Ollama n'est pas disponible.
+    """
+    try:
+        import requests as _req
+        host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        r = _req.get(f"{host}/api/tags", timeout=3)
+        if r.status_code == 200:
+            return [m["name"] for m in r.json().get("models", [])]
+    except Exception:
+        pass
+    return []

@@ -444,11 +444,44 @@ def load_state():
             state["calendar"] = DEFAULT_CALENDAR.copy()
             dirty = True
 
+        # Migration : ajout des cooldowns de PNJ (Breath Weapon, etc.)
+        if "npc_cooldowns" not in state:
+            state["npc_cooldowns"] = {}
+            dirty = True
+
         if dirty:
             with open(STATE_FILE, "w", encoding="utf-8") as f:
                 json.dump(state, f, indent=4, ensure_ascii=False)
 
         return state
+
+# ============================================================
+# --- GESTION COOLDOWNS PNJ ---
+# ============================================================
+
+def get_npc_cooldown(npc_name: str, action_name: str) -> bool:
+    """Retourne True si l'action est en recharge (utilisée), False si dispo."""
+    state = load_state()
+    return state.get("npc_cooldowns", {}).get(npc_name, {}).get(action_name, False)
+
+def set_npc_cooldown(npc_name: str, action_name: str, on_cooldown: bool):
+    """Marque une action en recharge (True) ou dispo (False)."""
+    with state_lock:
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        except Exception:
+            state = {"npc_cooldowns": {}}
+
+        if "npc_cooldowns" not in state:
+            state["npc_cooldowns"] = {}
+        if npc_name not in state["npc_cooldowns"]:
+            state["npc_cooldowns"][npc_name] = {}
+            
+        state["npc_cooldowns"][npc_name][action_name] = on_cooldown
+        
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=4, ensure_ascii=False)
 
 # ============================================================
 # --- CALENDRIER BAROVIEN ---
@@ -1449,7 +1482,22 @@ def get_spells_prompt(char_name: str) -> str:
     char  = state.get("characters", {}).get(char_name, {})
 
     # ── Nouvelle structure : liste de noms seulement ─────────────────────────
-    spell_names = char.get("spells_prepared",[])
+    spell_names = list(char.get("spells_prepared", []))
+    
+    # Auto-inject subclass (domain/oath) spells
+    c_name = char.get("class", "")
+    sub_c  = char.get("subclass", "")
+    c_lvl  = char.get("level", 1)
+    if c_name and sub_c:
+        try:
+            from class_data import get_subclass_spells
+            extra_spells = get_subclass_spells(c_name, sub_c, c_lvl)
+            for x in extra_spells:
+                if x not in spell_names:
+                    spell_names.append(x)
+        except Exception:
+            pass
+
     slots       = char.get("spell_slots", {})
 
     if not spell_names:
@@ -1479,9 +1527,9 @@ def get_spells_prompt(char_name: str) -> str:
                     _u_fr = "Réaction"
                 else:
                     _u_fr = "Action"
-                time_str = f"[{_u_fr}] "
+                time_str = f" [{_u_fr}]"
                 
-            entry = (name, f"{time_str}{desc}{conc}{rit}")
+            entry = (f"{name}{time_str}", f"{desc}{conc}{rit}")
         else:
             lvl   = 0   # inconnu → traité comme cantrip (disponible à volonté)
             entry = (name, "")

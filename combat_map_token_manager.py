@@ -179,8 +179,53 @@ class TokenManagerMixin:
             id(tok) in sel,
         )
 
+    def _tok_is_visible_for_players(self, tok: dict) -> bool:
+        """En mode vue joueurs, un token ennemi/neutre est visible seulement si
+        sa case est révélée dans le fog mask. Les alliés sont toujours visibles."""
+        alignment = tok.get("alignment", "")
+        tok_type  = tok.get("type", "")
+        if alignment == "ally" or (alignment == "" and tok_type == "hero"):
+            return True   # héros + PNJ alliés toujours visibles
+        # Ennemis/neutres/pièges : vérifier le fog mask
+        if self._fog_mask is None:
+            return False  # pas de masque = tout caché
+        c = int(round(tok.get("col", 0)))
+        r = int(round(tok.get("row", 0)))
+        mW, mH = self._fog_mask.size
+        if mW == 0 or mH == 0:
+            return False
+        fpx = min(max(0, int((c + 0.5) * mW / self.cols)), mW - 1)
+        fpy = min(max(0, int((r + 0.5) * mH / self.rows)), mH - 1)
+        val = self._fog_mask.getpixel((fpx, fpy))
+        return val <= 127  # 0 = révélé, 255 = brouillard
+
+    def set_view_mode(self, dm_view: bool):
+        """Bascule entre vue MJ (dm_view=True) et vue joueurs (dm_view=False).
+
+        Invalide le cache fingerprint de tous les tokens pour forcer leur
+        re-rendu immédiat selon la nouvelle visibilité — sans attendre un
+        zoom ou un scroll.
+        """
+        if getattr(self, "_dm_view", True) == dm_view:
+            return  # déjà dans le bon mode, rien à faire
+        self._dm_view = dm_view
+        # Invalider le cache visuel de chaque token pour que _redraw_all_tokens
+        # ne les saute pas avec le raccourci « fingerprint inchangé ».
+        for tok in getattr(self, "tokens", []):
+            tok.pop("_fp", None)
+        self._redraw_all_tokens()
+
     def _redraw_all_tokens(self):
         for tok in self.tokens:
+            # ── Mode vue joueurs (fenêtre principale) : cacher ennemis dans le fog ──
+            if not getattr(self, "_dm_view", True):
+                if not self._tok_is_visible_for_players(tok):
+                    # Effacer le token s'il était affiché
+                    for iid in tok.get("ids", ()):
+                        self.canvas.delete(iid)
+                    tok.pop("ids", None)
+                    tok.pop("_fp", None)
+                    continue
             fp = self._tok_fingerprint(tok, self.zoom, self._cp,
                                        self._selected_tokens)
             old_fp = tok.get("_fp")
@@ -200,6 +245,30 @@ class TokenManagerMixin:
         size  = float(tok.get("size", 1))
         alt   = int(tok.get("altitude_ft", 0))   # altitude en pieds D&D (0 = sol)
         flying = alt > 0
+        tag     = f"tok_{id(tok)}"
+        ids     = []
+
+        # ── Cas spécial : Carré de prévisualisation (Movement preview) ────────
+        if tok.get("is_preview", False):
+            base_cx = tok["col"] * cp
+            base_cy = tok["row"] * cp
+            sw = cp * size
+            
+            # Un carré avec bordure pointillée animée ou de couleur vive
+            ids.append(self.canvas.create_rectangle(
+                base_cx, base_cy, base_cx + sw, base_cy + sw,
+                outline="#4fc3f7", width=3, dash=(6, 4), fill="#4fc3f7", stipple="gray25",
+                tags=("token", tag)
+            ))
+            tok["ids"] = tuple(ids)
+            for iid in ids:
+                self.canvas.tag_bind(iid, "<ButtonPress-1>",
+                                      lambda e, t=tok: self._tok_press(e, t))
+                self.canvas.tag_bind(iid, "<Enter>",
+                                      lambda e, t=tok: self._tok_enter(e, t))
+                self.canvas.tag_bind(iid, "<Leave>",
+                                      lambda e, t=tok: self._tok_leave(e, t))
+            return
 
         # ── Centre de base du token (case grille) ─────────────────────────────
         base_cx = (tok["col"] + size / 2) * cp
@@ -237,21 +306,21 @@ class TokenManagerMixin:
                     
                     ids.append(self.canvas.create_image(
                         base_cx, base_cy, image=aura_img,
-                        anchor="center", tags=("token", "aura", tag)))
+                        anchor="center", state=tk.DISABLED, tags=("token", "aura", tag)))
             else:
                 # Fallback de sécurité (stipple) si la librairie PIL venait à manquer
                 ids.append(self.canvas.create_oval(
                     base_cx - aura_px, base_cy - aura_px,
                     base_cx + aura_px, base_cy + aura_px,
                     fill=aura_color, outline="", stipple="gray12",
-                    tags=("token", "aura", tag)))
+                    state=tk.DISABLED, tags=("token", "aura", tag)))
             
             # Bordure pointillée de l'aura
             ids.append(self.canvas.create_oval(
                 base_cx - aura_px, base_cy - aura_px,
                 base_cx + aura_px, base_cy + aura_px,
                 outline=aura_color, width=2, dash=(4, 4), fill="",
-                tags=("token", "aura", tag)))
+                state=tk.DISABLED, tags=("token", "aura", tag)))
 
         # ── Ombre au sol (projeté sous le token) ──────────────────────────────
         if flying:
@@ -380,14 +449,20 @@ class TokenManagerMixin:
                 anchor="nw",
                 tags=("token", tag)))
 
-        # ── Barre de PV ───────────────────────────────────────────────────────
-        hp     = tok.get("hp",     -1)
+        # ── Textes (PV et AC) ─────────────────────────────────────────────────
+        tok_ac = tok.get("ac", -1)
+        hp     = tok.get("hp", -1)
         max_hp = tok.get("max_hp", -1)
-        if hp >= 0 and max_hp > 0:
+        has_hp = hp >= 0 and max_hp > 0
+        has_ac = tok_ac > 0
+
+        bar_h = max(3, int(cp * 0.10)) if has_hp else 0
+        by0   = cy - rad - bar_h - 2
+
+        # Rendre la jauge de vie
+        if has_hp:
             bar_w = rad * 2
-            bar_h = max(3, int(cp * 0.10))
             bx0   = cx - rad
-            by0   = cy - rad - bar_h - 2
             by1   = by0 + bar_h
             ids.append(self.canvas.create_rectangle(
                 bx0, by0, bx0 + bar_w, by1,
@@ -402,11 +477,33 @@ class TokenManagerMixin:
                 ids.append(self.canvas.create_rectangle(
                     bx0, by0, bx0 + bar_w * ratio, by1,
                     fill=bar_color, outline="", tags=("token", tag)))
-            if cp >= 28 and self.zoom >= 0.7:
+
+        # Rendre les textes si on est assez zoomé
+        if cp >= 20 and self.zoom >= 0.5:
+            text_str = ""
+            if has_hp:
+                text_str += f"{hp}/{max_hp}"
+            if has_ac:
+                if text_str:
+                    text_str += " | "
+                text_str += f"🛡️{tok_ac}"
+            
+            if text_str:
+                # Un petit fond ombré pour la lisibilité
+                fs = max(6, int(8 * self.zoom))
+                text_y = by0 - fs + 2
+                
+                # Ombre
                 ids.append(self.canvas.create_text(
-                    cx, by0 + bar_h / 2,
-                    text=f"{hp}/{max_hp}", fill="white",
-                    font=("Consolas", max(5, int(6 * self.zoom)), "bold"),
+                    cx + 1, text_y + 1,
+                    text=text_str, fill="black",
+                    font=("Consolas", fs, "bold"),
+                    tags=("token", tag)))
+                # Texte
+                ids.append(self.canvas.create_text(
+                    cx, text_y,
+                    text=text_str, fill="white",
+                    font=("Consolas", fs, "bold"),
                     tags=("token", tag)))
 
         # ── Badges de conditions ───────────────────────────────────────────────
@@ -415,7 +512,7 @@ class TokenManagerMixin:
             badge_r = max(4, int(cp * 0.13))
             import math as _m
             arc_r = rad + badge_r + 2
-            for i, cond in enumerate(conditions[:8]):
+            for i, cond in enumerate(conditions):
                 angle_deg = 270 + i * 360 / len(conditions) if len(conditions) > 1 else 270
                 angle_rad = _m.radians(angle_deg)
                 bx = cx + arc_r * _m.cos(angle_rad)
@@ -429,6 +526,28 @@ class TokenManagerMixin:
                     ids.append(self.canvas.create_text(
                         bx, by, text=cond[:1], fill="#000000",
                         font=("Consolas", max(5, badge_r - 2), "bold"),
+                        tags=("token", tag)))
+
+        # ── Badges de statuts tactiques (anneau interne) ──────────────────────
+        tactics = tok.get("tactics", [])
+        if tactics and self.zoom >= 0.4:
+            badge_r = max(4, int(cp * 0.09))
+            import math as _m
+            arc_r = max(2, rad - badge_r - 2)
+            for i, tac in enumerate(tactics):
+                angle_deg = 270 + i * 360 / len(tactics) if len(tactics) > 1 else 270
+                angle_rad = _m.radians(angle_deg)
+                bx = cx + arc_r * _m.cos(angle_rad)
+                by = cy + arc_r * _m.sin(angle_rad)
+                tac_col = DND_TACTICS.get(tac, "#aaaaaa")
+                ids.append(self.canvas.create_oval(
+                    bx - badge_r, by - badge_r, bx + badge_r, by + badge_r,
+                    fill=tac_col, outline="#ffffff", width=1, stipple="gray50",
+                    tags=("token", tag)))
+                if badge_r >= 6:
+                    ids.append(self.canvas.create_text(
+                        bx, by, text=tac[:1], fill="#000000",
+                        font=("Consolas", max(5, badge_r - 1), "bold"),
                         tags=("token", tag)))
 
         tok["ids"] = tuple(ids)
@@ -445,6 +564,46 @@ class TokenManagerMixin:
             self.canvas.delete(iid)
         tok.pop("ids", None)
         self._draw_one_token(tok)
+
+    def spawn_floating_text(self, tok: dict, text: str, color: str = "#ff5252"):
+        """Affiche un texte flottant animé au-dessus du token."""
+        if getattr(self, "canvas", None) is None: return
+        cp = getattr(self, "_cp", 50)
+        zoom = getattr(self, "zoom", 1.0)
+        size = float(tok.get("size", 1))
+        
+        # Position de départ
+        cx = (tok.get("col", 0) + size / 2.0) * cp
+        cy = (tok.get("row", 0) + size / 2.0) * cp - (cp * size * 0.40) - 20
+        
+        fs = max(14, int(18 * zoom))
+        
+        # Ombre pour lisibilité
+        sh_id = self.canvas.create_text(
+            cx + 2, cy + 2, text=text, fill="#000000",
+            font=("Consolas", fs, "bold"),
+            tags=("floating_text",)
+        )
+        text_id = self.canvas.create_text(
+            cx, cy, text=text, fill=color,
+            font=("Consolas", fs, "bold"),
+            tags=("floating_text",)
+        )
+        
+        # S'assurer que le texte est au-dessus de tout
+        self.canvas.tag_raise("floating_text")
+        
+        def _animate(step_=0, max_steps_=40):
+            if not self.canvas.winfo_exists(): return
+            if step_ >= max_steps_:
+                self.canvas.delete(sh_id)
+                self.canvas.delete(text_id)
+                return
+            self.canvas.move(sh_id, 0, -2)
+            self.canvas.move(text_id, 0, -2)
+            self.canvas.after(30, _animate, step_ + 1, max_steps_)
+            
+        _animate()
 
     # ─── Actions sur tokens individuels ──────────────────────────────────────
 
@@ -475,9 +634,10 @@ class TokenManagerMixin:
         tok["row"] = row - 1
         self._redraw_one_token(tok)
         self._save_state()
-        self._notify_token_moved(tok.get("name", "?"), tok["type"],
-                                 old_col, old_row, col - 1, row - 1,
-                                 alignment=tok.get("alignment", ""))
+        if not getattr(getattr(self, "app", None), "_session_paused", False):
+            self._notify_token_moved(tok.get("name", "?"), tok["type"],
+                                     old_col, old_row, col - 1, row - 1,
+                                     alignment=tok.get("alignment", ""))
 
     def _delete_single_token(self, tok):
         name = tok.get("name", "?")
@@ -521,14 +681,36 @@ class TokenManagerMixin:
                  font=("Consolas", 10), insertbackground="#ef5350",
                  relief="flat", width=8).grid(row=1, column=1, ipady=3)
 
+        tk.Label(frm, text="Ca (Armor) :", bg="#0d1018", fg="#aaaacc",
+                 font=("Consolas", 8), width=12, anchor="w").grid(row=2, column=0, pady=3)
+        ac_var = tk.StringVar(value=str(tok.get("ac", "")) if tok.get("ac", -1) >= 0 else "")
+        tk.Entry(frm, textvariable=ac_var, bg="#252538", fg="#64b5f6",
+                 font=("Consolas", 10), insertbackground="#64b5f6",
+                 relief="flat", width=8).grid(row=2, column=1, ipady=3)
+
         def _apply(event=None):
             try:
                 hp_s  = hp_var.get().strip()
                 mhp_s = maxhp_var.get().strip()
+                ac_s  = ac_var.get().strip()
                 tok["hp"]     = int(hp_s)  if hp_s  else -1
                 tok["max_hp"] = int(mhp_s) if mhp_s else tok["hp"]
+                tok["ac"]     = int(ac_s)  if ac_s  else -1
             except ValueError:
                 pass
+                
+            # ── Synchro avec le tracker ──
+            if getattr(self, "app", None):
+                tracker = getattr(self.app, "_combat_tracker_win", None)
+                if tracker and hasattr(tracker, "combatants"):
+                    for cb in tracker.combatants:
+                        if getattr(cb, "name", "") == tok["name"]:
+                            cb.hp = tok["hp"]
+                            cb.max_hp = tok["max_hp"]
+                            cb.ac = tok["ac"]
+                            tracker._refresh_list()
+                            break
+
             dw.destroy()
             self._redraw_one_token(tok)
             self._save_state()
@@ -542,14 +724,14 @@ class TokenManagerMixin:
     def _edit_token_conditions(self, tok):
         """Dialogue checkboxes pour gérer les conditions D&D 5e d'un token."""
         dw = tk.Toplevel(self.win)
-        dw.title(f"Conditions — {tok.get('name','?')}")
-        dw.geometry("320x400")
+        dw.title(f"Conditions & Tactiques — {tok.get('name','?')}")
+        dw.geometry("320x520")
         dw.configure(bg="#0d1018")
         dw.resizable(False, True)
         dw.wait_visibility()
         dw.grab_set()
 
-        tk.Label(dw, text=f"Conditions — {tok.get('name','?')}",
+        tk.Label(dw, text=f"Conditions & Tactiques — {tok.get('name','?')}",
                  bg="#0d1018", fg="#ce93d8",
                  font=("Consolas", 10, "bold")).pack(pady=(10, 4))
 
@@ -576,8 +758,53 @@ class TokenManagerMixin:
                            activebackground="#0d1018",
                            font=("Consolas", 8)).pack(side=tk.LEFT)
 
+        tk.Label(dw, text="Statuts tactiques", bg="#0d1018", fg="#8888aa",
+                 font=("Consolas", 8, "italic")).pack(pady=(10, 2))
+        
+        tac_current = set(tok.get("tactics", []))
+        tac_vars = {}
+        tac_frm = tk.Frame(dw, bg="#0d1018")
+        tac_frm.pack(fill=tk.BOTH, expand=True, padx=12)
+        
+        for i, (t_name, t_color) in enumerate(DND_TACTICS.items()):
+            row_f = i // cols_n
+            col_f = i % cols_n
+            var = tk.BooleanVar(value=t_name in tac_current)
+            tac_vars[t_name] = var
+            frm_t = tk.Frame(tac_frm, bg="#0d1018")
+            frm_t.grid(row=row_f, column=col_f, sticky="w", padx=6, pady=2)
+            tk.Canvas(frm_t, width=12, height=12, bg="#0d1018",
+                      highlightthickness=0).pack(side=tk.LEFT, padx=(0, 4))
+            dot = frm_t.children[list(frm_t.children)[-1]]
+            dot.create_oval(1, 1, 11, 11, fill=t_color, outline="")
+            tk.Checkbutton(frm_t, text=t_name, variable=var,
+                           bg="#0d1018", fg="#ccccee", selectcolor="#1a1a2e",
+                           activebackground="#0d1018",
+                           font=("Consolas", 8)).pack(side=tk.LEFT)
+
         def _apply():
             tok["conditions"] = [c for c, v in vars_map.items() if v.get()]
+            tok["tactics"]    = [t for t, v in tac_vars.items() if v.get()]
+            
+            # ── Synchro avec le tracker ──
+            if getattr(self, "app", None):
+                tracker = getattr(self.app, "_combat_tracker_win", None)
+                if tracker and hasattr(tracker, "combatants"):
+                    for cb in tracker.combatants:
+                        if getattr(cb, "name", "") == tok["name"]:
+                            cb.conditions.clear()
+                            for cond in tok.get("conditions", []):
+                                cb.conditions[cond] = True
+                            
+                            cb.tactics.clear()
+                            for tac in tok.get("tactics", []):
+                                cb.tactics[tac] = True
+                                
+                            tracker._refresh_list()
+                            if getattr(tracker, "_schedule_save", None):
+                                tracker._schedule_save()
+                            break
+
             dw.destroy()
             self._redraw_one_token(tok)
             self._save_state()
@@ -820,9 +1047,10 @@ class TokenManagerMixin:
         tok["row"] = new_row
         self._redraw_one_token(tok)
         self._save_state()
-        self._notify_token_moved(tok.get("name", "?"), tok["type"],
-                                 old_col, old_row, new_col, new_row,
-                                 alignment=tok.get("alignment", ""))
+        if not getattr(getattr(self, "app", None), "_session_paused", False):
+            self._notify_token_moved(tok.get("name", "?"), tok["type"],
+                                     old_col, old_row, new_col, new_row,
+                                     alignment=tok.get("alignment", ""))
         return True
 
     # ─── Drag tokens (multi-sélection) ───────────────────────────────────────
@@ -852,6 +1080,9 @@ class TokenManagerMixin:
             id(t): (t["col"], t["row"])
             for t in self.tokens if id(t) in self._selected_tokens
         }
+        
+        # --- NOUVEAU : On s'assure qu'aucun ancien compteur ne traîne ---
+        self.canvas.delete("drag_counter")
 
     def _tok_drag(self, event, tok):
         if getattr(self, "_drag_token", None) is None:
@@ -862,6 +1093,35 @@ class TokenManagerMixin:
         new_row = (cy - self._drag_offset[1]) / cp - 0.5
         dcol = new_col - self._drag_origins[id(tok)][0]
         drow = new_row - self._drag_origins[id(tok)][1]
+        
+        # --- NOUVEAU : Calcul et affichage du compteur de distance (D&D 5e) ---
+        oc, or_ = self._drag_origins[id(tok)]
+        dist_cases = max(abs(new_col - oc), abs(new_row - or_))
+        dist_ft = dist_cases * 5.0
+        label = f"{dist_cases:.1f} cases ({dist_ft:.0f} ft)"
+
+        tx, ty = cx, cy - 40  # Affichage 40 pixels au-dessus du curseur
+
+        if not self.canvas.find_withtag("drag_counter_txt"):
+            # Création du fond et du texte
+            self.canvas.create_rectangle(tx-10, ty-10, tx+10, ty+10, 
+                                         fill="#1e1e1e", outline="#fff176", width=1, 
+                                         tags=("drag_counter", "drag_counter_bg"))
+            self.canvas.create_text(tx, ty, text=label, fill="#fff176", 
+                                    font=("Consolas", 10, "bold"), 
+                                    tags=("drag_counter", "drag_counter_txt"))
+        else:
+            # Mise à jour
+            self.canvas.itemconfigure("drag_counter_txt", text=label)
+            self.canvas.coords("drag_counter_txt", tx, ty)
+        
+        # Ajustement du fond noir à la taille du texte
+        bbox = self.canvas.bbox("drag_counter_txt")
+        if bbox:
+            self.canvas.coords("drag_counter_bg", bbox[0]-6, bbox[1]-3, bbox[2]+6, bbox[3]+3)
+        self.canvas.tag_raise("drag_counter")
+        # ----------------------------------------------------------------------
+
         for t in self.tokens:
             if id(t) not in self._selected_tokens:
                 continue
@@ -873,6 +1133,10 @@ class TokenManagerMixin:
     def _tok_release(self, event, tok):
         if getattr(self, "_drag_token", None) is None:
             return
+            
+        # --- NOUVEAU : Suppression du compteur à la fin du mouvement ---
+        self.canvas.delete("drag_counter")
+        
         moved =[]
         for t in self.tokens:
             if id(t) not in self._selected_tokens:
@@ -887,9 +1151,10 @@ class TokenManagerMixin:
         self._drag_token   = None
         self._drag_origins = {}
         self._save_state()
-        for t, oc, or_, nc, nr in moved:
-            self._notify_token_moved(t.get("name", "?"), t["type"], oc, or_, nc, nr,
-                                     alignment=t.get("alignment", ""))
+        if not getattr(getattr(self, "app", None), "_session_paused", False):
+            for t, oc, or_, nc, nr in moved:
+                self._notify_token_moved(t.get("name", "?"), t["type"], oc, or_, nc, nr,
+                                         alignment=t.get("alignment", ""))
 
     # ─── Image Tooltip (Survol) ──────────────────────────────────────────────
 
@@ -1025,3 +1290,49 @@ class TokenManagerMixin:
             except Exception as e:
                 tw.destroy()
                 print(f"[CombatMap] Erreur tooltip image : {e}")
+
+    # ─── Prévisualisation de mouvement ────────────────────────────────────────
+
+    def request_movement_preview(self, name: str, col: float, row: float):
+        """Affiche un carré factice déplaçable (is_preview: True) pour le mouvement en cours."""
+        self.clear_movement_preview(name)
+        # Find the original token to match its size
+        size = 1.0
+        for t in self.tokens:
+            if t.get("name") == name and not t.get("is_preview"):
+                size = float(t.get("size", 1.0))
+                break
+        
+        preview_tok = {
+            "name": name,
+            "type": "ghost",
+            "col": col,
+            "row": row,
+            "size": size,
+            "is_preview": True
+        }
+        self.tokens.append(preview_tok)
+        self._redraw_all_tokens()
+        # Bring focus to the map if it's open
+        if hasattr(self, "win") and self.win:
+            self.win.lift()
+
+    def get_movement_preview(self, name: str) -> tuple:
+        """Récupère les coordonnées courantes du carré de prévisualisation de 'name'."""
+        for t in self.tokens:
+            if t.get("is_preview") and t.get("name") == name:
+                return (t["col"], t["row"])
+        return None
+
+    def clear_movement_preview(self, name: str):
+        """Supprime le carré de prévisualisation associé à 'name'."""
+        deleted = False
+        for t in list(self.tokens):
+            if t.get("is_preview") and t.get("name") == name:
+                for iid in t.get("ids", ()):
+                    self.canvas.delete(iid)
+                self.tokens.remove(t)
+                deleted = True
+        
+        if deleted:
+            self._redraw_all_tokens()

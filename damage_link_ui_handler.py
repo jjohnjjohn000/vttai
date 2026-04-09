@@ -15,6 +15,23 @@ Snippet à intégrer dans la classe principale de l'app (DnDApp ou équivalent).
 import tkinter as tk
 import tkinter.simpledialog as _sd
 
+# ─── Types de dégâts D&D 5e (français) ───────────────────────────────────────
+_DMG_TYPES = [
+    "—",
+    "Tranchant",
+    "Contondant",
+    "Perforant",
+    "Acide",
+    "Feu",
+    "Froid",
+    "Foudre",
+    "Nécrotique",
+    "Radiant",
+    "Poison",
+    "Psychique",
+    "Tonnerre",
+    "Force",
+]
 
 # ─── À coller dans la classe principale (ex : DnDApp) ────────────────────────
 
@@ -97,13 +114,69 @@ def _open_damage_popup(self,
                        char_name: str, cible: str,
                        dmg_text: str, total: int,
                        is_crit: bool,
-                       resume_callback):
+                       resume_callback,
+                       mode: str = "damage",
+                       dmg_type: str = ""):
     """
-    Popup tkinter qui permet au MJ de modifier les dégâts avant de les
-    confirmer. Appelle resume_callback(final_amount) à la fermeture.
+    Popup tkinter qui permet au MJ de modifier les dégâts (ou soins) avant de les
+    confirmer. Appelle resume_callback(final_amount[, selected_target]) à la fermeture.
+
+    mode="damage" (défaut) — boîte de dégâts.  Affiche un dropdown cible + type de dégâts.
+    mode="heal"            — boîte de soins (verte).  Affiche un dropdown cible (personnage soigné).
+
+    Nouveautés :
+      • Dropdown "Cible" / "Soigné" peuplé depuis COMBAT_STATE (combat_map) ou CHAR_COLORS.
+      • Dropdown "Type de dégâts" (mode damage uniquement), pré-sélectionné si dmg_type fourni.
+      • resume_callback est appelé avec (final, selected_target) si la signature l'accepte,
+        sinon fallback (final) pour ne pas briser les appels depuis engine_receive.py.
     """
+    _is_heal = (mode == "heal")
+
+    # ── Récupération des combattants depuis COMBAT_STATE (combat_map) ──────
+    _combat_names: list[str] = []
+    try:
+        from combat_tracker import COMBAT_STATE as _CS
+        for _c in _CS.get("combatants", []):
+            _n = _c.get("name") if isinstance(_c, dict) else str(_c)
+            if _n and _n not in _combat_names:
+                _combat_names.append(_n)
+    except Exception:
+        pass
+    # Fallback : noms des PJs si le tracker est vide / non chargé
+    if not _combat_names:
+        _combat_names = list(self.CHAR_COLORS.keys())
+
+    # ── Valeur initiale du dropdown ─────────────────────────────────────────
+    # En mode heal la « cible » est le personnage soigné → char_name
+    if _is_heal:
+        _init_target = char_name if char_name and char_name not in ("?",) else (
+            _combat_names[0] if _combat_names else "?"
+        )
+    else:
+        _init_target = cible if cible and cible not in ("—", "?", "") else (
+            _combat_names[0] if _combat_names else "?"
+        )
+    # S'assurer que la valeur initiale est dans la liste
+    if _init_target not in _combat_names:
+        _combat_names = [_init_target] + _combat_names
+
+    _cible_var = tk.StringVar(value=_init_target)
+
+    # ── Pré-sélection du type de dégâts ────────────────────────────────────
+    _init_type = "—"
+    if dmg_type:
+        _init_type = next(
+            (t for t in _DMG_TYPES if t.lower() == dmg_type.lower()),
+            "—",
+        )
+    _type_var = tk.StringVar(value=_init_type)
+
+    # ── Création du popup ───────────────────────────────────────────────────
     popup = tk.Toplevel(self.root)
-    popup.title(f"⚔️ Dégâts — {char_name} → {cible}")
+    popup.title(
+        f"{'💚 Soins' if _is_heal else '⚔️ Dégâts'} — {char_name}"
+        + (f" → {cible}" if cible and cible not in ("—", "?", "") else "")
+    )
     popup.configure(bg="#1e1e2e")
     popup.resizable(False, False)
     popup.attributes("-topmost", True)
@@ -112,18 +185,45 @@ def _open_damage_popup(self,
     except tk.TclError:
         pass  # autre fenêtre modale active — le popup reste utilisable sans grab
 
-    color = self.CHAR_COLORS.get(char_name, "#4fc3f7")
+    color      = self.CHAR_COLORS.get(char_name, "#4fc3f7")
+    hdr_color  = "#27ae60" if _is_heal else color
+    spx_fg     = "#88ffbb" if _is_heal else color
+    btn_color  = "#27ae60" if _is_heal else color
+    dd_bg      = "#252535"
+    dd_fg      = "#88ffbb" if _is_heal else "#ff9944"
+
+    # ── Helper : OptionMenu stylisé ─────────────────────────────────────────
+    def _make_optionmenu(parent, var, choices, fg=dd_fg):
+        om = tk.OptionMenu(parent, var, *choices)
+        om.config(
+            bg=dd_bg, fg=fg, activebackground="#333348",
+            activeforeground=fg, relief="flat",
+            font=("Consolas", 10, "bold"),
+            highlightthickness=1, highlightcolor=fg,
+            indicatoron=True, bd=0,
+        )
+        om["menu"].config(
+            bg=dd_bg, fg=fg, activebackground="#333348",
+            activeforeground=fg, font=("Consolas", 9),
+        )
+        return om
 
     # ── Header ──────────────────────────────────────────────────────────────
-    hdr = tk.Frame(popup, bg=color, pady=5)
+    hdr = tk.Frame(popup, bg=hdr_color, pady=5)
     hdr.pack(fill=tk.X)
-    crit_tag = "  🎯 CRITIQUE" if is_crit else ""
+    crit_tag  = "  🎯 CRITIQUE" if (is_crit and not _is_heal) else ""
+    hdr_icon  = "💚" if _is_heal else "⚔️"
+    hdr_label = (
+        f"{hdr_icon}  {char_name}"
+        + (f"  →  {cible}" if cible and cible not in ("—", "?", "") else "")
+        + crit_tag
+    )
     tk.Label(hdr,
-             text=f"⚔️  {char_name}  →  {cible}{crit_tag}",
-             bg=color, fg="#0d0d0d",
+             text=hdr_label,
+             bg=hdr_color, fg="#0d0d0d",
              font=("Arial", 11, "bold")).pack(side=tk.LEFT, padx=12)
 
-    # ── Détail des dés (lecture seule) ──────────────────────────────────────
+    # ── Détail (lecture seule) ───────────────────────────────────────────────
     if dmg_text:
         detail_frame = tk.Frame(popup, bg="#141422")
         detail_frame.pack(fill=tk.X, padx=8, pady=(8, 0))
@@ -136,23 +236,51 @@ def _open_damage_popup(self,
         txt.config(state=tk.DISABLED)
         txt.pack(fill=tk.X, padx=6, pady=4)
 
+    # ── Séparateur ──────────────────────────────────────────────────────────
+    tk.Frame(popup, bg="#2a2a3e", height=1).pack(fill=tk.X, padx=8, pady=(4, 0))
+
+    # ── Dropdown : Cible / Personnage soigné ────────────────────────────────
+    cible_frame = tk.Frame(popup, bg="#1e1e2e")
+    cible_frame.pack(fill=tk.X, padx=12, pady=(10, 2))
+
+    cible_lbl = "Soigné :" if _is_heal else "Cible :"
+    tk.Label(cible_frame, text=cible_lbl,
+             bg="#1e1e2e", fg="#aaaaaa",
+             font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT)
+
+    _cible_om = _make_optionmenu(cible_frame, _cible_var, _combat_names, fg=dd_fg)
+    _cible_om.pack(side=tk.LEFT, padx=(4, 0), fill=tk.X, expand=True)
+
+    # ── Dropdown : Type de dégâts (mode damage uniquement) ──────────────────
+    if not _is_heal:
+        type_frame = tk.Frame(popup, bg="#1e1e2e")
+        type_frame.pack(fill=tk.X, padx=12, pady=(2, 2))
+
+        tk.Label(type_frame, text="Type de dégâts :",
+                 bg="#1e1e2e", fg="#aaaaaa",
+                 font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT)
+
+        _type_om = _make_optionmenu(type_frame, _type_var, _DMG_TYPES, fg="#ff9944")
+        _type_om.pack(side=tk.LEFT, padx=(4, 0), fill=tk.X, expand=True)
+
     # ── Spinbox de modification ──────────────────────────────────────────────
     edit_frame = tk.Frame(popup, bg="#1e1e2e")
-    edit_frame.pack(fill=tk.X, padx=12, pady=10)
+    edit_frame.pack(fill=tk.X, padx=12, pady=(6, 6))
 
-    tk.Label(edit_frame, text="Dégâts finaux :",
+    field_lbl = "Soins finaux :" if _is_heal else "Dégâts finaux :"
+    tk.Label(edit_frame, text=field_lbl,
              bg="#1e1e2e", fg="#aaaaaa",
-             font=("Arial", 10)).pack(side=tk.LEFT)
+             font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT)
 
     _var = tk.IntVar(value=total)
     spx = tk.Spinbox(edit_frame, from_=0, to=999,
                      textvariable=_var, width=6,
-                     bg="#252535", fg=color,
+                     bg="#252535", fg=spx_fg,
                      font=("Consolas", 13, "bold"),
                      buttonbackground="#252535",
                      relief="flat",
-                     highlightthickness=1, highlightcolor=color)
-    spx.pack(side=tk.LEFT, padx=(8, 0))
+                     highlightthickness=1, highlightcolor=spx_fg)
+    spx.pack(side=tk.LEFT, padx=(4, 0))
     spx.focus_set()
     spx.selection_range(0, tk.END)
 
@@ -168,8 +296,17 @@ def _open_damage_popup(self,
             final = max(0, min(999, int(spx.get())))
         except ValueError:
             final = total
+        _sel_target = _cible_var.get()
         popup.destroy()
-        resume_callback(final)
+        # Appel avec (final, selected_target) — fallback (final) pour les
+        # callbacks engine_receive.py qui n'acceptent qu'un seul argument.
+        try:
+            resume_callback(final, _sel_target)
+        except TypeError:
+            resume_callback(final)
+
+        # L'application de dégâts (apply_damage_to_npc) est désormais entièrement gérée par
+        # engine_receive.py après _dl_ev.wait(). On ne le fait plus ici en double !
 
     def _cancel():
         # En cas d'annulation : timeout naturel du wait() dans engine_receive
@@ -181,8 +318,9 @@ def _open_damage_popup(self,
     spx.bind("<Return>", lambda e: _confirm())
     spx.bind("<Escape>", lambda e: _cancel())
 
-    tk.Button(btn_frame, text="✅ Confirmer",
-              bg=color, fg="#0d0d0d",
+    confirm_lbl = "✅ Appliquer soin" if _is_heal else "✅ Confirmer"
+    tk.Button(btn_frame, text=confirm_lbl,
+              bg=btn_color, fg="#0d0d0d",
               font=("Arial", 10, "bold"),
               relief="flat", padx=14, pady=5,
               cursor="hand2",

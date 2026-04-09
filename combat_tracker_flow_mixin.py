@@ -9,7 +9,7 @@ from tkinter import messagebox
 
 # Imports des dépendances partagées
 try:
-    from combat_tracker_constants import C
+    from combat_tracker_constants import C, TACTICS
     from combat_tracker_state import COMBAT_STATE
 except ImportError:
     pass
@@ -223,6 +223,23 @@ class CombatTrackerFlowMixin:
         if active_c and "turn_res" in COMBAT_STATE:
             COMBAT_STATE["turn_res"].pop(active_c.name, None)
 
+        # ── Retrait des tactiques qui expirent au DEBUT du tour (Esquive) ──
+        if active_c and "Esquive" in active_c.tactics:
+            del active_c.tactics["Esquive"]
+            # Mise à jour du bouton ui
+            rw = self._row_widgets.get(active_c.uid)
+            if rw and "tac_btns" in rw:
+                b = rw["tac_btns"].get("Esquive")
+                if b and "Esquive" in TACTICS:
+                    b.config(bg=_darken(TACTICS["Esquive"]["color"], 0.25), fg="#666677")
+            # Synchro de la carte (efface le badge)
+            if getattr(self, "app", None) and getattr(self.app, "_combat_map_win", None):
+                for t in self.app._combat_map_win.tokens:
+                    if t.get("name") == active_c.name and "tactics" in t:
+                        if "Esquive" in t["tactics"]:
+                            t["tactics"].remove("Esquive")
+                            self.app._combat_map_win._redraw_one_token(t)
+
         # Mise à jour visuelle chirurgicale — PAS de rebuild complet
         self._update_active_rows(old_idx, self.current_idx)
         self._log_turn()
@@ -381,6 +398,9 @@ class CombatTrackerFlowMixin:
         Appelé après chaque _next_turn() et _start_combat().
         """
         if not self.combat_active or not self.pc_turn_callback:
+            return
+        # ── Bloqué pendant la pause — aucune réaction LLM ne doit partir ───────
+        if getattr(getattr(self, "app", None), "_session_paused", False):
             return
         if not (0 <= self.current_idx < len(self.combatants)):
             return

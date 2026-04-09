@@ -16,7 +16,7 @@ from combat_map_constants import _sep, _darken_rgb, _darken_rgb_tuple, _compress
 class CoreMixin:
     pass
     def __init__(self, parent, win_state=None, save_fn=None, track_fn=None,
-                 msg_queue=None, inject_fn=None, update_sys_prompt_fn=None):
+                 msg_queue=None, inject_fn=None, update_sys_prompt_fn=None, app=None):
         if not PIL_AVAILABLE:
             messagebox.showerror(
                 "Dépendances manquantes",
@@ -32,9 +32,7 @@ class CoreMixin:
         self.msg_queue = msg_queue          # pour notifier le chat
         self.inject_fn = inject_fn          # callable(text) → injecte dans autogen
         self.update_sys_prompt_fn = update_sys_prompt_fn # callback silencieux LLM
-
-        # Fenêtre Vue Joueurs (Toplevel séparé, fog opaque)
-        self._player_win: "PlayerMapView | None" = None
+        self.app = app
 
         # ── État carte ────────────────────────────────────────────────────────
         self.zoom    = 1.0
@@ -183,4 +181,3 @@ class CoreMixin:
         self.win.after(80, self._full_redraw)
         # Restaurer zoom + scroll après que le canvas soit rendu et stable
         self.win.after(160, self._restore_view)
-

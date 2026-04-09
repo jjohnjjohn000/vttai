@@ -387,11 +387,12 @@ class CharacterMixin:
         stats_frame  = tk.Frame(win, bg="#1e1e2e")
         spells_frame = tk.Frame(win, bg="#1e1e2e")
         class_frame  = tk.Frame(win, bg="#1e1e2e")
+        race_frame   = tk.Frame(win, bg="#1e1e2e")
 
         def _show_tab(name):
-            for f in (stats_frame, spells_frame, class_frame):
+            for f in (stats_frame, spells_frame, class_frame, race_frame):
                 f.pack_forget()
-            for b in (btn_stats, btn_spells, btn_class):
+            for b in (btn_stats, btn_spells, btn_class, btn_race):
                 b.config(bg="#12121e", fg="#555566")
             if name == "stats":
                 stats_frame.pack(fill=tk.BOTH, expand=True)
@@ -402,6 +403,9 @@ class CharacterMixin:
             elif name == "class":
                 class_frame.pack(fill=tk.BOTH, expand=True)
                 btn_class.config(bg=color, fg="#0d0d0d")
+            elif name == "race":
+                race_frame.pack(fill=tk.BOTH, expand=True)
+                btn_race.config(bg=color, fg="#0d0d0d")
 
         btn_stats  = tk.Button(tabs_bar, text="📊 Stats",  font=("Arial", 9, "bold"),
                                relief="flat", padx=10, pady=5, cursor="hand2",
@@ -412,9 +416,13 @@ class CharacterMixin:
         btn_class  = tk.Button(tabs_bar, text="⚔ Classe", font=("Arial", 9, "bold"),
                                relief="flat", padx=10, pady=5, cursor="hand2",
                                command=lambda: _show_tab("class"))
+        btn_race   = tk.Button(tabs_bar, text="🧬 Race",  font=("Arial", 9, "bold"),
+                               relief="flat", padx=10, pady=5, cursor="hand2",
+                               command=lambda: _show_tab("race"))
         btn_stats.pack(side=tk.LEFT, fill=tk.X, expand=True)
         btn_spells.pack(side=tk.LEFT, fill=tk.X, expand=True)
         btn_class.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        btn_race.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # ════════════════════════════════════════════════════════════════════
         # ── ONGLET CLASSE ───────────────────────────────────────────────────
@@ -1065,7 +1073,24 @@ class CharacterMixin:
             except Exception:
                 get_spell = lambda n: None
 
-            names  = _get_prepared()
+            names_saved = _get_prepared()
+            names = list(names_saved)
+            auto_spells = set()
+            try:
+                from class_data import get_subclass_spells
+                d2 = load_state().get("characters", {}).get(char_name, {})
+                c_name = d2.get("class", "")
+                sub_c  = d2.get("subclass", "")
+                c_lvl  = d2.get("level", 1)
+                if c_name and sub_c:
+                    extra = get_subclass_spells(c_name, sub_c, c_lvl)
+                    for x in extra:
+                        if x not in names:
+                            names.append(x)
+                            auto_spells.add(x)
+            except Exception:
+                pass
+
             query  = search_var.get().lower().strip()
 
             stats_lbl.config(text=f"{len(names)} sorts")
@@ -1084,7 +1109,7 @@ class CharacterMixin:
                 if query and query not in name.lower() and query not in (
                         sp_data.get("school", "").lower() if sp_data else ""):
                     continue
-                by_level[lvl].append((name, sp_data))
+                by_level[lvl].append((name, sp_data, name in auto_spells))
 
             if not by_level:
                 tk.Label(sp_inner, text="Aucun sort correspond.",
@@ -1100,10 +1125,10 @@ class CharacterMixin:
                          font=("Arial", 8, "bold")).pack(side=tk.LEFT, padx=8, pady=3)
                 tk.Label(hdr_row, text=str(len(by_level[lvl])), bg="#161622", fg="#444455",
                          font=("Consolas", 8)).pack(side=tk.RIGHT, padx=8)
-                for spell_name, sp_data in by_level[lvl]:
-                    _render_spell_row(spell_name, sp_data)
+                for spell_name, sp_data, is_auto in by_level[lvl]:
+                    _render_spell_row(spell_name, sp_data, is_auto)
 
-        def _render_spell_row(spell_name: str, sp_data):
+        def _render_spell_row(spell_name: str, sp_data, is_auto=False):
             school = sp_data.get("school", "") if sp_data else ""
             school_color = SCHOOL_COLORS.get(school, "#888888")
             source = sp_data.get("source", "") if sp_data else ""
@@ -1158,9 +1183,13 @@ class CharacterMixin:
                     names.remove(n)
                     _set_prepared(names)
                     _render_spells()
-            tk.Button(row, text="✕", bg="#1a1a2a", fg="#553333",
-                      font=("Arial", 8), relief="flat", padx=2, cursor="hand2",
-                      command=_remove).pack(side=tk.RIGHT, padx=(0, 2))
+            
+            if is_auto:
+                tk.Label(row, text="🔒 Fixe", bg="#1a1a2a", fg="#444455", font=("Consolas", 7)).pack(side=tk.RIGHT, padx=(0, 2))
+            else:
+                tk.Button(row, text="✕", bg="#1a1a2a", fg="#553333",
+                          font=("Arial", 8), relief="flat", padx=2, cursor="hand2",
+                          command=_remove).pack(side=tk.RIGHT, padx=(0, 2))
 
         # ── Dialogue de sélection de sort (SpellPickerDialog) ───────────────
         def _open_spell_picker():
@@ -1187,6 +1216,395 @@ class CharacterMixin:
                              parent=win)
 
         _render_spells()
+
+        # ════════════════════════════════════════════════════════════════════
+        # ── ONGLET RACE ─────────────────────────────────────────────────────
+        # ════════════════════════════════════════════════════════════════════
+        try:
+            from race_data import (
+                get_race_entry, get_available_races, get_subraces,
+                get_race_speed, get_race_size, get_race_darkvision, get_race_age,
+                format_ability_bonuses, get_race_languages,
+                get_race_skill_proficiencies, get_race_resistance, get_race_immunity,
+                get_race_traits, get_race_fluff,
+            )
+            _race_data_available = True
+        except Exception as _e:
+            _race_data_available = False
+            print(f"[Race] race_data.py introuvable : {_e}")
+
+        _race_bg  = "#1e1e2e"
+        _race_sec = "#252535"
+
+        rc_canvas = tk.Canvas(race_frame, bg=_race_bg, highlightthickness=0)
+        rc_scroll = tk.Scrollbar(race_frame, orient="vertical", command=rc_canvas.yview)
+        rc_inner  = tk.Frame(rc_canvas, bg=_race_bg)
+        rc_canvas.create_window((0, 0), window=rc_inner, anchor="nw")
+        rc_canvas.configure(yscrollcommand=rc_scroll.set)
+        rc_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        rc_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        rc_inner.bind("<Configure>", lambda e: rc_canvas.configure(scrollregion=rc_canvas.bbox("all")))
+
+        def _rc_mousewheel(e):
+            rc_canvas.yview_scroll(int(-1*(e.delta or (1 if e.num == 4 else -1))*3), "units")
+        rc_canvas.bind("<Button-4>", _rc_mousewheel)
+        rc_canvas.bind("<Button-5>", _rc_mousewheel)
+        rc_canvas.bind("<MouseWheel>", _rc_mousewheel)
+
+        # ── Lire race / subrace depuis l'état ────────────────────────────────
+        char_race    = data.get("race", "")
+        char_subrace = data.get("subrace", "")
+
+        def _save_race(new_race, new_subrace=""):
+            """Persiste race et subrace dans campaign_state.json."""
+            try:
+                s = load_state()
+                s.setdefault("characters", {}).setdefault(char_name, {})["race"]    = new_race
+                s.setdefault("characters", {}).setdefault(char_name, {})["subrace"] = new_subrace
+                save_state(s)
+            except Exception as _e2:
+                print(f"[Race] Erreur sauvegarde : {_e2}")
+
+        def _build_race_tab(race_name: str, subrace_name: str = ""):
+            """(Re)construit le contenu de l'onglet Race pour race_name."""
+            for w in rc_inner.winfo_children():
+                w.destroy()
+
+            if not _race_data_available:
+                tk.Label(rc_inner, text="⚠ race_data.py introuvable",
+                         bg=_race_bg, fg="#cc4444",
+                         font=("Arial", 10)).pack(padx=12, pady=20)
+                return
+
+            # ── Sélecteur de race ────────────────────────────────────────────
+            sel_fr = tk.Frame(rc_inner, bg=_race_sec, padx=8, pady=6)
+            sel_fr.pack(fill=tk.X, padx=8, pady=(8, 4))
+
+            tk.Label(sel_fr, text="Race :", bg=_race_sec, fg="#888899",
+                     font=("Arial", 9)).grid(row=0, column=0, sticky="w", padx=(0, 4))
+
+            try:
+                _all_races = get_available_races()
+            except Exception:
+                _all_races = []
+
+            race_var = tk.StringVar(value=race_name)
+            race_combo = tk.OptionMenu(sel_fr, race_var, *(_all_races or ["—"]))
+            race_combo.config(bg=_race_sec, fg="#cccccc", activebackground="#3a3a5a",
+                              font=("Arial", 9), relief="flat", highlightthickness=0,
+                              indicatoron=True)
+            race_combo["menu"].config(bg="#1a1a2e", fg="#cccccc",
+                                      activebackground="#3a3a5a", font=("Arial", 9))
+            race_combo.grid(row=0, column=1, sticky="w")
+
+            subrace_var = tk.StringVar(value=subrace_name)
+            sub_label = tk.Label(sel_fr, text="Sous-race :", bg=_race_sec, fg="#888899",
+                                 font=("Arial", 9))
+            sub_label.grid(row=1, column=0, sticky="w", padx=(0, 4), pady=(4, 0))
+
+            _subraces_cache = {"list": []}
+
+            def _refresh_subrace_menu(race):
+                try:
+                    subs = get_subraces(race)
+                except Exception:
+                    subs = []
+                _subraces_cache["list"] = subs
+                menu = sub_combo["menu"]
+                menu.delete(0, "end")
+                if subs:
+                    for s in subs:
+                        menu.add_command(label=s, command=lambda v=s: subrace_var.set(v))
+                    if subrace_var.get() not in subs:
+                        subrace_var.set(subs[0])
+                    sub_combo.config(state="normal")
+                else:
+                    menu.add_command(label="—", command=lambda: subrace_var.set(""))
+                    subrace_var.set("")
+                    sub_combo.config(state="disabled")
+
+            sub_combo = tk.OptionMenu(sel_fr, subrace_var, "—")
+            sub_combo.config(bg=_race_sec, fg="#cccccc", activebackground="#3a3a5a",
+                             font=("Arial", 9), relief="flat", highlightthickness=0)
+            sub_combo["menu"].config(bg="#1a1a2e", fg="#cccccc",
+                                     activebackground="#3a3a5a", font=("Arial", 9))
+            sub_combo.grid(row=1, column=1, sticky="w", pady=(4, 0))
+
+            if race_name:
+                _refresh_subrace_menu(race_name)
+
+            def _on_race_apply():
+                new_race = race_var.get()
+                new_sub  = subrace_var.get() if _subraces_cache["list"] else ""
+                _save_race(new_race, new_sub)
+                _build_race_tab(new_race, new_sub)
+
+            def _on_race_changed(*_):
+                _refresh_subrace_menu(race_var.get())
+
+            race_var.trace_add("write", _on_race_changed)
+
+            tk.Button(sel_fr, text="✔ Appliquer", bg=color, fg="#0d0d0d",
+                      font=("Arial", 9, "bold"), relief="flat", padx=8, pady=2,
+                      cursor="hand2", command=_on_race_apply
+                      ).grid(row=0, column=2, rowspan=2, padx=(10, 0), sticky="ns")
+
+            # ── Si aucune race sélectionnée, s'arrêter ici ───────────────────
+            if not race_name:
+                tk.Label(rc_inner, text="Aucune race sélectionnée.",
+                         bg=_race_bg, fg="#555566", font=("Arial", 9, "italic")
+                         ).pack(pady=16)
+                return
+
+            try:
+                _entry = get_race_entry(race_name)
+            except Exception as _e3:
+                tk.Label(rc_inner, text=f"Race '{race_name}' introuvable dans les données.",
+                         bg=_race_bg, fg="#cc4444", font=("Arial", 9)
+                         ).pack(pady=12)
+                return
+
+            _src = _entry.get("source", "?")
+
+            # ── En-tête ──────────────────────────────────────────────────────
+            hdr_rc = tk.Frame(rc_inner, bg=color, pady=6)
+            hdr_rc.pack(fill=tk.X, padx=8, pady=(4, 4))
+            _rc_title = race_name
+            if subrace_name:
+                _rc_title += f" — {subrace_name}"
+            tk.Label(hdr_rc, text=f"🧬 {_rc_title}", bg=color, fg="#0d0d0d",
+                     font=("Arial", 11, "bold")).pack(side=tk.LEFT, padx=8)
+            tk.Label(hdr_rc, text=f"[{_src}]", bg=color, fg="#333333",
+                     font=("Consolas", 9)).pack(side=tk.RIGHT, padx=8)
+
+            # ── Fiche rapide ─────────────────────────────────────────────────
+            quick_fr = tk.Frame(rc_inner, bg=_race_sec, padx=8, pady=6)
+            quick_fr.pack(fill=tk.X, padx=8, pady=(0, 4))
+
+            _quick_items = []
+
+            # Taille
+            try:
+                sizes = get_race_size(race_name)
+                _quick_items.append(("📐 Taille", ", ".join(sizes)))
+            except Exception:
+                pass
+
+            # Vitesse
+            try:
+                spd = get_race_speed(race_name)
+                spd_str = ", ".join(
+                    (f"{v} pi." if k == "walk" else f"{k.title()} {v} pi.")
+                    for k, v in spd.items()
+                )
+                _quick_items.append(("🏃 Vitesse", spd_str))
+            except Exception:
+                pass
+
+            # Âge
+            try:
+                age = get_race_age(race_name)
+                if age:
+                    _quick_items.append(("🎂 Âge", f"Maturité {age.get('mature','?')} ans, max {age.get('max','?')} ans"))
+            except Exception:
+                pass
+
+            # Vision
+            try:
+                dv = get_race_darkvision(race_name, subrace_name)
+                if dv:
+                    _quick_items.append(("🌙 Vision dans le noir", f"{dv} pi."))
+            except Exception:
+                pass
+
+            # Bonus de stats
+            try:
+                bonuses = format_ability_bonuses(race_name, subrace_name)
+                _quick_items.append(("⬆ Bonus de stats", "  ".join(bonuses)))
+            except Exception:
+                pass
+
+            # Langues
+            try:
+                langs = get_race_languages(race_name, subrace_name)
+                _quick_items.append(("🗣 Langues", ", ".join(langs)))
+            except Exception:
+                pass
+
+            # Compétences raciales
+            try:
+                skills = get_race_skill_proficiencies(race_name, subrace_name)
+                if skills:
+                    _quick_items.append(("🎯 Compétences", ", ".join(skills)))
+            except Exception:
+                pass
+
+            # Résistances / immunités
+            try:
+                res = get_race_resistance(race_name, subrace_name)
+                if res:
+                    _quick_items.append(("🛡 Résistances", ", ".join(res)))
+                imm = get_race_immunity(race_name, subrace_name)
+                if imm:
+                    _quick_items.append(("✨ Immunités", ", ".join(imm)))
+            except Exception:
+                pass
+
+            for _lbl, _val in _quick_items:
+                _r = tk.Frame(quick_fr, bg=_race_sec)
+                _r.pack(fill=tk.X, pady=1)
+                tk.Label(_r, text=f"  {_lbl} :", bg=_race_sec, fg="#888899",
+                         font=("Arial", 9), anchor="w", width=22).pack(side=tk.LEFT)
+                tk.Label(_r, text=_val, bg=_race_sec, fg="#cccccc",
+                         font=("Arial", 9), wraplength=200, justify=tk.LEFT
+                         ).pack(side=tk.LEFT, padx=(4, 0))
+
+            # ── Traits raciaux ───────────────────────────────────────────────
+            def _open_trait_popup(trait_name, trait_data):
+                popup = tk.Toplevel(win)
+                popup.title(f"{trait_name} — {race_name}")
+                popup.geometry("520x420")
+                popup.configure(bg="#1a1a2e")
+                popup.attributes("-topmost", True)
+
+                phdr = tk.Frame(popup, bg=color, pady=6)
+                phdr.pack(fill=tk.X)
+                tk.Label(phdr, text=trait_name, bg=color, fg="#0d0d0d",
+                         font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=12)
+                _badge = f"[{trait_data.get('source','?')}]"
+                if trait_data.get("type") == "subrace":
+                    _badge += f"  {subrace_name}"
+                tk.Label(phdr, text=_badge, bg=color, fg="#333333",
+                         font=("Consolas", 9)).pack(side=tk.RIGHT, padx=12)
+
+                txt_fr = tk.Frame(popup, bg="#1a1a2e")
+                txt_fr.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+                txt_sc = tk.Scrollbar(txt_fr)
+                txt_sc.pack(side=tk.RIGHT, fill=tk.Y)
+                txt_w = tk.Text(txt_fr, wrap=tk.WORD, bg="#1a1a2e", fg="#cccccc",
+                                font=("Consolas", 10), padx=12, pady=8,
+                                relief="flat", highlightthickness=0,
+                                yscrollcommand=txt_sc.set, state=tk.NORMAL, cursor="arrow")
+                txt_w.pack(fill=tk.BOTH, expand=True)
+                txt_sc.config(command=txt_w.yview)
+
+                txt_w.tag_configure("heading", font=("Arial", 10, "bold"), foreground=color)
+                txt_w.tag_configure("body", font=("Consolas", 10), foreground="#cccccc")
+                txt_w.tag_configure("bullet", font=("Consolas", 10), foreground="#aabbcc")
+
+                for line in trait_data.get("text", "").split("\n"):
+                    s = line.strip()
+                    if s.startswith("▸ "):
+                        txt_w.insert(tk.END, s + "\n", "heading")
+                    elif s.startswith("• "):
+                        txt_w.insert(tk.END, "  " + s + "\n", "bullet")
+                    else:
+                        txt_w.insert(tk.END, s + "\n\n" if s else "\n", "body")
+                txt_w.config(state=tk.DISABLED)
+
+                tk.Button(popup, text="Fermer", bg="#333344", fg="#cccccc",
+                          font=("Arial", 9), relief="flat", padx=12, pady=4,
+                          command=popup.destroy).pack(pady=(0, 8))
+
+            try:
+                _traits = get_race_traits(race_name, subrace_name)
+            except Exception:
+                _traits = []
+
+            if _traits:
+                tr_sec = tk.Frame(rc_inner, bg=_race_sec, padx=8, pady=6)
+                tr_sec.pack(fill=tk.X, padx=8, pady=(0, 4))
+                _n_race = sum(1 for t in _traits if t["type"] == "race")
+                _n_sub  = sum(1 for t in _traits if t["type"] == "subrace")
+                _tp = []
+                if _n_race: _tp.append(f"{_n_race} raciaux")
+                if _n_sub:  _tp.append(f"{_n_sub} sous-race")
+                tk.Label(tr_sec, text=f"⭐ Traits ({' + '.join(_tp)})",
+                         bg=_race_sec, fg=color, font=("Arial", 10, "bold")).pack(anchor="w")
+                tk.Label(tr_sec, text="Cliquer pour voir les détails", bg=_race_sec,
+                         fg="#555566", font=("Arial", 8, "italic")).pack(anchor="w")
+
+                for _t in _traits:
+                    _is_sub = (_t["type"] == "subrace")
+                    _fg = "#ddbbaa" if _is_sub else "#ccddee"
+                    _icon = "🔥" if _is_sub else "⭐"
+                    _fr2 = tk.Frame(tr_sec, bg=_race_sec)
+                    _fr2.pack(fill=tk.X, pady=1)
+                    _lbl2 = tk.Label(_fr2, text=f"  {_icon}  {_t['name']}",
+                                     bg=_race_sec, fg=_fg, font=("Arial", 9),
+                                     cursor="hand2", anchor="w")
+                    _lbl2.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                    tk.Label(_fr2, text=f"[{_t['source']}]", bg=_race_sec, fg="#444455",
+                             font=("Consolas", 7)).pack(side=tk.RIGHT)
+
+                    def _on_trait_click(e, td=_t):
+                        _open_trait_popup(td["name"], td)
+                    def _on_te(e, lb=_lbl2):
+                        lb.config(fg=color, font=("Arial", 9, "bold"))
+                    def _on_tl(e, lb=_lbl2, fg=_fg):
+                        lb.config(fg=fg, font=("Arial", 9))
+                    _lbl2.bind("<Button-1>", _on_trait_click)
+                    _lbl2.bind("<Enter>", _on_te)
+                    _lbl2.bind("<Leave>", _on_tl)
+
+            # ── Lore (fluff) ─────────────────────────────────────────────────
+            try:
+                _fluff = get_race_fluff(race_name)
+            except Exception:
+                _fluff = ""
+
+            if _fluff:
+                lore_sec = tk.Frame(rc_inner, bg=_race_sec, padx=8, pady=6)
+                lore_sec.pack(fill=tk.X, padx=8, pady=(0, 8))
+                tk.Label(lore_sec, text="📖 Lore", bg=_race_sec, fg=color,
+                         font=("Arial", 10, "bold")).pack(anchor="w")
+                # Afficher les 3 premières lignes avec bouton "Voir plus"
+                _lore_lines = [l for l in _fluff.split("\n") if l.strip()][:4]
+                _lore_preview = "\n".join(_lore_lines)
+                tk.Label(lore_sec, text=_lore_preview, bg=_race_sec, fg="#aaaaaa",
+                         font=("Arial", 8, "italic"), wraplength=240,
+                         justify=tk.LEFT).pack(anchor="w", pady=(2, 4))
+
+                def _show_full_lore():
+                    lp = tk.Toplevel(win)
+                    lp.title(f"Lore — {race_name}")
+                    lp.geometry("560x500")
+                    lp.configure(bg="#1a1a2e")
+                    lp.attributes("-topmost", True)
+                    phdr2 = tk.Frame(lp, bg=color, pady=6)
+                    phdr2.pack(fill=tk.X)
+                    tk.Label(phdr2, text=f"📖 {race_name}", bg=color, fg="#0d0d0d",
+                             font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=12)
+                    tf2 = tk.Frame(lp, bg="#1a1a2e")
+                    tf2.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+                    sc2 = tk.Scrollbar(tf2)
+                    sc2.pack(side=tk.RIGHT, fill=tk.Y)
+                    tw2 = tk.Text(tf2, wrap=tk.WORD, bg="#1a1a2e", fg="#cccccc",
+                                  font=("Consolas", 10), padx=12, pady=8,
+                                  relief="flat", highlightthickness=0,
+                                  yscrollcommand=sc2.set, cursor="arrow")
+                    tw2.pack(fill=tk.BOTH, expand=True)
+                    sc2.config(command=tw2.yview)
+                    for line in _fluff.split("\n"):
+                        s = line.strip()
+                        if s.startswith("▸ "):
+                            tw2.insert(tk.END, s + "\n", )
+                        else:
+                            tw2.insert(tk.END, s + "\n\n" if s else "\n")
+                    tw2.config(state=tk.DISABLED)
+                    tk.Button(lp, text="Fermer", bg="#333344", fg="#cccccc",
+                              font=("Arial", 9), relief="flat", padx=12, pady=4,
+                              command=lp.destroy).pack(pady=(0, 8))
+
+                tk.Button(lore_sec, text="Lire tout →", bg="#1a1a2e", fg=color,
+                          font=("Arial", 8), relief="flat", cursor="hand2",
+                          command=_show_full_lore).pack(anchor="w")
+
+            # Spacer bas
+            tk.Frame(rc_inner, bg=_race_bg, height=20).pack(fill=tk.X)
+
+        # Construire l'onglet avec la race actuelle (peut être vide)
+        _build_race_tab(char_race, char_subrace)
 
         # ── Activation onglet Stats par défaut ─────────────────────────────
         _show_tab("stats")

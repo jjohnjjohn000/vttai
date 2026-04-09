@@ -22,6 +22,19 @@ _lock = threading.Lock()
 
 # ─── Modèles disponibles (pour les dropdowns) ─────────────────────────────────
 KNOWN_MODELS = [
+    # ── Ollama local (préfixe "ollama/") ──────────────────────────────────────
+    # Gemma 4 — sorti avril 2025, Apache 2.0, support Ollama dès le jour 1
+    # RX 6700 XT 12 GB VRAM : e4b (9.6 GB) tient entièrement en VRAM ← recommandé
+    #                          e2b (3.5 GB) ultra-léger, moins capable
+    #                          27b/31b déconseillés (dépassent 12 GB)
+    "ollama/gemma4:e4b",            # Gemma 4 effective 4B — 9.6 GB — RECOMMANDÉ RX 6700 XT
+    "ollama/gemma4:e2b",            # Gemma 4 effective 2B — 3.5 GB — ultra-léger
+    "ollama/gemma4:27b",            # Gemma 4 26B MoE — 18 GB — déborde sur RAM
+    # Autres modèles Ollama populaires (s'ajoutent automatiquement via list_ollama_models())
+    "ollama/llama3.3:latest",
+    "ollama/mistral:latest",
+    "ollama/deepseek-r1:8b",
+
     # Gemini — modèles actifs
     "gemini-3.1-flash-lite-preview",
     "gemini-3-flash-preview",
@@ -44,6 +57,9 @@ KNOWN_MODELS = [
     "openrouter/qwen/qwen-2.5-72b-instruct",                 # Qwen 2.5 72B — permissif, multilingue
     "openrouter/mistralai/mistral-small-3.1-24b-instruct",   # Mistral Small 3.1 — rapide, peu restrictif
     "openrouter/meta-llama/llama-3.3-70b-instruct",          # LLaMA 3.3 70B — non censuré
+    "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+    "openrouter/google/gemma-4-26b-a4b-it:free",
+    "openrouter/minimax/minimax-m2.5:free",
 ]
 
 # ─── Valeurs par défaut ────────────────────────────────────────────────────────
@@ -198,6 +214,26 @@ def get_campaign_name() -> str:
     """Retourne le nom de la campagne (utilisé pour le dossier de sauvegarde)."""
     name = APP_CONFIG.get("campaign_name", DEFAULTS["campaign_name"]).strip()
     return name or "campagne"
+
+
+def get_known_models_with_ollama() -> list[str]:
+    """
+    Retourne KNOWN_MODELS enrichi des modèles actuellement installés sur Ollama.
+
+    Interroge l'API Ollama locale et ajoute les modèles trouvés (préfixés "ollama/")
+    s'ils ne sont pas déjà dans KNOWN_MODELS. Tombe en silence si Ollama n'est
+    pas disponible — ne bloque jamais le démarrage de l'app.
+
+    Utilisé par les dropdowns du panneau de config pour montrer les modèles réels.
+    """
+    try:
+        from llm_config import list_ollama_models
+        installed = list_ollama_models()
+        extra = [f"ollama/{name}" for name in installed
+                 if f"ollama/{name}" not in KNOWN_MODELS]
+        return KNOWN_MODELS + extra
+    except Exception:
+        return KNOWN_MODELS
 
 
 # ─── Singleton chargé au démarrage ────────────────────────────────────────────

@@ -24,6 +24,14 @@ class ToolEventMixin:
         """
         self._poly_cancel()
         self._obs_cancel()
+        
+        # --- NOUVEAU : Annuler un glisser-déposer de token en cours ---
+        if getattr(self, "_drag_token", None) is not None:
+            self._drag_token = None
+            self._drag_origins = {}
+            self.canvas.delete("drag_counter")
+            self._redraw_all_tokens()  # Remet les tokens à leur place d'origine
+            
         self._set_tool("select")
 
     def _set_tool(self, tool: str):
@@ -62,6 +70,9 @@ class ToolEventMixin:
             else:
                 btn.config(bg="#252538", fg="#aaaacc", relief="flat")
 
+        # --- NOUVEAU : Nettoyage de sécurité des widgets temporaires ---
+        self.canvas.delete("drag_counter")
+
         # Annuler polygone en cours si on change d'outil
         if prev_tool in ("reveal", "hide") and tool not in ("reveal", "hide"):
             self._poly_cancel()
@@ -79,6 +90,7 @@ class ToolEventMixin:
             self.canvas.delete("ruler")
             self._ruler_start_pt = None
             self._ruler_ids = []
+            
         if tool == "resize_map":
             if not self._ratio_chk_visible:
                 self._ratio_chk.pack(side=tk.LEFT, padx=4)
@@ -247,10 +259,12 @@ class ToolEventMixin:
         # Cherche le token sous le curseur
         hit_tok = None
         cp = self._cp
-        for tok in self.tokens:
-            tcx = (tok["col"] + 0.5) * cp
-            tcy = (tok["row"] + 0.5) * cp
-            if abs(tcx - cx) <= cp * 0.55 and abs(tcy - cy) <= cp * 0.55:
+        for tok in reversed(self.tokens):
+            size = float(tok.get("size", 1))
+            tcx = (tok["col"] + size / 2.0) * cp
+            tcy = (tok["row"] + size / 2.0) * cp
+            rad = cp * size * 0.55
+            if abs(tcx - cx) <= rad and abs(tcy - cy) <= rad:
                 hit_tok = tok
                 break
 

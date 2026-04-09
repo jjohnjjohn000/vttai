@@ -84,6 +84,7 @@ class MapManagerMixin:
             tok = {k: v for k, v in t.items() if k != "ids"}
             tok.setdefault("hp",          -1)
             tok.setdefault("max_hp",      -1)
+            tok.setdefault("ac",          -1)
             tok.setdefault("size",         1)
             tok.setdefault("conditions",  [])
             tok.setdefault("altitude_ft",  0)   # 0 = au sol, >0 = en vol (pieds D&D)
@@ -226,7 +227,7 @@ class MapManagerMixin:
             "fog_mask_b64":     fog_b64,
             "tokens":           [{k: v for k, v in t.items()
                                   if not k.startswith("_") and k != "ids"}
-                                 for t in self.tokens],
+                                 for t in self.tokens if not t.get("is_preview", False)],
             "map_layers":       [{"name": l["name"], "path": l["path"],
                                   "w": l["w"], "h": l["h"],
                                   "ox": l["ox"], "oy": l["oy"],

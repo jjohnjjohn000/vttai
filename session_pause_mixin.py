@@ -17,6 +17,14 @@ Interactions avec les autres composants :
   - self._pending_combat_trigger → préservé, sera consommé à la reprise
   - CombatTrackerMixin._on_pc_combat_turn → vérifie self._session_paused
 
+Modifications de carte pendant la pause :
+  - NotesDoorsMixin._notify_token_moved → retour immédiat si _session_paused
+    (drag déjà bloqué dans combat_map_token_manager._on_button_release)
+  - NotesDoorsMixin._notify_tokens_deleted → retour immédiat si _session_paused
+  Conséquence : aucun message chat, aucun inject_fn → les héros ne réagissent
+  pas aux changements de carte à la reprise. L'état à jour est quand même
+  transmis via _rebuild_agent_prompts (system prompt) au premier LLM call.
+
 Prérequis sur l'instance hôte :
   self.msg_queue, self.audio_queue, self.root,
   self._llm_running, self._waiting_for_mj,

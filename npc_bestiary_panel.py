@@ -458,8 +458,14 @@ def _fmt_entries(entries) -> str:
                         text = re.sub(r'\{@\w+\s*([^}]*)\}', r'\1', item)
                         parts.append(f"  • {text}")
                     elif isinstance(item, dict):
-                        t = _fmt_entries(item.get("entries", []))
-                        parts.append(f"  • {t}")
+                        name = item.get("name", "")
+                        prefix = f"► {name}: " if name else ""
+                        if "entry" in item:
+                            t = _fmt_entries([item["entry"]])
+                            parts.append(f"  • {prefix}{t}")
+                        else:
+                            t = _fmt_entries(item.get("entries", []))
+                            parts.append(f"  • {prefix}{t}")
             else:
                 t = _fmt_entries(e.get("entries", []))
                 if t:
@@ -526,11 +532,10 @@ def _fmt_condition_list(entries: list) -> str:
             parts.append(str(item))
     return ", ".join(p for p in parts if p)
 
-
-
+def _fmt_action_list(actions: list) -> str:
     if not actions:
         return "(aucune)"
-    lines = []
+    lines =[]
     for a in actions:
         name = a.get("name", "?")
         desc = _fmt_entries(a.get("entries", []))
@@ -698,10 +703,7 @@ class MonsterSheetWindow:
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Molette
-        for widget in (self._canvas, self._inner):
-            widget.bind("<MouseWheel>",
-                        lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        # La molette sera liée récursivement après le chargement du PNJ
 
         # Affiche la fiche si un monstre est déjà connu
         if bestiary_name:
@@ -1058,8 +1060,7 @@ class MonsterSheetWindow:
         estimated = max(2, min(lines + 1, 20))
         txt.config(height=estimated)
         txt.pack(fill=tk.X, padx=8, pady=2)
-        txt.bind("<MouseWheel>",
-                 lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        # _bind_mouse_scroll se chargera de la molette pour ce widget
 
     # ── Dés & parsing actions ────────────────────────────────────────────────
 
@@ -1147,22 +1148,65 @@ class MonsterSheetWindow:
             self.chat_queue.put({"sender": f"⚔ {self.npc_name}", "text": text, "color": color})
 
     def _action_roll_widget(self, parent, action_name: str, rolls: dict,
-                            monster: dict, row_bg: str):
+                            monster: dict, row_bg: str, recharge_val: int = None):
         """
         Construit le bloc interactif sous une action :
-        [Attaque] [Dégât X] [DD N — Sauvegarde]
+        [Attaque] [Dégât X] [DD N — Sauvegarde] [♻ Recharge]
         """
-        if not rolls["hit"] and not rolls["dc"] and not rolls["damages"]:
+        if not rolls["hit"] and not rolls["dc"] and not rolls["damages"] and recharge_val is None:
             return  # Rien à lancer
 
         btn_frame = tk.Frame(parent, bg=row_bg)
         btn_frame.pack(anchor="w", padx=20, pady=(2, 6))
 
+        from state_manager import get_npc_cooldown, set_npc_cooldown
+        on_cooldown = False
+        if recharge_val is not None:
+            on_cooldown = get_npc_cooldown(self.npc_name, action_name)
+
+        def _consume_if_needed(name=action_name):
+            if recharge_val is not None and not get_npc_cooldown(self.npc_name, name):
+                set_npc_cooldown(self.npc_name, name, True)
+                if self._current_monster:
+                    self.root.after(50, lambda: self._show_monster(self._current_monster["name"]))
+
         def _btn(text, bg, fg, cmd):
+            if on_cooldown and not text.startswith("♻"):
+                # Style désactivé visuellement (grisé) mais toujours cliquable par sécurité
+                bg = "#2a2a2a"
+                fg = "#666666"
+                text = f"[En Recharge] {text}"
+
             tk.Button(btn_frame, text=text, bg=bg, fg=fg,
                       font=("Consolas", 8, "bold"), relief="flat",
                       padx=6, pady=2, cursor="hand2",
                       command=cmd).pack(side=tk.LEFT, padx=(0, 4))
+
+        # ── Bouton Recharge / Statut ──────────────────────────────────────
+        if recharge_val is not None:
+            if on_cooldown:
+                def _roll_recharge(r=recharge_val, name=action_name):
+                    import random as _rnd
+                    d6 = _rnd.randint(1, 6)
+                    if d6 >= r:
+                        res_txt = "🟢 **Réussi !** L'action est rechargée."
+                        color = "#81c784"
+                        set_npc_cooldown(self.npc_name, name, False)
+                    else:
+                        res_txt = "🔴 **Échec.** Doit encore recharger."
+                        color = "#e57373"
+                    msg = f"**{name}** — Jet de Recharge (Recharge {r}-6)\n  d6({d6}) : {res_txt}"
+                    self._send_to_chat(msg, color)
+                    if self._current_monster:
+                        self.root.after(50, lambda: self._show_monster(self._current_monster["name"]))
+                
+                _btn(f"♻ Tenter Recharge {recharge_val}+", "#302607", "#ffd54f", _roll_recharge)
+            else:
+                def _mark_used(name=action_name):
+                    set_npc_cooldown(self.npc_name, name, True)
+                    if self._current_monster:
+                        self.root.after(50, lambda: self._show_monster(self._current_monster["name"]))
+                _btn("🟢 Action Prête (marquer utilisée)", "#1a351a", "#81c784", _mark_used)
 
         # ── Bouton Attaque ──────────────────────────────────────────────
         if rolls["hit"] is not None:
@@ -1170,6 +1214,7 @@ class MonsterSheetWindow:
             sign  = "+" if bonus >= 0 else ""
 
             def _roll_attack(b=bonus, name=action_name):
+                _consume_if_needed(name)
                 import random as _rnd
                 d20  = _rnd.randint(1, 20)
                 tot  = d20 + b
@@ -1186,6 +1231,7 @@ class MonsterSheetWindow:
             btn_text = f"Dégâts{lbl_type} ({expr})" if i == 0 else f"+ {expr}{lbl_type}"
 
             def _roll_damage(e=expr, t=dmg_type, name=action_name):
+                _consume_if_needed(name)
                 total, detail = self._roll_dice(e)
                 type_str = f" {t}" if t else ""
                 msg = f"**{name}** — Dégâts{type_str}\n  {e} → {detail} = **{total}**"
@@ -1199,6 +1245,7 @@ class MonsterSheetWindow:
             dc_val   = rolls["dc"]
 
             def _show_dc(dc=dc_val, sv=save_lbl, name=action_name):
+                _consume_if_needed(name)
                 msg = f"**{name}** — Jet de sauvegarde\n  DD {dc} ({sv}) — les cibles doivent réussir !"
                 self._send_to_chat(msg, "#64b5f6")
 
@@ -1327,7 +1374,21 @@ class MonsterSheetWindow:
     def _action_block(self, parent, action: dict, monster: dict,
                       name_color: str, row_bg: str):
         """Rend une action complète : titre + description + boutons de lancer."""
-        a_name = action.get("name", "?")
+        raw_name = action.get("name", "?")
+        
+        recharge_val = None
+        import re as _re
+        
+        m_tag = _re.search(r'\{@recharge\s+(\d+)\}', raw_name)
+        if m_tag:
+            recharge_val = int(m_tag.group(1))
+            a_name = _re.sub(r'\s*\{@recharge\s+\d+\}', f' (Recharge {recharge_val}-6)', raw_name)
+        else:
+            m_text = _re.search(r'\(Recharge\s+(\d+)(?:-\d+)?\)', raw_name, _re.IGNORECASE)
+            if m_text:
+                recharge_val = int(m_text.group(1))
+            a_name = raw_name
+
         entries = action.get("entries", [])
         a_desc  = _fmt_entries(entries)
         rolls   = self._parse_action_rolls(entries)
@@ -1339,7 +1400,7 @@ class MonsterSheetWindow:
             tk.Label(parent, text=a_desc, bg=self.BG, fg=self.FG_MID,
                      font=("Consolas", 9), anchor="w", padx=20,
                      wraplength=520, justify=tk.LEFT).pack(fill=tk.X)
-        self._action_roll_widget(parent, a_name, rolls, monster, self.BG)
+        self._action_roll_widget(parent, a_name, rolls, monster, self.BG, recharge_val=recharge_val)
 
     # ── Spellcasting ─────────────────────────────────────────────────────────
 
@@ -1753,6 +1814,26 @@ class MonsterSheetWindow:
         # ── Pad bas ──────────────────────────────────────────────────────────
         tk.Frame(self._inner, bg=self.BG, height=20).pack()
         self._canvas.yview_moveto(0)
+        self._bind_mouse_scroll(self._inner)
+
+    def _bind_mouse_scroll(self, parent):
+        """Bind les événements de défilement de façon récursive (Linux + Win/Mac)."""
+        def _on_mousewheel(event):
+            # Pour Windows/Mac (delta) et Linux (num 4/5)
+            if event.num == 4 or getattr(event, "delta", 0) > 0:
+                self._canvas.yview_scroll(-1, "units")
+            elif event.num == 5 or getattr(event, "delta", 0) < 0:
+                self._canvas.yview_scroll(1, "units")
+
+        def _recursive_bind(w):
+            w.bind("<MouseWheel>", _on_mousewheel)
+            w.bind("<Button-4>", _on_mousewheel)
+            w.bind("<Button-5>", _on_mousewheel)
+            for c in w.winfo_children():
+                # On évite de binder si le widget gère lui-même un scroll natif sensible
+                _recursive_bind(c)
+
+        _recursive_bind(parent)
 
 
 # ─── Panel PNJs du groupe (intégré dans la sidebar de DnDApp) ─────────────────
@@ -1956,6 +2037,7 @@ class GroupNPCPanel:
         dlg.configure(bg="#0e1a10")
         dlg.geometry("420x220")
         dlg.resizable(False, False)
+        dlg.wait_visibility()
         dlg.grab_set()
 
         tk.Label(dlg, text=f"🎭 {npc_name} prend la parole",
@@ -2027,6 +2109,7 @@ class GroupNPCPanel:
         dlg.configure(bg="#1a0d0d")
         dlg.geometry("280x150")
         dlg.resizable(False, False)
+        dlg.wait_visibility()
         dlg.grab_set()
 
         tk.Label(dlg, text=f"PV actuels de {npc_name}",
@@ -2065,6 +2148,7 @@ class GroupNPCPanel:
         dialog.geometry("400x310")
         dialog.configure(bg="#0d1117")
         dialog.resizable(False, True)
+        dialog.wait_visibility()
         dialog.grab_set()
 
         tk.Label(dialog, text="Nom du PNJ :", bg="#0d1117", fg="#a5d6a7",

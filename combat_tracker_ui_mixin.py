@@ -149,9 +149,26 @@ class CombatTrackerUIMixin:
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self._scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Scroll molette
-        self._canvas.bind_all("<MouseWheel>",
-            lambda e: self._canvas.yview_scroll(-1*(e.delta//120), "units"))
+        # ─── NOUVEAU SYSTÈME DE SCROLL (MULTI-OS & SANS CONFLITS) ───
+        def _on_mousewheel(e):
+            try:
+                # Windows / Mac
+                if hasattr(e, 'delta') and e.delta:
+                    self._canvas.yview_scroll(-1 * (e.delta // 120), "units")
+                # Linux
+                elif hasattr(e, 'num'):
+                    if e.num == 4:
+                        self._canvas.yview_scroll(-1, "units")
+                    elif e.num == 5:
+                        self._canvas.yview_scroll(1, "units")
+            except Exception:
+                pass
+
+        # On utilise self.win.bind et non bind_all. 
+        # L'événement est capté pour cette fenêtre uniquement.
+        self.win.bind("<MouseWheel>", _on_mousewheel)
+        self.win.bind("<Button-4>", _on_mousewheel)
+        self.win.bind("<Button-5>", _on_mousewheel)
 
     def _build_bottom_panel(self):
         sep = tk.Frame(self.win, bg=C["border"], height=1)
@@ -200,7 +217,8 @@ class CombatTrackerUIMixin:
                                        fg=C["fg_dim"], font=("Consolas", 8))
             self._ct_status.pack(side=tk.LEFT)
 
-            self._ct_suggest_frame  = tk.Frame(add_frame, bg="#0d1018", bd=1, relief="solid")
+            # On le rattache à self.win pour qu'il flotte par-dessus tout le reste
+            self._ct_suggest_frame  = tk.Frame(self.win, bg="#0d1018", bd=1, relief="solid")
             self._ct_suggest_labels: list[tk.Label] =[]
             self._ct_suggest_visible = False
             self._ct_suggest_idx    = -1
@@ -227,11 +245,19 @@ class CombatTrackerUIMixin:
                     lw.bind("<Leave>",    lambda e, l=lw: l.config(bg="#0d1018"))
                     lw.bind("<Button-1>", lambda e, n=res_name: self._ct_pick(n))
                     self._ct_suggest_labels.append(lw)
+                
+                # --- LA MAGIE EST ICI ---
+                # On s'ancre (anchor="sw") sur le coin supérieur gauche (rely=0.0) de la barre de recherche
+                # Le menu va s'étirer naturellement vers le haut !
                 self._ct_suggest_frame.place(
-                    in_=search_frame,
-                    x=self._ct_search_entry.winfo_x(),
-                    y=search_frame.winfo_height() + 2,
+                    in_=self._ct_search_entry,
+                    relx=0.0,
+                    rely=0.0,
+                    y=-1,
+                    anchor="sw",
                     width=240)
+                
+                self._ct_suggest_frame.lift()  # On s'assure qu'il passe au premier plan
                 self._ct_suggest_visible = True
 
             self._ct_search_var.trace_add("write", _on_search)
@@ -268,7 +294,7 @@ class CombatTrackerUIMixin:
             lbl(text).grid(row=field_label_row, column=col, padx=(0,2), sticky="w")
 
         fr = field_label_row + 1
-        self._npc_name       = ent(12, "Gobelin");   self._npc_name.grid(row=fr, column=0, padx=(0,4), ipady=3)
+        self._npc_name       = ent(16, "Gobelin");   self._npc_name.grid(row=fr, column=0, padx=(0,4), ipady=3)
         self._npc_hp         = ent(5,  "15");         self._npc_hp.grid(row=fr,  column=1, padx=(0,4), ipady=3)
         self._npc_ac         = ent(4,  "13");         self._npc_ac.grid(row=fr,  column=2, padx=(0,4), ipady=3)
         self._npc_dex        = ent(4,  "1");          self._npc_dex.grid(row=fr, column=3, padx=(0,4), ipady=3)
@@ -383,7 +409,7 @@ class CombatTrackerUIMixin:
             e.delete(0, tk.END)
             e.insert(0, str(v))
 
-        _set(self._npc_name, bestiary_name[:14])
+        _set(self._npc_name, bestiary_name)
         _set(self._npc_hp,   hp)
         _set(self._npc_ac,   ac)
         _set(self._npc_dex,  dex_mod)

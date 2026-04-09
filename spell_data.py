@@ -430,6 +430,197 @@ def format_spell_card(sp: dict) -> str:
     return "\n".join(lines)
 
 
+# ─── Extraction de l'expression de dégâts ────────────────────────────────────
+
+# Mots-nombres EN + FR → int
+_NUM_WORDS: dict[str, int] = {
+    "one": 1,    "two": 2,    "three": 3, "four": 4,  "five": 5,
+    "six": 6,    "seven": 7,  "eight": 8, "nine": 9,  "ten": 10,
+    "un": 1,     "une": 1,    "deux": 2,  "trois": 3, "quatre": 4,
+    "cinq": 5,   "sept": 7,   "huit": 8,  "neuf": 9,  "dix": 10,
+}
+
+# Noms de projectiles EN + FR — avec pluriel optionnel (dart / darts, missile / missiles…)
+_PROJ_NOUN_RE = re.compile(
+    r'\b(dart|missile|ray|bolt|beam|shard|arrow|orb|mote|needle|'
+    r'fléchette|projectile|flèche|rayon|trait|éclat)s?\b',
+    re.IGNORECASE,
+)
+
+# Expression de dés : 2d6, 1d4+1, 8d6 …
+_DICE_EXPR_RE = re.compile(r'(\d+)d(\d+)(?:[+\-](\d+))?', re.IGNORECASE)
+
+# Ordinals anglais courants → int
+_ORDINAL_RE = re.compile(r'(\d+)(?:st|nd|rd|th)', re.IGNORECASE)
+
+
+def _parse_number(token: str) -> int | None:
+    """Mot ou chiffre → int, None si échec."""
+    t = token.strip().lower()
+    if t.isdigit():
+        return int(t)
+    return _NUM_WORDS.get(t)
+
+
+def _ordinal_to_int(text: str) -> int | None:
+    """'1st' / '2nd' / '3rd' / '4th' … → int, None si échec."""
+    m = _ORDINAL_RE.search(text)
+    return int(m.group(1)) if m else None
+
+
+def get_spell_damage_expr(spell_name: str, spell_level: int) -> str | None:
+    """
+    Retourne l'expression de dés de dégâts complète d'un sort
+    au niveau d'emplacement donné, lue depuis les données 5etools.
+
+    Deux cas traités :
+
+    ① Sort à projectiles multiples — ex. Magic Missile
+      Description contient "N [fléchettes/missiles/…] … chaque … XdY+Z dégâts"
+      Montée en niveau : "one more missile for each slot level above Nth"
+      → niveau 1 : "3d4+3"   niveau 2 : "4d4+4"   etc.
+
+    ② Sort à dégâts directs — ex. Boule de Feu / Fireball
+      Description contient "XdY [fire] damage"
+      Montée en niveau : "1d6 for each slot level above 3rd"
+      → niveau 3 : "8d6"   niveau 4 : "9d6"   etc.
+
+    Retourne None si aucune expression de dés n'est trouvable.
+    """
+    sp = get_spell(spell_name)
+    if sp is None:
+        return None
+
+    desc         = sp.get("description", "")
+    entries_raw  = sp.get("entries_higher", [])
+    higher_txt   = _flatten_entries(entries_raw) if entries_raw else ""
+    base_level   = int(sp.get("level", 1))
+
+    # ── 1. Trouver la première expression de dés dans la description ──────────
+    dice_m = _DICE_EXPR_RE.search(desc)
+    if not dice_m:
+        return None
+
+    base_n      = int(dice_m.group(1))          # ex. 1  (dés par projectile)
+    dice_sides  = int(dice_m.group(2))           # ex. 4
+    dice_bonus  = int(dice_m.group(3)) if dice_m.group(3) else 0  # ex. 1
+
+    # ── 2. Sort multi-projectiles ? ───────────────────────────────────────────
+    # Heuristique : chercher "N [adjectif?] <projectile>" AVANT la 1ère formule
+    # de dés (i.e. la description parle d'abord du nombre puis des dégâts)
+    _num_alts = "|".join(
+        list(_NUM_WORDS.keys()) + [r"\d+"]
+    )
+    proj_count_re = re.compile(
+        rf'(?P<nb>{_num_alts})'
+        r'(?:\s+\w+)?'          # adjectif optionnel ("glowing", "magical"…)
+        r'\s+' + _PROJ_NOUN_RE.pattern,
+        re.IGNORECASE,
+    )
+    proj_m = proj_count_re.search(desc[: dice_m.start()])
+
+    # Vérifier aussi "each [noun] deal" (confirme le modèle multi-proj)
+    each_re = re.compile(
+        r'\beach\s+' + _PROJ_NOUN_RE.pattern + r'.{0,60}?deal',
+        re.IGNORECASE | re.DOTALL,
+    )
+    is_multi = proj_m is not None or each_re.search(desc) is not None
+
+    if is_multi and proj_m:
+        base_count = _parse_number(proj_m.group("nb")) or 1
+
+        # ── Montée en niveau : projectiles supplémentaires ────────────────────
+        # Cherche : "one more <noun> for each slot level above Nth"
+        #        ou : "one additional <noun> for each slot level above Nth"
+        scale_re = re.compile(
+            r'one\s+(?:more|additional)\s+\w+\s+for\s+each\s+slot\s+level\s+above\s+'
+            r'(?P<above>\d+(?:st|nd|rd|th)?)',
+            re.IGNORECASE,
+        )
+        scale_m = scale_re.search(higher_txt)
+        extra_count = 0
+        if scale_m:
+            above_level = _ordinal_to_int(scale_m.group("above")) or base_level
+            extra_count = max(0, spell_level - above_level)
+
+        total_count = base_count + extra_count
+        total_n     = total_count * base_n
+        total_bonus = total_count * dice_bonus
+
+        if total_bonus > 0:
+            return f"{total_n}d{dice_sides}+{total_bonus}"
+        return f"{total_n}d{dice_sides}"
+
+    # ── 3. Sort à dégâts directs — montée en niveau ───────────────────────────
+    # Cherche : "Xd6 for each slot level above Yth"
+    extra_n = 0
+    if higher_txt:
+        scale_direct_re = re.compile(
+            r'(\d+)d(\d+)\s+for\s+each\s+slot\s+level\s+above\s+'
+            r'(?P<above>\d+(?:st|nd|rd|th)?)',
+            re.IGNORECASE,
+        )
+        sd_m = scale_direct_re.search(higher_txt)
+        if sd_m:
+            scale_n     = int(sd_m.group(1))
+            scale_sides = int(sd_m.group(2))
+            above_level = _ordinal_to_int(sd_m.group("above")) or base_level
+            levels_up   = max(0, spell_level - above_level)
+            if scale_sides == dice_sides:   # même type de dé
+                extra_n = levels_up * scale_n
+
+    total_n = base_n + extra_n
+    if dice_bonus > 0:
+        return f"{total_n}d{dice_sides}+{dice_bonus}"
+    return f"{total_n}d{dice_sides}"
+
+
+def get_spell_projectile_count(spell_name: str, spell_level: int) -> int:
+    """
+    Retourne le nombre de projectiles distincts pour un sort multi-projectile
+    au niveau donné (utile pour afficher les jets individuels).
+    Retourne 1 pour les sorts non multi-projectiles.
+
+    Ex. : Magic Missile niveau 1 → 3,  niveau 2 → 4
+    """
+    sp = get_spell(spell_name)
+    if sp is None:
+        return 1
+
+    desc         = sp.get("description", "")
+    entries_raw  = sp.get("entries_higher", [])
+    higher_txt   = _flatten_entries(entries_raw) if entries_raw else ""
+    base_level   = int(sp.get("level", 1))
+
+    dice_m = _DICE_EXPR_RE.search(desc)
+    if not dice_m:
+        return 1
+
+    _num_alts = "|".join(list(_NUM_WORDS.keys()) + [r"\d+"])
+    proj_count_re = re.compile(
+        rf'(?P<nb>{_num_alts})(?:\s+\w+)?\s+' + _PROJ_NOUN_RE.pattern,
+        re.IGNORECASE,
+    )
+    proj_m = proj_count_re.search(desc[: dice_m.start()])
+    if not proj_m:
+        return 1
+
+    base_count = _parse_number(proj_m.group("nb")) or 1
+
+    scale_re = re.compile(
+        r'one\s+(?:more|additional)\s+\w+\s+for\s+each\s+slot\s+level\s+above\s+'
+        r'(?P<above>\d+(?:st|nd|rd|th)?)',
+        re.IGNORECASE,
+    )
+    scale_m = scale_re.search(higher_txt)
+    extra = 0
+    if scale_m:
+        above_level = _ordinal_to_int(scale_m.group("above")) or base_level
+        extra = max(0, spell_level - above_level)
+
+    return base_count + extra
+
+
 # ─── Widget SpellPickerDialog ─────────────────────────────────────────────────
 
 class SpellPickerDialog:

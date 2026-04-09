@@ -10,7 +10,7 @@ import threading
 
 # Imports des dépendances partagées
 try:
-    from combat_tracker_constants import C, CONDITIONS, _BESTIARY_OK
+    from combat_tracker_constants import C, CONDITIONS, TACTICS, _BESTIARY_OK
     if _BESTIARY_OK:
         from npc_bestiary_panel import MonsterSheetWindow
 except ImportError:
@@ -101,6 +101,23 @@ class CombatTrackerRowMixin:
                 if "bonus" in acts:  acts["bonus"].set(c.bonus_used)
                 if "react" in acts:  acts["react"].set(c.reaction_used)
                 if "move" in acts:   acts["move"].set(str(c.move_used))
+
+                # Mise à jour des badges conditions et tactiques
+                if "cond_btns" in rw:
+                    for cn, b in rw["cond_btns"].items():
+                        cdata = CONDITIONS.get(cn)
+                        if cdata:
+                            active = cn in c.conditions
+                            b.config(bg=cdata["color"] if active else _darken(cdata["color"], 0.25),
+                                     fg="#ffffff" if active else "#666677")
+                
+                if "tac_btns" in rw:
+                    for tn, b in rw["tac_btns"].items():
+                        tdata = TACTICS.get(tn)
+                        if tdata:
+                            active = tn in c.tactics
+                            b.config(bg=tdata["color"] if active else _darken(tdata["color"], 0.25),
+                                     fg="#ffffff" if active else "#666677")
 
                 # Mise à jour visuelle _active_ / _inactive_ (incluant création/suppression bouton réinit)
                 self._update_row_visuals(rw, c, is_active)
@@ -201,7 +218,7 @@ class CombatTrackerRowMixin:
         name_lbl = tk.Label(name_f, text=c.name + skull + star, bg=row_bg,
                             fg=C["fg_gold"] if active else c.color,
                             font=("Consolas", 11, "bold") if c.is_pc else ("Consolas", 10, "bold"),
-                            anchor="w")
+                            anchor="w", width=16)
         name_lbl.pack(anchor="w")
 
         name_lbl.bind("<Enter>", lambda e, cb=c: self._row_enter(e, cb))
@@ -249,16 +266,32 @@ class CombatTrackerRowMixin:
                       command=lambda cb=c: self._add_to_kill_pool(cb)
                       ).pack(side=tk.LEFT, padx=(3, 0))
 
-        # Bouton Spawn Token (PNJ uniquement)
         if not c.is_pc:
             def _spawn_token(cb=c):
                 if getattr(self.app, "_combat_map_win", None):
+                    # Trouver la taille du monstre depuis le bestiaire
+                    tok_size = 1.0
+                    bname = getattr(cb, "bestiary_name", "")
+                    if bname:
+                        try:
+                            from npc_bestiary_panel import get_monster
+                            m = get_monster(bname)
+                            if m and "size" in m:
+                                size_map = {"T": 1.0, "S": 1.0, "M": 1.0, "L": 2.0, "H": 3.0, "G": 4.0}
+                                sz = m["size"][0] if m["size"] else "M"
+                                tok_size = size_map.get(sz.upper(), 1.0)
+                        except Exception as e:
+                            print(f"[CombatTracker] Erreur taille PNJ : {e}")
+
                     self.app._combat_map_win.place_new_token(
                         cb.name, "monster",
-                        hp=cb.hp, max_hp=cb.max_hp,
+                        size=tok_size,
+                        hp=cb.hp, max_hp=cb.max_hp, ac=cb.ac,
+                        conditions=list(cb.conditions.keys()),
+                        tactics=list(cb.tactics.keys()),
                         alignment=getattr(cb, "alignment", "hostile"),
                         portrait=getattr(cb, "portrait", ""),
-                        source_name=getattr(cb, "bestiary_name", ""))
+                        source_name=bname)
                 else:
                     if self.chat_queue:
                         self.chat_queue.put({
@@ -322,6 +355,7 @@ class CombatTrackerRowMixin:
                 val = int(var.get()) if var.get().strip() else 0
             except ValueError:
                 val = 0
+            var._last_val = val
             was_up = cb.hp > 0
 
             if sign < 0 and cb.temp_hp > 0:
@@ -351,6 +385,23 @@ class CombatTrackerRowMixin:
                     except Exception as _e:
                         print(f"[CombatTracker] Sync HP -> state_manager : {_e}")
                 threading.Thread(target=_sync_hp, daemon=True, name="ct-hp-sync").start()
+                
+            # ── Synchro avec la carte pour tokens correspondants ──
+            if getattr(self, "app", None) is not None:
+                map_win = getattr(self.app, "_combat_map_win", None)
+                if map_win is not None and hasattr(map_win, "tokens"):
+                    for tok in map_win.tokens:
+                        if tok.get("name") == cb.name:
+                            tok["hp"] = cb.hp
+                            if hasattr(map_win, "_redraw_one_token"):
+                                map_win._redraw_one_token(tok)
+                            if getattr(var, "_last_val", 0) > 0 and hasattr(map_win, "spawn_floating_text"):
+                                prefix = "−" if sign < 0 else "+"
+                                color = "#ef5350" if sign < 0 else "#4caf50"
+                                map_win.spawn_floating_text(tok, f"{prefix}{getattr(var, '_last_val')}", color)
+                    if hasattr(map_win, "_save_state"):
+                        map_win._save_state()
+
             self._schedule_save()
             if cb.is_pc and cb.hp == 0 and was_up:
                 self._refresh_list()
@@ -428,9 +479,10 @@ class CombatTrackerRowMixin:
         tk.Label(ac_f, text="CA", bg=row_bg, fg=C["fg_dim"],
                  font=("Consolas", 7)).pack()
 
-        # ── Col 5 : Conditions ────────────────────────────────────────────
+        # ── Col 5 : Conditions et Tactiques ──────────────────────────────
         cond_f = _col(220)
-        self._build_conditions_widget(cond_f, c, row_bg)
+        cond_btns = self._build_conditions_widget(cond_f, c, row_bg)
+        tac_btns = self._build_tactics_widget(cond_f, c, row_bg)
 
         # ── Col 6 : Actions ───────────────────────────────────────────────
         act_f = _col(162)
@@ -462,6 +514,8 @@ class CombatTrackerRowMixin:
             "init_var":    init_var,
             "ac_var":      ac_var,
             "action_vars": action_vars,  # dict of action vars
+            "cond_btns":   cond_btns,
+            "tac_btns":    tac_btns,
         }
 
         # ── Col 7 : Concentration ─────────────────────────────────────────
@@ -515,15 +569,16 @@ class CombatTrackerRowMixin:
         row2.pack(fill=tk.X)
 
         cond_names = list(CONDITIONS.keys())
+        cond_btns = {}
 
         for i, cname in enumerate(cond_names):
             cdata  = CONDITIONS[cname]
             active = cname in c.conditions
             frame  = row1 if i < 8 else row2
 
-            # Inactif : fond légèrement teinté + texte lisible
-            btn_bg  = cdata["color"]  if active else _darken(cdata["color"], 0.55)
-            btn_fg  = "white"         if active else "#cccccc"
+            # Inactif : très sombre. Actif : couleur pure et police blanche.
+            btn_bg  = cdata["color"]  if active else _darken(cdata["color"], 0.25)
+            btn_fg  = "#ffffff"       if active else "#666677"
 
             btn = tk.Button(frame, text=cdata["abbr"],
                             bg=btn_bg, fg=btn_fg,
@@ -531,20 +586,88 @@ class CombatTrackerRowMixin:
                             relief="flat", padx=3, pady=1,
                             cursor="hand2")
             btn.pack(side=tk.LEFT, padx=1, pady=1)
+            cond_btns[cname] = btn
 
             # Tooltip
             self._tooltip(btn, f"{cname}\n{cdata['tip']}")
 
             def _toggle(cb=c, cn=cname, b=btn, cd=cdata):
+                enabled = False
                 if cn in cb.conditions:
                     del cb.conditions[cn]
-                    b.config(bg=_darken(cd["color"], 0.55), fg="#cccccc")
+                    b.config(bg=_darken(cd["color"], 0.25), fg="#666677")
                 else:
                     cb.conditions[cn] = True
-                    b.config(bg=cd["color"], fg="white")
+                    b.config(bg=cd["color"], fg="#ffffff")
+                    enabled = True
+                    
+                # ── Synchro avec la carte ──
+                if getattr(self.app, "_combat_map_win", None):
+                    for t in self.app._combat_map_win.tokens:
+                        if t.get("name") == cb.name:
+                            t.setdefault("conditions", [])
+                            if enabled and cn not in t["conditions"]:
+                                t["conditions"].append(cn)
+                            elif not enabled and cn in t["conditions"]:
+                                t["conditions"].remove(cn)
+                            self.app._combat_map_win._redraw_one_token(t)
+                            
                 self._schedule_save()
 
             btn.config(command=_toggle)
+        
+        return cond_btns
+
+    def _build_tactics_widget(self, parent, c, row_bg: str):
+        """Grille compacte de badges tactiques (Esquive, Caché...) - 1 ligne."""
+        outer = tk.Frame(parent, bg=row_bg)
+        outer.pack(fill=tk.X, expand=True)
+
+        tac_names = list(TACTICS.keys())
+        tac_btns = {}
+        for i, tname in enumerate(tac_names):
+            tdata  = TACTICS[tname]
+            active = tname in c.tactics
+
+            btn_bg  = tdata["color"]  if active else _darken(tdata["color"], 0.25)
+            btn_fg  = "#ffffff"       if active else "#666677"
+
+            btn = tk.Button(outer, text=tdata["abbr"],
+                            bg=btn_bg, fg=btn_fg,
+                            font=("Consolas", 7, "bold"),
+                            relief="flat", padx=3, pady=1,
+                            cursor="hand2")
+            btn.pack(side=tk.LEFT, padx=1, pady=1)
+            tac_btns[tname] = btn
+
+            self._tooltip(btn, f"{tname}\n{tdata['tip']}")
+
+            def _toggle(cb=c, tn=tname, b=btn, td=tdata):
+                enabled = False
+                if tn in cb.tactics:
+                    del cb.tactics[tn]
+                    b.config(bg=_darken(td["color"], 0.25), fg="#666677")
+                else:
+                    cb.tactics[tn] = True
+                    b.config(bg=td["color"], fg="#ffffff")
+                    enabled = True
+                    
+                # ── Synchro avec la carte ──
+                if getattr(self.app, "_combat_map_win", None):
+                    for t in self.app._combat_map_win.tokens:
+                        if t.get("name") == cb.name:
+                            t.setdefault("tactics", [])
+                            if enabled and tn not in t["tactics"]:
+                                t["tactics"].append(tn)
+                            elif not enabled and tn in t["tactics"]:
+                                t["tactics"].remove(tn)
+                            self.app._combat_map_win._redraw_one_token(t)
+                            
+                self._schedule_save()
+
+            btn.config(command=_toggle)
+            
+        return tac_btns
 
     def _build_action_economy(self, parent, c, row_bg: str, active: bool):
         """Cases à cocher pour Action / Bonus / Réaction + mouvement.

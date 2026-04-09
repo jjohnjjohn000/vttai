@@ -48,6 +48,18 @@ class UISetupMixin:
         self.entry.bind("<Return>",   lambda event: self.send_text())
         self.entry.bind("<KP_Enter>", lambda event: self.send_text())
 
+        # ── Historique des entrées (↑ / ↓) ──────────────────────────────────
+        self._chat_history   = []   # liste des messages envoyés
+        self._chat_hist_idx  = -1   # -1 = pas en navigation
+        self._chat_hist_draft = ""  # brouillon sauvegardé avant navigation
+        self.entry.bind("<Up>",   self._on_hist_up)
+        self.entry.bind("<Down>", self._on_hist_down)
+
+        # ── Désactiver la navigation Tab quand l'entrée est focusée ─────────
+        self.entry.bind("<Tab>",       self._on_tab_complete)
+        self.entry.bind("<Shift-Tab>", self._on_tab_complete_back)
+        self.entry.bind("<Escape>",    self._on_tab_cancel)
+
         # ── Bouton "Parler en tant que" inline ──────────────────────────────
         # Affiche le PNJ actif (ou "MJ") et ouvre le même menu que le sélecteur
         # latéral — permet de changer de voix sans quitter la zone de saisie.
@@ -159,7 +171,7 @@ class UISetupMixin:
         tk.Button(action_frame, text="📜 Journal de Quêtes", bg="#1a3a5c", fg="#64b5f6",
                   font=("Arial", 10, "bold"), command=self.open_quest_journal).pack(fill=tk.X, pady=3)
 
-        tk.Button(action_frame, text="📖 Chroniques de Campagne", bg="#1e1a3a", fg="#c8b8ff",
+        tk.Button(action_frame, text="📖 Chroniques & Mémoires", bg="#1e1a3a", fg="#c8b8ff",
                   font=("Arial", 10, "bold"), command=self.open_campaign_log_viewer).pack(fill=tk.X, pady=3)
 
         tk.Button(action_frame, text="🎲 Lanceur de Dés", bg="#2a1a3a", fg="#ce93d8",

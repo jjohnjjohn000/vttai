@@ -34,7 +34,7 @@
   "voice": {
     "enabled": true,
     "backend": "piper",
-    "volume": 36
+    "volume": 38
   },
   "piper": {
     "models_dir": "piper_models",

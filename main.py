@@ -134,11 +134,13 @@ load_dotenv()
 # Applique les patches Tk AVANT toute création de widget (FIX C)
 apply_safe_patches()
 
+from tab_autocomplete_mixin import TabAutocompleteMixin
 
 class DnDApp(
     WindowManagerMixin,
     UISetupMixin,
     ChatMixin,
+    TabAutocompleteMixin,
     CharacterMixin,
     PanelsMixin,
     # ── Nouveaux mixins issus du découpage de main.py ─────────────────────────
@@ -254,6 +256,11 @@ class DnDApp(
         self._combat_tracker_win = None   # référence à la fenêtre Toplevel du tracker
         self._agents: dict = {}              # {name: AssistantAgent} pour MAJ des prompts
         self._base_system_msgs: dict = {}    # system_message de base sans combat
+        # État du switch LLM combat — True quand les agents sont sur _COMBAT_LLM_MODEL.
+        # Utilisé par _update_agent_combat_prompts pour n'appeler _set_combat_llm
+        # QUE lors des transitions (combat ON / combat OFF), pas à chaque action.
+        self._combat_llm_active: bool = False
+        self._pre_combat_llm: dict = {}      # snapshot llm_config + client avant combat
         # Mémoires activées dynamiquement au fil de la conversation
         self._active_memory_ids: set  = set()   # IDs déjà injectés dans les prompts
         self._contextual_mem_block: str = ""    # bloc cumulatif des mémoires contextuelles
@@ -300,6 +307,27 @@ class DnDApp(
             t = threading.Thread(target=self.run_autogen, daemon=True, name="autogen-worker")
             self._autogen_thread = t
             t.start()
+
+            # Boucle d'attente : on vérifie toutes les 500ms si les agents
+            # sont enfin instanciés en mémoire avant de lancer la bascule.
+            def _wait_and_sync_combat():
+                if getattr(self, "_agents", None):
+                    try:
+                        from combat_tracker import COMBAT_STATE as _CS
+                        if _CS.get("active") and not getattr(self, "_combat_llm_active", False):
+                            self.msg_queue.put({
+                                "sender": "⚙️ Système",
+                                "text": "⚔️ Reprise d'un combat en cours — PJ basculés vers le modèle de combat.",
+                                "color": "#ff9800"
+                            })
+                            self._update_agent_combat_prompts()
+                    except Exception as e:
+                        pass
+                else:
+                    self.root.after(500, _wait_and_sync_combat)
+
+            self.root.after(1500, _wait_and_sync_combat)
+
         self.root.after(500, _start_autogen)
         _dbg("_deferred_init END")
 
@@ -412,7 +440,7 @@ class DnDApp(
             combat_block  = combat_block_fn(name)
 
             # Carte de combat : personnalisée par agent (distances propres uniquement)
-            map_block = get_map_prompt(self._win_state, for_hero=name)
+            map_block = get_map_prompt(self._win_state, for_hero=name, in_combat=COMBAT_STATE["active"])
 
             # Bloc spell slots dynamique - relit campaign_state a chaque rebuild
             slots_block = ""
@@ -484,6 +512,22 @@ class DnDApp(
     # Alias conservé pour compatibilité avec les appels existants depuis le combat
     def _update_agent_combat_prompts(self):
         self._rebuild_agent_prompts()
+        
+        # Protection absolue : si les agents ne sont pas encore créés par AutoGen,
+        # on annule la bascule pour ne pas fausser le drapeau _combat_llm_active.
+        if not getattr(self, "_agents", None):
+            return
+
+        # ── Switch LLM sur transition combat ON / combat OFF ─────────────
+        try:
+            from combat_tracker import COMBAT_STATE as _CS
+            _combat_now = bool(_CS.get('active'))
+            if _combat_now != getattr(self, "_combat_llm_active", False):
+                if hasattr(self, "_set_combat_llm"):
+                    self._set_combat_llm(_combat_now)
+                self._combat_llm_active = _combat_now
+        except Exception as _e:
+            print(f'[CombatLLM] Erreur switch : {_e}')
 
     def _restore_windows(self):
         """Rouvre les fenêtres qui étaient ouvertes lors de la dernière session.
@@ -510,7 +554,7 @@ class DnDApp(
         if self._win_state.get("_open_combat_map"):
             delay += 300
             self.root.after(delay, self.open_combat_map)
-        for name in ["Kaelen", "Elara", "Thorne", "Lyra"]:
+        for name in["Kaelen", "Elara", "Thorne", "Lyra"]:
             if self._win_state.get(f"_open_char_{name}"):
                 delay += 400   # 400 ms entre chaque popout pour éviter les races gRPC/Tk
                 self.root.after(delay, lambda n=name: self.open_char_popout(n))
@@ -534,8 +578,8 @@ class DnDApp(
         """
         # 1. L'indicateur de tour est maintenant affiché par _log_turn du tracker pour tout le monde (PJ et PNJ).
         
-        # 2. Mettre à jour les system prompts (blocs combat + carte + slots)
-        self._rebuild_agent_prompts()
+        # 2. Mettre à jour les system prompts et forcer la bascule LLM si nécessaire
+        self._update_agent_combat_prompts()
 
         # 3. Construire le message de déclenchement de tour
         trigger = (

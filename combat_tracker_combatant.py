@@ -57,6 +57,8 @@ class Combatant:
 
         # Conditions actives {nom: True}
         self.conditions: dict = {}
+        # Statuts tactiques {nom: True}
+        self.tactics: dict = {}
 
         # Jets de mort (D&D 5e)
         self.death_saves_success = 0
@@ -124,6 +126,7 @@ class Combatant:
             "portrait":           self.portrait,
             "alignment":          self.alignment,
             "conditions":         list(self.conditions.keys()),
+            "tactics":            list(self.tactics.keys()),
             "notes":              self.notes,
             "death_saves_success": self.death_saves_success,
             "death_saves_fail":   self.death_saves_fail,
@@ -158,6 +161,8 @@ class Combatant:
         c.reaction_used       = d.get("reaction_used", False)
         for cond in d.get("conditions",[]):
             c.conditions[cond] = True
+        for tac in d.get("tactics",[]):
+            c.tactics[tac] = True
 
         # Si le portrait sérialisé n'existe plus sur le disque, re-résoudre.
         if c.portrait and not __import__("os").path.exists(c.portrait):

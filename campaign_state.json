@@ -1,5 +1,5 @@
 {
-    "session_summary": "### Chroniques de la Barovie : L'Éveil de l'Abîme — Le Gué de la Tser\n\n**La Veille sur l'Abîme**\nLe combat contre les diables à épines, diables de chaines et le diable barbelé, émergeant de la brèche au Gué de la Tser a pris fin, laissant derrière lui des cendres et une lourdeur atmosphérique oppressante. Tandis que ces entités cristallines ont été annihilées, la menace demeure entière : la faille planaire, ce « Mur Noir » qui lacère la réalité, continue de déformer la trame magique de la Barovie. Le groupe — **Kaelen, Elara, Thorne et Lyra** — s'est regroupé en formation défensive serrée autour de **Rudolph van Richten** et **Ezmerelda d'Avenir**, lesquels s'attellent à la triangulation du déclencheur occulte responsable de cette instabilité.\n\n**Tension et Vigilance**\nL'ambiance est saturée d'un froid surnaturel que la lueur du phare d'Argynvostholt, bien que puissante, peine à totalement dissiper. L'inquiétude des compagnons est palpable : chaque seconde passée à attendre le diagnostic de Van Richten est une seconde de vulnérabilité pour leur bastion d'Argynvostholt. **Elara** a noté une géométrie arcanique défiant les lois connues, suggérant une force extérieure active, tandis que **Lyra** et **Kaelen** maintiennent une garde spirituelle et martiale inflexible, prêts à intervenir dès que la nature de la faille sera identifiée. Le groupe est conscient que la passivité est leur plus grand ennemi, mais la prudence impose d'attendre la finalisation de l'analyse avant toute tentative de scellement.\n\n**État de la Situation**\nLe sanctuaire d'Argynvostholt reste la priorité structurelle, mais il est désormais indissociable de la survie de la région face à cette invasion entropique. Le groupe est mobilisé dans une attente active, conscient que le « Mur Noir » est un verrou dont l'ouverture pourrait sceller le sort de la Barovie.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : En attente du résultat de la triangulation par Van Richten. Les forces de défense (diables) ont été neutralisées.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En pause forcée. Les travaux de Gil et Mart attendent que le front extérieur soit stabilisé.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Statut inchangé. Objectif prioritaire dès que la faille sera sous contrôle.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Possession d'Elara ; résonance planaire active).\n*   *Carnet de Van Richten* (Référentiel tactique).\n*   *Contenu des poches du prêtre Donavich* (Possession de Thorne).\n*   *Lettre cachetée* (Possession du groupe).\n\n*Note du Chroniqueur : Le temps se fige autour du Mur Noir. Les héros ne sont plus de simples aventuriers, ils sont les sentinelles d'un monde qui se déchire, l'œil rivé sur l'obscurité, dans l'attente du calcul qui déterminera s'ils peuvent refermer la plaie ou s'ils devront s'y sacrifier.*",
+    "session_summary": "### Chroniques de la Barovie : L’Ombre du Temple d’Ambre\n\n**La Percée de la Réalité**\nAu Gué de la Tser, dans le sillage de leur victoire contre les diables cristallins, le groupe a fait face à une menace existentielle : le « Mur Noir », une faille planaire dévorant la trame même de la Barovie. Sous la direction tactique de **Rudolph van Richten** et l'appui d'**Ezmerelda d'Avenir**, le groupe a utilisé un échantillon de liane cristalline comme diapason pour stabiliser les instruments de Van Richten. Cette prouesse arcanique, menée par **Elara**, a permis de trianguler l'origine de l'entropie : le **Temple d'Ambre**, niché au cœur du mont Ghakis.\n\n**L'Urgence du Départ**\nLa révélation a cristallisé l'objectif du groupe : ils ne sont plus les défenseurs d'un manoir, mais les derniers remparts contre une invasion planaire coordonnée. Malgré la décision de Van Richten de se retirer vers sa tour après avoir guidé le groupe jusqu'à l'intersection de la Vieille Route, Ezmerelda a rejoint les rangs des aventuriers pour cet assaut ultime.\n\n**L'Embuscade du Destin**\nAlors que les compagnons entamaient leur progression vers les sommets, la brume s'est déchirée pour révéler une nouvelle menace : une **Erinyes** (diablesse ailée) flanquée d'une meute de **Chiens de l'Enfer**. Ce groupe de choc semble déterminé à empêcher les héros d'atteindre le Temple d'Ambre. Le combat est immédiat et violent, marquant le début d'une marche périlleuse vers l'épicentre du mal cosmique.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : Triangulation réussie. Le Temple d'Ambre est identifié comme la source.\n*   🗺️ **[Principale] Atteindre le Temple d'Ambre** : Expédition en cours. Le groupe est en route, actuellement aux prises avec une force d'interception diabolique.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En pause, les efforts de fortification sont désormais subordonnés à la survie contre l'invasion globale.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Statut inchangé. Objectif toujours prioritaire pour la restauration définitive du Fanal.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Utilisé comme diapason arcanique).\n*   *Données de triangulation* (Documentant le lien entre le Mur Noir et le Temple d'Ambre).\n\n*Note du Chroniqueur : La Barovie n'est plus qu'un souvenir de ce qu'elle fut ; elle est devenue le théâtre d'une guerre qui transcende les plans. Le passage par le mont Ghakis ne sera pas une simple ascension, mais une épreuve de force dont l'issue déterminera si le monde sera scellé ou englouti.*",
     "defense_argynvostholt": 10,
     "characters": {
         "Kaelen": {
@@ -8,12 +8,12 @@
                 "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
             ],
             "llm": "gemini-3.1-flash-lite-preview",
-            "hp": 98,
+            "hp": 37,
             "max_hp": 104,
             "spell_slots": {
                 "1": 0,
-                "2": 0,
-                "3": 0
+                "2": 1,
+                "3": 2
             },
             "hit_dice_used": 0,
             "active": true,
@@ -82,7 +82,9 @@
             "level": 11,
             "con_mod": 3,
             "ac": 20,
-            "llm_session_override": ""
+            "llm_session_override": "",
+            "race": "Human",
+            "subrace": "Variant"
         },
         "Elara": {
             "alt_context_too_large": "openrouter/google/gemini-3.1-pro-preview",
@@ -90,11 +92,11 @@
             "hp": 71,
             "max_hp": 71,
             "spell_slots": {
-                "1": 2,
-                "2": 1,
+                "1": 0,
+                "2": 2,
                 "3": 0,
-                "4": 1,
-                "5": 0,
+                "4": 3,
+                "5": 1,
                 "6": 0
             },
             "hit_dice_used": 0,
@@ -226,7 +228,10 @@
             "subclass": "",
             "level": 11,
             "con_mod": 1,
-            "ac": 14
+            "ac": 14,
+            "race": "Human",
+            "subrace": "Variant",
+            "llm_session_override": ""
         },
         "Thorne": {
             "alt_context_too_large": [
@@ -240,10 +245,11 @@
                 "groq/meta-llama/llama-4-scout-17b-16e-instruct",
                 "openrouter/arcee-ai/trinity-large-preview:free",
                 "mistralai/mistral-small-3.1-24b-instruct:free",
-                "nvidia/nemotron-nano-12b-v2-vl:free DOESNT RP"
+                "nvidia/nemotron-nano-12b-v2-vl:free DOESNT RP",
+                "ollama/gemma4:e4b"
             ],
             "llm": "groq/meta-llama/llama-4-scout-17b-16e-instruct",
-            "hp": 83,
+            "hp": 70,
             "max_hp": 83,
             "spell_slots": {},
             "hit_dice_used": 0,
@@ -254,19 +260,21 @@
             "level": 11,
             "con_mod": 3,
             "ac": 18,
-            "llm_session_override": "groq/meta-llama/llama-4-scout-17b-16e-instruct"
+            "llm_session_override": "",
+            "race": "Tiefling",
+            "subrace": "Dispater"
         },
         "Lyra": {
             "llm": "gemini-3.1-flash-lite-preview",
-            "hp": 82,
+            "hp": 60,
             "max_hp": 82,
             "spell_slots": {
                 "1": 0,
-                "2": 0,
-                "3": 0,
-                "4": 1,
+                "2": 1,
+                "3": 2,
+                "4": 3,
                 "5": 0,
-                "6": 0
+                "6": 1
             },
             "hit_dice_used": 0,
             "active": true,
@@ -399,7 +407,9 @@
             "level": 11,
             "con_mod": 2,
             "ac": 17,
-            "llm_session_override": ""
+            "llm_session_override": "",
+            "race": "Half-Elf",
+            "subrace": "Variant; Wood Elf Descent"
         }
     },
     "npcs": [
@@ -721,10 +731,32 @@
                 },
                 {
                     "text": "Terminer la triangulation du déclencheur de la brèche",
+                    "done": true
+                }
+            ],
+            "notes": "La triangulation a été finalisée avec succès par le groupe et Van Richten. La source de la brèche planaire a été identifiée : il s'agit du Temple d'Ambre."
+        },
+        {
+            "id": "q_220858",
+            "title": "Atteindre le Temple d'Ambre",
+            "status": "active",
+            "category": "Principale",
+            "description": "Le Temple d'Ambre a été identifié comme l'épicentre et la source du déclencheur de la brèche planaire. Le groupe doit s'y rendre pour neutraliser définitivement la menace.",
+            "objectives": [
+                {
+                    "text": "Voyager jusqu'au mont Ghakis",
+                    "done": false
+                },
+                {
+                    "text": "Infiltrer le Temple d'Ambre",
+                    "done": false
+                },
+                {
+                    "text": "Neutraliser la source de la brèche planaire",
                     "done": false
                 }
             ],
-            "notes": "Les forces d'invasion immédiates ont été repoussées. Le groupe attend désormais la finalisation de la triangulation du déclencheur de la brèche par Van Richten pour passer à l'étape finale de sa neutralisation. Les jets d'arcane, investigation, religion et perception ne sont plus nécéssaires sur le Mur Noir à court terme."
+            "notes": "Van Richten et Ezmerelda accompagnent le groupe dans cette expédition critique."
         }
     ],
     "scene_context": {
@@ -743,7 +775,7 @@
             "id": "mem_krezk",
             "categorie": "lieu",
             "titre": "Krezk",
-            "contenu": "Village fortifié niché dans les montagnes, gouverné par le Maire Dmitri Krezkov. Les portes sont gardées et les étrangers doivent se justifier pour entrer. Au nord du village se trouve une mare stagnante avec une faible aura de magie d'abjuration — Kaelen pense qu'un serment brisé en ce lieu est à l'origine du mal qui ronge la région.",
+            "contenu": "Village fortifié niché dans les montagnes, gouverné par le Maire Dmitri Krezkov. Les portes sont gardées et les étrangers doivent se justifier pour entrer. Au nord du village se trouve une mare stagnante avec une faible aura de magie d'abjuration — Kaelen pense qu'un serment brisé en ce lieu est à l'origine du mal qui ronge la région. Le groupe a tenté d'y amené Ireena mais elle s'est sauvé avec son frère pour retourner à Vallaki, le groupe les a rejoint peu après le départ d'Ireena et Ismark.",
             "tags": [
                 "Krezk",
                 "village",
@@ -759,7 +791,7 @@
             "id": "mem_vallaki",
             "categorie": "lieu",
             "titre": "Vallaki",
-            "contenu": "Ville ceinte de palissades, gouvernée par Lady Fiona Wachter. Le Baron Vallakovich ayant succombé au lynchage sur la place publique. Les portes sont désormais closes au groupe — une tentative d'entrée a échoué. La ville organisait des fêtes obligatoires pour maintenir le moral, sous le règne de l'ancien Baron, sous peine d'emprisonnement.",
+            "contenu": "Ville ceinte de palissades, gouvernée par Lady Fiona Wachter. Le Baron Vallakovich ayant succombé au lynchage sur la place publique. Les portes sont désormais closes au groupe — une tentative d'entrée a échoué. La ville organisait des fêtes obligatoires pour maintenir le moral, sous le règne de l'ancien Baron, sous peine d'emprisonnement.\n\nIreena et Ismark ont pu y entré, mais le groupe n'a toujours pas pu après une 2e tentative.",
             "tags": [
                 "Vallaki",
                 "ville",
@@ -774,7 +806,7 @@
             "id": "mem_argynvostholt",
             "categorie": "lieu",
             "titre": "Argynvostholt",
-            "contenu": "Manoir hanté autrefois habité par l'Ordre du Dragon d'Argent. Son phare émet une lumière visible depuis Krezk. Le groupe a pour mission secondaire d'en renforcer les défenses. Score de défense actuel : 10/100.",
+            "contenu": "Manoir autrefois hanté et habité par l'Ordre du Dragon d'Argent. Son phare émet une lumière visible depuis Krezk. Le groupe a pour mission secondaire d'en renforcer les défenses. Score de défense actuel : 10/100.",
             "tags": [
                 "Argynvostholt",
                 "manoir",
@@ -790,7 +822,7 @@
             "id": "mem_barovia_village",
             "categorie": "lieu",
             "titre": "Village de Barovia",
-            "contenu": "Village d'origine du groupe. Dominé par la peur de Strahd. La taverne du Sang de la Vigne était leur point de départ. Ismark et Ireena Kolyana y résident — c'est là qu'a débuté la quête d'escorte.",
+            "contenu": "Premier village visité par le groupe. Dominé par la peur de Strahd. La taverne du Sang de la Vigne était leur point de départ. Ismark et Ireena Kolyana y résident — c'est là qu'a débuté la quête d'escorte.",
             "tags": [
                 "Barovia",
                 "village",
@@ -837,7 +869,7 @@
             "id": "mem_ireena",
             "categorie": "personnage",
             "titre": "Ireena Kolyana",
-            "contenu": "Sœur d'Ismark, portant les marques de morsures vampiriques de Strahd. Son état se détériore : elle est en proie à un conflit intérieur avec l'âme de Tatyana. La Détection du Bien et du Mal n'a révélé aucune influence externe — conflit purement spirituel. A refusé de se rendre à la mare sacrée lors de la dernière session.",
+            "contenu": "Sœur d'Ismark, portant les marques de morsures vampiriques de Strahd. Elle est en proie à un conflit intérieur avec l'âme de Tatyana. La Détection du Bien et du Mal n'a révélé aucune influence externe — conflit purement spirituel. A refusé de se rendre à la mare sacrée lors d'une session précédente.\n\nElle a éveillé un charme et une confiance inébranlable, presque surnaturel.",
             "tags": [
                 "Ireena",
                 "morsure",
@@ -852,7 +884,7 @@
             "id": "mem_ismark",
             "categorie": "personnage",
             "titre": "Ismark Kolyanovich",
-            "contenu": "Frère aîné d'Ireena, noble de Barovia. A chargé le groupe de protéger sa sœur. S'est montré furieux quand Elara lui a demandé de convaincre Ireena d'aller à la mare malgré son état fragile. Est reparti seul vers le camp.",
+            "contenu": "Frère aîné d'Ireena, noble de Barovia. A chargé le groupe de protéger sa sœur. S'est montré furieux quand Elara lui a demandé de convaincre Ireena d'aller à la mare malgré son état fragile. Est reparti seul vers le camp à l'entrée de Krezk.\n\nIl est présentement le maître d'arme à Argynvostholt pour former les villageois établis au manoir.",
             "tags": [
                 "Ismark",
                 "noble",
@@ -867,7 +899,7 @@
             "id": "mem_ezmerelda",
             "categorie": "personnage",
             "titre": "Ezmerelda d'Avenir",
-            "contenu": "Amie d'Ireena, chasseuse de monstres réputée. Sa localisation actuelle est inconnue — la retrouver est l'un des objectifs de la quête principale.",
+            "contenu": "Amie d'Ireena, chasseuse de monstres réputée. La retrouver est l'un des objectifs de la quête principale. Le groupe l'a rencontré près du Mur Noir et ils l'étudient ensemble. Van Richten est son mentor.",
             "tags": [
                 "Ezmerelda",
                 "chasseuse",
@@ -881,7 +913,7 @@
             "id": "mem_madam_eva",
             "categorie": "personnage",
             "titre": "Madam Eva",
-            "contenu": "Vieille diseuse de bonne aventure Vistani, probablement liée à des forces cosmiques. A tiré les cartes du Tarot de Barovie pour le groupe lors d'une session précédente.",
+            "contenu": "Vieille diseuse de bonne aventure Vistani, probablement liée à des forces cosmiques. A tiré les cartes du Tarot de Barovie pour les Héros de l'Aube Brisée, avant l'arrivée de nos héros.",
             "tags": [
                 "Madam Eva",
                 "Vistani",
@@ -903,21 +935,6 @@
                 "scellée"
             ],
             "importance": 2,
-            "session_ajout": 1,
-            "visible": true
-        },
-        {
-            "id": "mem_poches_donavich",
-            "categorie": "objet_magique",
-            "titre": "Contenu des poches du prêtre Donavich",
-            "contenu": "Objets trouvés sur le prêtre Donavich, en possession de Thorne. Nature exacte non encore inventoriée en détail.",
-            "tags": [
-                "Donavich",
-                "prêtre",
-                "objets",
-                "Thorne"
-            ],
-            "importance": 1,
             "session_ajout": 1,
             "visible": true
         },
@@ -956,7 +973,7 @@
             "id": "mem_hags_moulin",
             "categorie": "menace",
             "titre": "Les Sorcières du Vieux Moulin",
-            "contenu": "Des hags (guenaudes) habitent le vieux moulin et seraient liées à des disparitions d'enfants. Les Héros de l'Aube Brisée les considèrent comme très puissantes. Le groupe n'a pas encore investigué.",
+            "contenu": "Des hags (guenaudes) habitent le vieux moulin et seraient liées à des disparitions d'enfants. Les Héros de l'Aube Brisée les considèrent comme très puissantes. Le groupe les a confrontées une première fois. Une est morte et deux se sont sauvées. Le groupe a sauvé deux enfants des griffes des sorcières et les ont laissés aux soins d'Ireena à Argynvostholt.",
             "tags": [
                 "hags",
                 "moulin",
@@ -1046,11 +1063,26 @@
             "id": "mem_0ef844d8",
             "categorie": "lieu",
             "titre": "Le Mur Noir",
-            "contenu": "Une structure monolithique d'obsidienne impénétrable qui sépare les terres civilisées des contrées corrompues. Il est réputé indestructible et dégage une aura de froid surnaturel qui décourage toute tentative d'escalade.",
+            "contenu": "Une structure monolithique d'obsidienne impénétrable qui sépare les terres civilisées des contrées corrompues. Il est réputé indestructible et dégage une aura de froid surnaturel qui décourage toute tentative d'escalade.\n\nLe groupe a commencé à l'investiguer fortement, Van Richten a presque terminé la triangulation du déclencheur.",
             "tags": [
                 "frontière",
                 "obsidienne",
                 "mystère"
+            ],
+            "importance": 3,
+            "session_ajout": 0,
+            "visible": true
+        },
+        {
+            "id": "mem_c5ca8844",
+            "categorie": "personnage",
+            "titre": "Rudolph van Richten",
+            "contenu": "Légendaire érudit, médecin et chasseur de monstres renommé pour ses recherches sur le surnaturel, Van Richten traque les forces du mal avec une détermination méthodique. Il accompagne désormais le groupe en tant qu'allié expert, apportant sa connaissance des occultismes pour analyser la faille planaire. Son expertise et celle d'Ezmerelda d'Avenir sont cruciales pour comprendre le verrou planaire antique et la corruption entropique qui menace la Barovie.",
+            "tags": [
+                "Van Richten",
+                "Allié",
+                "Expertise",
+                "Occultisme"
             ],
             "importance": 3,
             "session_ajout": 0,
@@ -1089,59 +1121,20 @@
             "session": 11,
             "date": "2026-03-28 11:36",
             "resume": "### Chroniques de la Barovie : L'Éveil de l'Abîme — Le Gué de la Tser\n\n**La Veille sur l'Abîme**\nLe combat contre les diables à épines, diables à chaines et le diable barbelé, émergeant de la brèche au Gué de la Tser a pris fin, laissant derrière lui des cendres et une lourdeur atmosphérique oppressante. Tandis que ces entités cristallines ont été annihilées, la menace demeure entière : la faille planaire, ce « Mur Noir » qui lacère la réalité, continue de déformer la trame magique de la Barovie. Le groupe — **Kaelen, Elara, Thorne et Lyra** — s'est regroupé en formation défensive serrée autour de **Rudolph van Richten** et **Ezmerelda d'Avenir**, lesquels s'attellent à la triangulation du déclencheur occulte responsable de cette instabilité.\n\n**Tension et Vigilance**\nL'ambiance est saturée d'un froid surnaturel que la lueur du phare d'Argynvostholt, bien que puissante, peine à totalement dissiper. L'inquiétude des compagnons est palpable : chaque seconde passée à attendre le diagnostic de Van Richten est une seconde de vulnérabilité pour leur bastion d'Argynvostholt. **Elara** a noté une géométrie arcanique défiant les lois connues, suggérant une force extérieure active, tandis que **Lyra** et **Kaelen** maintiennent une garde spirituelle et martiale inflexible, prêts à intervenir dès que la nature de la faille sera identifiée. Le groupe est conscient que la passivité est leur plus grand ennemi, mais la prudence impose d'attendre la finalisation de l'analyse avant toute tentative de scellement.\n\n**État de la Situation**\nLe sanctuaire d'Argynvostholt reste la priorité structurelle, mais il est désormais indissociable de la survie de la région face à cette invasion entropique. Le groupe est mobilisé dans une attente active, conscient que le « Mur Noir » est un verrou dont l'ouverture pourrait sceller le sort de la Barovie.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : En attente du résultat de la triangulation par Van Richten. Les forces de défense (diables) ont été neutralisées. Les jets d'arcane, investigation, perception, religion pour comprendre le Mur Noir ne sont plus nécéssaires à court terme.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En pause forcée. Les travaux de Gil et Mart attendent que le front extérieur soit stabilisé.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Statut inchangé. Objectif prioritaire dès que la faille sera sous contrôle.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Possession d'Elara ; résonance planaire active).\n*   *Carnet de Van Richten* (Référentiel tactique).\n*   *Contenu des poches du prêtre Donavich* (Possession de Thorne).\n*   *Lettre cachetée* (Possession du groupe).\n\n*Note du Chroniqueur : Le temps se fige autour du Mur Noir. Les héros ne sont plus de simples aventuriers, ils sont les sentinelles d'un monde qui se déchire, l'œil rivé sur l'obscurité, dans l'attente du calcul qui déterminera s'ils peuvent refermer la plaie ou s'ils devront s'y sacrifier.*"
+        },
+        {
+            "session": 12,
+            "date": "2026-04-08 21:15",
+            "resume": "### Chroniques de la Barovie : L’Ombre du Temple d’Ambre\n\n**La Percée de la Réalité**\nAu Gué de la Tser, dans le sillage de leur victoire contre les diables cristallins, le groupe a fait face à une menace existentielle : le « Mur Noir », une faille planaire dévorant la trame même de la Barovie. Sous la direction tactique de **Rudolph van Richten** et l'appui d'**Ezmerelda d'Avenir**, le groupe a utilisé un échantillon de liane cristalline comme diapason pour stabiliser les instruments de Van Richten. Cette prouesse arcanique, menée par **Elara**, a permis de trianguler l'origine de l'entropie : le **Temple d'Ambre**, niché au cœur du mont Ghakis.\n\n**L'Urgence du Départ**\nLa révélation a cristallisé l'objectif du groupe : ils ne sont plus les défenseurs d'un manoir, mais les derniers remparts contre une invasion planaire coordonnée. Malgré la décision de Van Richten de se retirer vers sa tour après avoir guidé le groupe jusqu'à l'intersection de la Vieille Route, Ezmerelda a rejoint les rangs des aventuriers pour cet assaut ultime.\n\n**L'Embuscade du Destin**\nAlors que les compagnons entamaient leur progression vers les sommets, la brume s'est déchirée pour révéler une nouvelle menace : une **Erinyes** (diablesse ailée) flanquée d'une meute de **Chiens de l'Enfer**. Ce groupe de choc semble déterminé à empêcher les héros d'atteindre le Temple d'Ambre. Le combat est immédiat et violent, marquant le début d'une marche périlleuse vers l'épicentre du mal cosmique.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Stopper la brèche planaire** : Triangulation réussie. Le Temple d'Ambre est identifié comme la source.\n*   🗺️ **[Principale] Atteindre le Temple d'Ambre** : Expédition en cours. Le groupe est en route, actuellement aux prises avec une force d'interception diabolique.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : En pause, les efforts de fortification sont désormais subordonnés à la survie contre l'invasion globale.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : Statut inchangé. Objectif toujours prioritaire pour la restauration définitive du Fanal.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Utilisé comme diapason arcanique).\n*   *Données de triangulation* (Documentant le lien entre le Mur Noir et le Temple d'Ambre).\n\n*Note du Chroniqueur : La Barovie n'est plus qu'un souvenir de ce qu'elle fut ; elle est devenue le théâtre d'une guerre qui transcende les plans. Le passage par le mont Ghakis ne sera pas une simple ascension, mais une épreuve de force dont l'issue déterminera si le monde sera scellé ou englouti.*"
         }
     ],
     "combat_tracker": {
-        "active": false,
-        "round_num": 0,
-        "current_idx": -1,
+        "active": true,
+        "round_num": 1,
+        "current_idx": 9,
         "reactions_used": [],
         "speech_used": [],
         "combatants": [
-            {
-                "name": "Erinyes",
-                "is_pc": false,
-                "max_hp": 153,
-                "hp": 153,
-                "temp_hp": 0,
-                "ac": 18,
-                "initiative": 23,
-                "dex_bonus": 3,
-                "color": "#ddbbff",
-                "concentration": false,
-                "bestiary_name": "Erinyes",
-                "portrait": "/home/wa/VTTAI2/images/portraits/MM/Erinyes.webp",
-                "alignment": "hostile",
-                "conditions": [],
-                "notes": "",
-                "death_saves_success": 0,
-                "death_saves_fail": 0,
-                "action_used": false,
-                "bonus_used": false,
-                "reaction_used": false
-            },
-            {
-                "name": "Kaelen",
-                "is_pc": true,
-                "max_hp": 104,
-                "hp": 98,
-                "temp_hp": 0,
-                "ac": 16,
-                "initiative": 21,
-                "dex_bonus": 2,
-                "color": "#a0c4ff",
-                "concentration": false,
-                "bestiary_name": "",
-                "portrait": "",
-                "alignment": "ally",
-                "conditions": [],
-                "notes": "",
-                "death_saves_success": 0,
-                "death_saves_fail": 0,
-                "action_used": false,
-                "bonus_used": false,
-                "reaction_used": false
-            },
             {
                 "name": "Elara",
                 "is_pc": true,
@@ -1149,7 +1142,7 @@
                 "hp": 71,
                 "temp_hp": 0,
                 "ac": 16,
-                "initiative": 19,
+                "initiative": 22,
                 "dex_bonus": 3,
                 "color": "#c8b8ff",
                 "concentration": false,
@@ -1157,6 +1150,7 @@
                 "portrait": "",
                 "alignment": "ally",
                 "conditions": [],
+                "tactics": [],
                 "notes": "",
                 "death_saves_success": 0,
                 "death_saves_fail": 0,
@@ -1165,64 +1159,67 @@
                 "reaction_used": false
             },
             {
-                "name": "Van Richten",
+                "name": "Hell Hound 3",
                 "is_pc": false,
-                "max_hp": 77,
-                "hp": 67,
+                "max_hp": 45,
+                "hp": 45,
                 "temp_hp": 0,
-                "ac": 12,
+                "ac": 15,
+                "initiative": 21,
+                "dex_bonus": 1,
+                "color": "#ff9966",
+                "concentration": false,
+                "bestiary_name": "Hell Hound",
+                "portrait": "/home/wa/VTTAI2/images/portraits/MM/Hell Hound.webp",
+                "alignment": "hostile",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Hell Hound 4",
+                "is_pc": false,
+                "max_hp": 45,
+                "hp": 45,
+                "temp_hp": 0,
+                "ac": 15,
+                "initiative": 21,
+                "dex_bonus": 1,
+                "color": "#ffcc66",
+                "concentration": false,
+                "bestiary_name": "Hell Hound",
+                "portrait": "/home/wa/VTTAI2/images/portraits/MM/Hell Hound.webp",
+                "alignment": "hostile",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Hell Hound 1",
+                "is_pc": false,
+                "max_hp": 45,
+                "hp": 0,
+                "temp_hp": 0,
+                "ac": 15,
                 "initiative": 18,
                 "dex_bonus": 1,
-                "color": "#ff99bb",
+                "color": "#ddbbff",
                 "concentration": false,
-                "bestiary_name": "Rictavio",
-                "portrait": "/home/wa/VTTAI2/images/portraits/CoS/Rictavio.webp",
-                "alignment": "ally",
+                "bestiary_name": "Hell Hound",
+                "portrait": "/home/wa/VTTAI2/images/portraits/MM/Hell Hound.webp",
+                "alignment": "hostile",
                 "conditions": [],
-                "notes": "",
-                "death_saves_success": 0,
-                "death_saves_fail": 0,
-                "action_used": false,
-                "bonus_used": false,
-                "reaction_used": false
-            },
-            {
-                "name": "Ezmerelda d'Av",
-                "is_pc": false,
-                "max_hp": 82,
-                "hp": 70,
-                "temp_hp": 0,
-                "ac": 17,
-                "initiative": 17,
-                "dex_bonus": 4,
-                "color": "#99ffcc",
-                "concentration": false,
-                "bestiary_name": "Ezmerelda d'Avenir",
-                "portrait": "/home/wa/VTTAI2/images/portraits/CoS/Ezmerelda d'Avenir.webp",
-                "alignment": "ally",
-                "conditions": [],
-                "notes": "",
-                "death_saves_success": 0,
-                "death_saves_fail": 0,
-                "action_used": false,
-                "bonus_used": false,
-                "reaction_used": false
-            },
-            {
-                "name": "Thorne",
-                "is_pc": true,
-                "max_hp": 83,
-                "hp": 83,
-                "temp_hp": 0,
-                "ac": 16,
-                "initiative": 17,
-                "dex_bonus": 6,
-                "color": "#ff9999",
-                "concentration": false,
-                "bestiary_name": "",
-                "portrait": "",
-                "alignment": "ally",
-                "conditions": [],
+                "tactics": [],
                 "notes": "",
                 "death_saves_success": 0,
                 "death_saves_fail": 0,
@@ -1234,10 +1231,10 @@
                 "name": "Lyra",
                 "is_pc": true,
                 "max_hp": 82,
-                "hp": 82,
+                "hp": 60,
                 "temp_hp": 0,
                 "ac": 16,
-                "initiative": 11,
+                "initiative": 15,
                 "dex_bonus": 1,
                 "color": "#a8f0a8",
                 "concentration": false,
@@ -1245,6 +1242,145 @@
                 "portrait": "",
                 "alignment": "ally",
                 "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Thorne",
+                "is_pc": true,
+                "max_hp": 83,
+                "hp": 70,
+                "temp_hp": 0,
+                "ac": 16,
+                "initiative": 11,
+                "dex_bonus": 6,
+                "color": "#ff9999",
+                "concentration": false,
+                "bestiary_name": "",
+                "portrait": "",
+                "alignment": "ally",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Van Richten",
+                "is_pc": false,
+                "max_hp": 77,
+                "hp": 77,
+                "temp_hp": 0,
+                "ac": 12,
+                "initiative": 9,
+                "dex_bonus": 1,
+                "color": "#ddbbff",
+                "concentration": false,
+                "bestiary_name": "Rictavio",
+                "portrait": "/home/wa/VTTAI2/images/portraits/CoS/Rictavio.webp",
+                "alignment": "ally",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Ezmerelda d'Av",
+                "is_pc": false,
+                "max_hp": 82,
+                "hp": 82,
+                "temp_hp": 0,
+                "ac": 17,
+                "initiative": 9,
+                "dex_bonus": 4,
+                "color": "#ff99bb",
+                "concentration": false,
+                "bestiary_name": "Ezmerelda d'Avenir",
+                "portrait": "/home/wa/VTTAI2/images/portraits/CoS/Ezmerelda d'Avenir.webp",
+                "alignment": "ally",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Kaelen",
+                "is_pc": true,
+                "max_hp": 104,
+                "hp": 37,
+                "temp_hp": 0,
+                "ac": 16,
+                "initiative": 7,
+                "dex_bonus": 2,
+                "color": "#a0c4ff",
+                "concentration": false,
+                "bestiary_name": "",
+                "portrait": "",
+                "alignment": "ally",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Hell Hound 2",
+                "is_pc": false,
+                "max_hp": 45,
+                "hp": 45,
+                "temp_hp": 0,
+                "ac": 15,
+                "initiative": 6,
+                "dex_bonus": 1,
+                "color": "#aaffaa",
+                "concentration": false,
+                "bestiary_name": "Hell Hound",
+                "portrait": "/home/wa/VTTAI2/images/portraits/MM/Hell Hound.webp",
+                "alignment": "hostile",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Erinyes",
+                "is_pc": false,
+                "max_hp": 153,
+                "hp": 153,
+                "temp_hp": 0,
+                "ac": 18,
+                "initiative": 5,
+                "dex_bonus": 3,
+                "color": "#99ddff",
+                "concentration": false,
+                "bestiary_name": "",
+                "portrait": "/home/wa/VTTAI2/images/portraits/MM/Erinyes.webp",
+                "alignment": "hostile",
+                "conditions": [],
+                "tactics": [],
                 "notes": "",
                 "death_saves_success": 0,
                 "death_saves_fail": 0,
@@ -1276,5 +1412,12 @@
                 "notes": "En cours d'analyse par Elara. Scellé dans un récipient pour prévenir toute interaction magique non contrôlée."
             }
         ]
+    },
+    "npc_cooldowns": {
+        "Adult Brass Dr": {
+            "Breath Weapons (Recharge 5-6)": false,
+            "Bite": true,
+            "Claw": true
+        }
     }
 }

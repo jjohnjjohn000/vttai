@@ -69,6 +69,15 @@ CONDITIONS = {
     "Entravé":      {"abbr": "EN", "color": "#b06020", "tip": "Vitesse = 0. Jets d'attaque en désavantage. Adversaires en avantage."},
     "Étourdi":      {"abbr": "ÉT", "color": "#c08000", "tip": "Incapacité. Échoue STR et DEX. Adversaires en avantage."},
     "Inconscient":  {"abbr": "IC", "color": "#e04030", "tip": "Incapacité, tombe à terre. Échoue STR et DEX. Adj. en avantage (critique auto.)."},
+    "Concentré":    {"abbr": "CC", "color": "#40c4ff", "tip": "Maintient un sort. Doit réussir un jet de CON s'il subit des dégâts ou le sort prend fin."},
+}
+
+# ─── Statuts tactiques D&D 5e ─────────────────────────────────────────────────
+TACTICS = {
+    "Esquive":      {"abbr": "ES", "color": "#00bcd4", "tip": "Désavantage sur les attaques contre lui. Avantage aux jets de DEX."},
+    "Caché":        {"abbr": "CA", "color": "#455a64", "tip": "Avantage sur ses attaques. Non ciblable directement par la plupart des sorts."},
+    "Préparé":      {"abbr": "PR", "color": "#ffb300", "tip": "Action préparée en attente d'un déclencheur (coûte la réaction)."},
+    "Désengagé":    {"abbr": "DE", "color": "#8d6e63", "tip": "Le mouvement ne provoque pas d'attaques d'opportunité."},
 }
 
 # ─── Données personnages joueurs (depuis state_manager) ───────────────────────

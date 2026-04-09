@@ -65,6 +65,46 @@ except Exception:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
+# ─── Patch AutoGen : guard message_retrieval contre None choices/content ──────
+# Cause : certains modèles retournent une réponse avec choices=None, ou un message
+# dont le contenu est None (réponse tool-call only sans texte).
+# AutoGen ne protège pas ce cas → TypeError: 'NoneType' object is not iterable.
+def _patch_autogen_message_retrieval():
+    try:
+        import autogen.oai.client as _oai_client
+        _OpenAIClient = _oai_client.OpenAIClient
+        _orig_mr = _OpenAIClient.message_retrieval
+
+        def _safe_message_retrieval(self, response):
+            choices = getattr(response, "choices", None)
+            if not choices:
+                return [""]
+            results = []
+            for choice in choices:
+                msg = getattr(choice, "message", None)
+                if msg is None:
+                    results.append("")
+                    continue
+                tool_calls = getattr(msg, "tool_calls", None)
+                func_call  = getattr(msg, "function_call", None)
+                if tool_calls is not None or func_call is not None:
+                    try:
+                        results.extend(_orig_mr(self, response))
+                    except TypeError:
+                        results.append("")
+                    return results
+                results.append(msg.content if msg.content is not None else "")
+            return results
+
+        _OpenAIClient.message_retrieval = _safe_message_retrieval
+        print("[engine_agents] Patch AutoGen message_retrieval: OK")
+    except Exception as _pe:
+        print(f"[engine_agents] Patch AutoGen message_retrieval: SKIPPED ({_pe})")
+
+_patch_autogen_message_retrieval()
+# ──────────────────────────────────────────────────────────────────────────────
+
+
 # ─── Règles anti-hallucination communes à tous les joueurs ───────────────────
 
 # Bloc [ACTION] canonique — format unique partagé
@@ -73,10 +113,9 @@ _ACTION_FORMAT = (
     "  • Déclare UNE SEULE action par message.\n"
     "  • Ne combine JAMAIS un Déplacement et une Attaque/Sort dans le même bloc.\n"
     "  • 💡 COMBO (Sort + Attaque) : Si tu lances un sort en Action Bonus, fais-le en DEUX messages. (Message 1 : Sort [Action Bonus] -> Attends le MJ -> Message 2 : Attaque [Action]).\n"
-    "  • ⚔️ EXTRA ATTACK : Tu dois faire ta première attaque dans un bloc [ACTION] Type: Action, attendre le résultat, puis déclarer ta seconde attaque dans un NOUVEAU bloc [ACTION] Type: Extra Attack.\n"
     "  • Quand tu n'as plus d'action envisageable, tu peux terminer ton tour avec [ACTION] Type: Fin de tour.\n\n"
     "  [ACTION]\n"
-    "  Type      : <Action / Extra Attack / Action Bonus / Réaction / Mouvement / Fin de tour>\n"
+    "  Type      : <Action / Action Bonus / Réaction / Mouvement / Fin de tour>\n"
     "  Intention : <Ce que ton personnage fait, en une phrase claire>\n"
     "  Règle 5e  : <Mécanique exacte : sort + niveau, attaque + bonus + dégâts, etc.>\n"
     "  Cible     : <Sur qui ou quoi>\n\n"
@@ -118,11 +157,13 @@ _REGLES_COMMUNES = (
     "\n• Après un[RÉSULTAT SYSTÈME] ou des dégâts reçus, narre UNIQUEMENT ta réaction physique ou mentale (douleur, effort, doute) en 1 ou 2 phrases. Pas de chiffres dans ton roleplay."
     "\n• INTERDICTION DE COPIE : Ne paraphrase jamais le message d'un autre joueur. Sois unique."
     "\n\n3. MÉCANIQUES ET SORTS"
-    "\n• Pour lancer un sort, utiliser une compétence ou attaquer, utilise TOUJOURS un bloc [ACTION]."
+    "\n• Pour lancer un sort ou attaquer, utilise TOUJOURS un bloc [ACTION]."
+    "\n• ⚠️ ANTI-SPAM (RÈGLE ABSOLUE) : Ne lance JAMAIS un sort (détection, buff, etc.) s'il a déjà été lancé récemment et est toujours actif. Le MJ gère les compétences passivement (Perception passive, Investigation passive, etc.) — ne demande PAS de jet toi-même sauf si le MJ t'y invite."
     "\n• ⚠️ UPCAST OBLIGATOIRE : Tu DOIS respecter les 'Sorts dispos' affichés dans ton [TOUR EN COURS]. Si tu n'as plus d'emplacement pour le niveau de base d'un sort et que tu veux lancer quand même, tu DOIS le lancer à un niveau supérieur en l'écrivant explicitement (ex: 'Règle 5e: Shield of Faith niv. 3')."
     "\n• N'appelle pas les outils (update_hp, roll_dice) de ta propre initiative, sauf si une [DIRECTIVE SYSTÈME] te le demande explicitement."
     "\n\n4. FORMAT DE RÉPONSE"
-    "\n• Structure : 1 réplique dialoguée (avec ton attitude incrustée dedans) + 1 bloc [ACTION] si tu agis."
+    "\n• Structure : 1 réplique dialoguée (avec ton attitude incrustée dedans) + 1 bloc [ACTION] UNIQUEMENT si le MJ le demande ou si tu as une action physique délibérée à déclarer."
+    "\n• N'inclus JAMAIS les en-têtes d'instructions comme[RÈGLES DU BLOC ACTION] ou [RÈGLES DU BLOC ACTION (HORS COMBAT)] dans ta réponse."
     "\n• Sois concis : pas de monologues, pas de descriptions entre parenthèses en paragraphe séparé."
     "\n• N'utilise [SILENCE] que si tu es physiquement incapable de parler. Sinon, donne au moins une pensée ou une courte réaction."
     "\n═══════════════════════════════════════════\n"
@@ -154,8 +195,18 @@ def _build_regle_hors_combat() -> str:
         "\nAgis et déclare tes actions de façon autonome — n'attends pas qu'on te liste les choix."
         "\nNe déclare PAS d'action d'attaque, ne lance PAS de dés, ne prends PAS d'initiative de combat"
         "\nsauf si le MJ l'indique explicitement.\n"
+        "\n▶ COMPÉTENCES PASSIVES — NE JETTE PAS DE DÉS INUTILEMENT"
+        "\nLe MJ utilise tes SCORES PASSIFS (10 + ton bonus) pour Perception, Investigation et Perspicacité."
+        "\nCela signifie que le MJ détecte automatiquement les menaces et détails que ton personnage"
+        "\nremarquerait naturellement — TU N'AS PAS BESOIN de demander un jet pour ça."
+        "\n⛔ N'utilise un bloc [ACTION] avec un jet de compétence QUE si :"
+        "\n  • Tu as une RAISON NARRATIVE FORTE et SPÉCIFIQUE (indice concret, événement déclencheur)."
+        "\n  • Tu fais quelque chose d'ACTIF et DÉLIBÉRÉ (fouiller un meuble, crocheter une serrure,"
+        "\n    interroger quelqu'un avec insistance, escalader un mur…)."
+        "\n⛔ INTERDIT : jets de Perception / Investigation / Arcanes « au cas où », par prudence"
+        "\n    ou pour « surveiller les alentours ». Le MJ gère ça passivement.\n"
         "\n▶ ACTIONS MÉCANIQUES"
-        "\nSi le MJ te demande une action mécanique, ou si tu crois pertinent de le demander, termine ton message par :\n\n"
+        "\nUNIQUEMENT si le MJ te demande explicitement un jet ou une action mécanique, termine ton message par :\n\n"
         + _ACTION_FORMAT_HORS_COMBAT
         + "\n▶ MOUVEMENT SUR LA CARTE — HORS COMBAT"
         "\nLe bloc [ACTION] Type: Mouvement est réservé aux déplacements de 6 cases (9 m / 30 ft) ou plus."
@@ -428,6 +479,16 @@ def make_thinking_wrapper(agent, name: str, app_ref):
     _orig_gr = agent.generate_reply.__func__
 
     def _wrapped(self_agent, messages=None, sender=None, **kwargs):
+        # ── Guard pause session : attendre la fin de la pause ─────────────────
+        # IMPORTANT : ne PAS retourner None ici — ça tuerait le run AutoGen
+        # ("TERMINATING RUN: No reply generated") et bloquerait tout le combat.
+        # On attend plutôt la reprise, comme gui_get_human_input.
+        import time as _pause_time
+        while getattr(app_ref, '_session_paused', False):
+            _pause_time.sleep(0.3)
+            if getattr(app_ref, '_stop_event', None) and app_ref._stop_event.is_set():
+                raise StopLLMRequested()
+
         # ── Guard race condition : personnage retiré de la scène mid-session ──
         # Le speaker selector peut avoir choisi cet agent AVANT que
         # _sync_groupchat_agents() ne mette à jour groupchat.agents depuis
@@ -501,6 +562,9 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                     result[0] = _orig_gr(
                         self_agent, messages=_msgs_for_llm, sender=sender, **_safe_kwargs
                     )
+                    # Guard: None = pas de réponse (convention AutoGen : (False, None))
+                    if result[0] is None:
+                        result[0] = (False, None)
 
                     # Log du modèle ayant effectivement répondu
                     try:
@@ -759,9 +823,10 @@ def combat_speaker_selector(last_speaker, groupchat):
         if not COMBAT_STATE["active"]:
             return list(groupchat.agents)
         else:
+            _active = COMBAT_STATE.get("active_combatant")
             candidates =[
                 a for a in groupchat.agents
-                if not _is_fully_silenced(a.name) or a.name not in _ALL_PLAYERS
+                if not _is_fully_silenced(a.name) or a.name not in _ALL_PLAYERS or a.name == _active
             ]
             if not candidates:
                 candidates =[a for a in groupchat.agents if a.name == "Alexis_Le_MJ"]
@@ -891,7 +956,18 @@ def combat_speaker_selector(last_speaker, groupchat):
             return mj_agent_ref
 
     # MJ vient de parler sans cibler → Cas 3 : un seul PJ réagit (rotation)
+    # Exception : si c'est le tour d'un PNJ/ennemi, les héros ne parlent PAS
+    # spontanément — ils ne peuvent répondre que si le MJ les nomme explicitement.
     if last_name == "Alexis_Le_MJ":
+        _active_cbt = COMBAT_STATE.get("active_combatant")
+        _active_is_npc = (
+            COMBAT_STATE.get("active")
+            and _active_cbt is not None
+            and _active_cbt not in _ALL_PLAYERS
+        )
+        if _active_is_npc:
+            # Tour PNJ : MJ reprend directement, les héros n'interviennent pas
+            return mj_agent_ref or eligible[0]
         players_eligible =[a for a in eligible if a.name in _ALL_PLAYERS]
         if players_eligible:
             responded = _responded_since(last_mj_idx) if last_mj_idx is not None else set()
@@ -946,6 +1022,16 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
 
     def gui_get_human_input(self_agent, prompt: str, **kwargs) -> str:
         import time as _time
+
+        # ── 0. GARDE PAUSE SESSION ──────────────────────────────────────────
+        # Si la session est en pause, on attend la reprise AVANT de consommer
+        # tout trigger automatique. Sinon les triggers relancent le flow.
+        while getattr(app, '_session_paused', False):
+            _time.sleep(0.3)
+            # Si le thread autogen est interrompu pendant l'attente
+            if getattr(app, '_stop_event', None) and app._stop_event.is_set():
+                from llm_config import StopLLMRequested
+                raise StopLLMRequested()
 
         # ── 1. Trigger de tour pré-calculé (début de tour normal) ────────────
         if app._pending_combat_trigger is not None:
@@ -1044,6 +1130,7 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
             "la source du pouvoir, y a-t-il des données concrètes, des artefacts, des textes. "
             "Tu t'ennuies des généralités et tu coupes court aux discours flous. "
             "Tu ne poses JAMAIS une question qu'Elara a déjà posée, ni une que quelqu'un d'autre vient de poser.\n"
+            #"⚠️ ANTI-ACHARNEMENT : Si tu viens de faire un jet d'Investigation, d'Arcanes, ou de lancer 'Détection de la Magie' dans la scène actuelle, NE LE REFAIS PLUS. Fais confiance à tes données actuelles et passe à autre chose (réfléchis, discute, ou attends les actions des autres).\n"
             + _get_combat_prompt("wizard", "", 11) + "\n"
         ),
         llm_config=cfg_fn("Elara"),

@@ -255,7 +255,8 @@ class ChatMixin:
             or "tool_use_failed" in text
             or "Tentative de récupération" in text
             or "PARAMÈTRE INVALIDE" in text
-            or "DIRECTIVE SYSTÈME" in text):
+            or "DIRECTIVE SYSTÈME" in text
+            or "VIOLATION PNJ" in text):
             parts = text.strip().split("\n", 1)
             header_txt = parts[0].strip()
             body_txt   = "\n" + parts[1] if len(parts) > 1 else ""
@@ -1177,6 +1178,40 @@ class ChatMixin:
                 activebackground="#4a1a1a", cursor="hand2",
                 command=_save_failure,
             ).pack(side=tk.LEFT)
+        elif mode == "movement":
+            # ── Mode mouvement : Confirmer la position cible ─────────────────
+            def _confirm_move(event=None):
+                if _callback_done[0]:
+                    return
+                _callback_done[0] = True
+                frame.destroy()
+                _cleanup_header()
+                self.append_message(f"📍 MJ — {type_label}", "Mouvement validé", "#44cc44")
+                resume_callback(True)
+
+            def _refuse_move(event=None):
+                if _callback_done[0]:
+                    return
+                _callback_done[0] = True
+                frame.destroy()
+                _cleanup_header()
+                self.append_message(f"📍 MJ — {type_label}", "Mouvement refusé", "#cc4444")
+                resume_callback(False)
+
+            tk.Button(row_btns, text="✅ Confirmer le déplacement", bg="#0d2a0d", fg="#66ee66",
+                      font=("Arial", 9, "bold"), relief="flat", padx=10, pady=3,
+                      activebackground="#1a4a1a", cursor="hand2", command=_confirm_move).pack(side=tk.LEFT, padx=(0, 6))
+            tk.Button(row_btns, text="❌ Refuser", bg="#2a0d0d", fg="#ee6666",
+                      font=("Arial", 9, "bold"), relief="flat", padx=10, pady=3,
+                      activebackground="#4a1a1a", cursor="hand2", command=_refuse_move).pack(side=tk.LEFT)
+
+            # Demander à la carte de tracer le carré
+            if hasattr(self, "_combat_map_win") and self._combat_map_win:
+                try:
+                    c, r = damage if isinstance(damage, tuple) else (0, 0)
+                    self._combat_map_win.request_movement_preview(target, c, r)
+                except Exception as e:
+                    print(f"Erreur trace preview : {e}")
         else:
             # ── Mode dégâts / autre : Continuer + Annuler ────────────────────
             def _ok(event=None):
@@ -1358,6 +1393,81 @@ class ChatMixin:
                  font=("Consolas", 9), wraplength=380, justify=tk.LEFT,
                  anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        # ── Cas spécifique : Prévisualisation de Mouvement ───────────────────
+        is_move = "mouvement" in type_low or "move" in type_low
+        if is_move and hasattr(self, "_combat_map_win") and self._combat_map_win:
+            def _calc_coords():
+                import re
+                _cur_col, _cur_row = 0, 0
+                try:
+                    for _tok in getattr(self._combat_map_win, "tokens", []):
+                        if _tok.get("name") == char_name:
+                            _cur_col = int(round(_tok.get("col", 0)))
+                            _cur_row = int(round(_tok.get("row", 0)))
+                            break
+                except Exception:
+                    pass
+                
+                r_low = regle.lower()
+                i_low = intention.lower()
+                c_low = cible.lower()
+                _combined = r_low + " " + i_low + " " + c_low
+                
+                _m_cases_regle = re.search(r'(\d+)\s*cases?', r_low, re.IGNORECASE)
+                _m_met_regle   = re.search(r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\.|\b)', r_low)
+                _has_rel = bool(_m_cases_regle or _m_met_regle)
+                
+                _m_exact_cible = re.match(r'^col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)$', c_low.strip(), re.IGNORECASE)
+                _m_abs_r = re.search(r'col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)', r_low, re.IGNORECASE)
+                _m_abs_c = re.search(r'col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)', _combined, re.IGNORECASE)
+
+                if _m_exact_cible:
+                    return int(_m_exact_cible.group(1)) - 1, int(_m_exact_cible.group(2)) - 1
+                elif _m_abs_r:
+                    return int(_m_abs_r.group(1)) - 1, int(_m_abs_r.group(2)) - 1
+                elif not _has_rel and _m_abs_c:
+                    return int(_m_abs_c.group(1)) - 1, int(_m_abs_c.group(2)) - 1
+
+                
+                # Relative
+                if _m_cases_regle: _dist = int(_m_cases_regle.group(1))
+                elif _m_met_regle: _dist = max(1, round(float(_m_met_regle.group(1).replace(",", ".")) / 1.5))
+                else:
+                    _m_cases = re.search(r'(\d+)\s*cases?', _combined)
+                    _m_met   = re.search(r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\.|\b)', _combined)
+                    if _m_cases: _dist = int(_m_cases.group(1))
+                    elif _m_met: _dist = max(1, round(float(_m_met.group(1).replace(",", ".")) / 1.5))
+                    else: _dist = 6
+                
+                _DIR_EXACT = [("nord-est", (1, -1)), ("nord-ouest", (-1, -1)), ("sud-est", (1, 1)), ("sud-ouest", (-1, 1))]
+                _DIR_WORD = [("nord", (0, -1)), ("sud", (0, 1)), ("est", (1, 0)), ("ouest", (-1, 0)),
+                             ("north", (0, -1)), ("south", (0, 1)), ("east", (1, 0)), ("west", (-1, 0))]
+                
+                _dcol, _drow = 0, 0
+                for _kd, (_dc, _dr) in _DIR_EXACT:
+                    if _kd in _combined:
+                        _dcol, _drow = _dc, _dr
+                        break
+                if _dcol == 0 and _drow == 0:
+                    for _kd, (_dc, _dr) in _DIR_WORD:
+                        if re.search(r'\b' + _kd + r'\b', _combined):
+                            _dcol, _drow = _dc, _dr
+                            break
+                            
+                if _dcol == 0 and _drow == 0: return None
+                
+                return _cur_col + _dcol * _dist, _cur_row + _drow * _dist
+
+            coords = _calc_coords()
+            if coords:
+                preview_col, preview_row = coords
+                try:
+                    self._combat_map_win.request_movement_preview(char_name, preview_col, preview_row)
+                    tk.Label(frame, text="💡 Un carré de prévisualisation est sur la carte. Vous pouvez le déplacer.",
+                             bg="#12181a", fg="#4fc3f7", font=("Consolas", 8, "italic")).pack(fill=tk.X, pady=(2,0))
+                except Exception as e:
+                    print(f"Erreur trace preview : {e}")
+
         # Séparateur
         tk.Frame(frame, bg="#2a2a3a", height=1).pack(fill=tk.X, pady=(5, 3))
 
@@ -1374,6 +1484,11 @@ class ChatMixin:
 
         def _confirm(event=None):
             note = note_entry.get().strip()
+            extra = None
+            if is_move and hasattr(self, "_combat_map_win") and self._combat_map_win:
+                extra = self._combat_map_win.get_movement_preview(char_name)
+                self._combat_map_win.clear_movement_preview(char_name)
+            
             frame.destroy()
             _cleanup_header()
             suffix = f" ({sub_index}/{sub_total})" if sub_index and sub_total and sub_total > 1 else ""
@@ -1382,10 +1497,13 @@ class ChatMixin:
                 f"[{type_label}]{suffix} autorisé : {intention}" + (f"  — {note}" if note else ""),
                 "#44aa44",
             )
-            resume_callback(True, note)
+            resume_callback(True, note, extra_data=extra)
 
         def _deny(event=None):
             note = note_entry.get().strip()
+            if is_move and hasattr(self, "_combat_map_win") and self._combat_map_win:
+                self._combat_map_win.clear_movement_preview(char_name)
+            
             frame.destroy()
             _cleanup_header()
             suffix = f" ({sub_index}/{sub_total})" if sub_index and sub_total and sub_total > 1 else ""
@@ -1891,29 +2009,22 @@ class ChatMixin:
 
         Pour chaque mot-clé :
           1. Cherche dans les mémoires existantes par titre ou tag.
-          2. Si trouvé ET que le message apporte de nouvelles infos → met à jour via Claude.
-          3. Si non trouvé → crée une nouvelle mémoire avec catégorie/contenu détectés par l'IA.
-
-        Notifie le chat (thread-safe) du résultat.
+          2. Si trouvé ET que le message ou les archives apportent de nouvelles infos → met à jour.
+          3. Si non trouvé → crée une nouvelle mémoire en puisant dans les archives de la campagne.
         """
         import json, os
         from state_manager import (
             get_memories, add_memory, update_memory,
-            MEMORY_CATEGORIES,
+            MEMORY_CATEGORIES, get_session_logs_prompt, get_full_campaign_history_prompt
         )
 
         def _call_claude(prompt):
-            """Appel LLM pour classification/résumé mémoire.
-            Utilise le même fournisseur que le reste de l'app (build_llm_config),
-            plus besoin d'une ANTHROPIC_API_KEY séparée.
-            """
             import re as _re
             try:
                 import autogen as _ag
                 from llm_config import build_llm_config, _default_model
                 from app_config import get_chronicler_config
 
-                # Utilise le modèle du Chroniqueur (léger et rapide)
                 _chron = get_chronicler_config()
                 _model = _chron.get("model", _default_model)
                 _cfg   = build_llm_config(_model, temperature=0.2)
@@ -1924,7 +2035,6 @@ class ChatMixin:
                 ])
                 raw = (response.choices[0].message.content or "").strip()
 
-                # Nettoyer les fences markdown si le modèle les ajoute quand même
                 raw = _re.sub(r"^```(?:json)?\s*", "", raw)
                 raw = _re.sub(r"\s*```$", "", raw.strip())
                 return raw.strip()
@@ -1936,6 +2046,13 @@ class ChatMixin:
         existing = get_memories(importance_min=1, visible_only=False)
         updated_ids = []
         created_titles = []
+
+        # Récupération de tout l'historique de la campagne pour le Chroniqueur
+        history_archived = get_full_campaign_history_prompt()
+        history_recent   = get_session_logs_prompt(max_sessions=50)
+        campaign_context = f"{history_archived}\n{history_recent}".strip()
+        if not campaign_context:
+            campaign_context = "(Aucune archive disponible pour le moment)"
 
         for kw in keywords:
             kw_clean = kw.strip()
@@ -1964,20 +2081,24 @@ class ChatMixin:
                         break
 
             if match:
-                # ── 2. Vérifier si le message apporte de nouvelles infos ──
+                # ── 2. Mise à jour enrichie par l'historique ────────────────
                 prompt_update = (
-                    f"Tu es un assistant pour une campagne D&D. "
-                    f"Voici ce que nous savons déjà sur '{match['titre']}' :\n"
-                    f"{match['contenu']}\n\n"
-                    f"Le MJ vient de mentionner '*{kw_clean}*' dans ce message :\n"
-                    f"\"{full_text}\"\n\n"
-                    f"Y a-t-il dans ce message des informations NOUVELLES sur '{match['titre']}' "
-                    f"qui ne sont pas déjà dans la mémoire ? "
-                    f"Si oui, réponds avec un JSON UNIQUEMENT (sans backticks ni markdown) : "
-                    f"{{\"new_info\": true, \"updated_content\": \"<contenu complet mis a jour>\", "
-                    f"\"updated_tags\": [\"tag1\",\"tag2\"], \"importance\": 1}}\n"
-                    f"Utilise 1, 2 ou 3 pour l'importance (1=mineur, 2=notable, 3=critique).\n"
-                    f"Si non, réponds exactement : {{\"new_info\": false}}"
+                    f"Tu es le Chroniqueur IA d'une campagne D&D. Ton rôle est de tenir à jour "
+                    f"STRICTEMENT CE QUE LE GROUPE DE PERSONNAGES SAIT.\n\n"
+                    f"Le MJ vient de mentionner '*{kw_clean}*' dans ce message :\n\"{full_text}\"\n\n"
+                    f"Voici ce que le groupe savait déjà sur '{match['titre']}' :\n{match['contenu']}\n\n"
+                    f"Voici les archives complètes de la campagne :\n"
+                    f"---\n{campaign_context}\n---\n\n"
+                    f"Y a-t-il dans le message du MJ OU dans les archives de la campagne des informations "
+                    f"concernant '{match['titre']}' qui ne sont pas déjà dans sa mémoire actuelle ?\n"
+                    f"Si oui, fusionne ces informations (du message ou des archives) avec l'ancien contenu.\n"
+                    f"RÈGLE ABSOLUE : N'invente RIEN. Base-toi UNIQUEMENT sur le message et les archives. "
+                    f"Ne fais pas de méta-jeu. Formule le texte de façon concise.\n\n"
+                    f"Réponds avec un JSON UNIQUEMENT (sans markdown) : "
+                    f"{{\"new_info\": true, \"updated_content\": \"<Contenu fusionné et enrichi, max 4 phrases>\", "
+                    f"\"updated_tags\": [\"tag1\",\"tag2\"], \"importance\": 2}}\n"
+                    f"Utilise 1, 2 ou 3 pour l'importance.\n"
+                    f"S'il n'y a absolument rien de nouveau à ajouter à la fiche, réponds exactement : {{\"new_info\": false}}"
                 )
                 result = _call_claude(prompt_update)
                 try:
@@ -1994,19 +2115,24 @@ class ChatMixin:
                 except (json.JSONDecodeError, KeyError, ValueError):
                     pass
             else:
-                # ── 3. Créer une nouvelle mémoire ─────────────────────────
+                # ── 3. Création enrichie par l'historique ───────────────────
                 cats_list = ", ".join(MEMORY_CATEGORIES.keys())
                 prompt_create = (
-                    f"Tu es un assistant pour une campagne D&D. "
-                    f"Le MJ vient de mentionner '*{kw_clean}*' dans ce message :\n"
-                    f"\"{full_text}\"\n\n"
-                    f"Crée une fiche mémoire pour '{kw_clean}'. "
+                    f"Tu es le Chroniqueur IA d'une campagne D&D. Ton rôle est de consigner "
+                    f"STRICTEMENT CE QUE LE GROUPE DE PERSONNAGES SAIT.\n\n"
+                    f"Le MJ vient de mentionner pour la première fois '*{kw_clean}*' dans ce message :\n\"{full_text}\"\n\n"
+                    f"Voici les archives complètes de la campagne :\n"
+                    f"---\n{campaign_context}\n---\n\n"
+                    f"Crée une fiche mémoire exhaustive pour '{kw_clean}'.\n"
+                    f"Fouille dans les archives de la campagne fournies ci-dessus ET dans le message du MJ "
+                    f"pour extraire TOUT ce que le groupe sait à son sujet.\n"
+                    f"RÈGLE ABSOLUE : Résume UNIQUEMENT les informations déduites de ces textes. N'invente RIEN. "
+                    f"Ne fais pas de méta-jeu (ne révèle pas de secrets s'ils ne sont pas dans le texte).\n\n"
                     f"Catégories disponibles : {cats_list}.\n"
-                    f"Réponds avec un JSON UNIQUEMENT (sans backticks ni markdown) :\n"
+                    f"Réponds avec un JSON UNIQUEMENT (sans markdown) :\n"
                     f"{{\"categorie\": \"<cat>\", \"titre\": \"<titre precis>\", "
-                    f"\"contenu\": \"<description concise 1-3 phrases>\", "
-                    f"\"tags\": [\"tag1\",\"tag2\",\"tag3\"], \"importance\": 1}}\n"
-                    f"Utilise 1, 2 ou 3 pour l'importance."
+                    f"\"contenu\": \"<Ce que le groupe sait sur le sujet, 1 à 4 phrases>\", "
+                    f"\"tags\": [\"tag1\",\"tag2\"], \"importance\": 2}}\n"
                 )
                 result = _call_claude(prompt_create)
                 try:
@@ -2271,7 +2397,19 @@ class ChatMixin:
                      font=("Consolas", 7, "bold")).pack(side=tk.LEFT)
 
             for action in actions_list:
-                aname   = action.get("name", "?")
+                raw_name = action.get("name", "?")
+                recharge_val = None
+                
+                m_tag = _re.search(r'\{@recharge\s+(\d+)\}', raw_name)
+                if m_tag:
+                    recharge_val = int(m_tag.group(1))
+                    aname = _re.sub(r'\s*\{@recharge\s+\d+\}', f' (Recharge {recharge_val}-6)', raw_name)
+                else:
+                    m_text = _re.search(r'\(Recharge\s+(\d+)(?:-\d+)?\)', raw_name, _re.IGNORECASE)
+                    if m_text:
+                        recharge_val = int(m_text.group(1))
+                    aname = raw_name
+
                 entries = action.get("entries", [])
                 rolls   = _parse_rolls(entries)
                 desc_full = _clean(rolls["desc"])
@@ -2298,7 +2436,21 @@ class ChatMixin:
                 # ── État critique par action (D&D 5e : dés doublés) ──────────
                 crit_var = tk.BooleanVar(value=False)
 
+                from state_manager import get_npc_cooldown, set_npc_cooldown
+                on_cooldown = False
+                if recharge_val is not None:
+                    on_cooldown = get_npc_cooldown(c_name, aname)
+
+                def _consume_if_needed(name=aname):
+                    if recharge_val is not None and not get_npc_cooldown(c_name, name):
+                        set_npc_cooldown(c_name, name, True)
+
                 def _qbtn(txt, row_bg, fg, cmd, parent=btns):
+                    if on_cooldown and not txt.startswith("♻") and not txt.startswith("🟢"):
+                        row_bg = "#2a2a2a"
+                        fg = "#666666"
+                        txt = f"[En Recharge] {txt}"
+
                     b = tk.Button(
                         parent, text=txt,
                         bg=row_bg, fg=fg, activebackground=row_bg,
@@ -2308,11 +2460,33 @@ class ChatMixin:
                         padx=6, pady=2, cursor="hand2",
                         command=cmd)
                     b.pack(side=tk.LEFT, padx=(0, 3))
-                    b.bind("<Enter>", lambda e, w=b, c=fg:
-                           w.config(bg=_darken_hex(row_bg, 1.4)))
+                    b.bind("<Enter>", lambda e, w=b, c=fg, bg=row_bg:
+                           w.config(bg=_darken_hex(bg, 1.4)))
                     b.bind("<Leave>", lambda e, w=b, bg=row_bg:
                            w.config(bg=bg))
                     return b
+
+                # Bouton Recharge
+                if recharge_val is not None:
+                    if on_cooldown:
+                        def _roll_recharge(r=recharge_val, name=aname):
+                            d6 = _rnd.randint(1, 6)
+                            if d6 >= r:
+                                res_txt = "🟢 **Réussi !** L'action est rechargée."
+                                color = GREEN
+                                set_npc_cooldown(c_name, name, False)
+                            else:
+                                res_txt = "🔴 **Échec.** Doit encore recharger."
+                                color = RED
+                            msg = f"**{name}** — Jet de Recharge (Recharge {r}-6)\n  d6({d6}) : {res_txt}"
+                            _send(msg, color)
+                        
+                        _qbtn(f"♻ Tenter Recharge {recharge_val}+", "#302607", "#ffd54f", _roll_recharge)
+                    else:
+                        def _mark_used(name=aname):
+                            set_npc_cooldown(c_name, name, True)
+                            _send(f"**{name}** a été utilisé et doit être rechargé.", FG_DIM)
+                        _qbtn("🟢 Action Prête", "#1a351a", GREEN, _mark_used)
 
                 # Bouton attaque (jet d20 + bonus, mentionne la cible)
                 if rolls["hit"] is not None:
@@ -2331,6 +2505,7 @@ class ChatMixin:
                         lbl.config(text="🎯 CRIT" if is_crit else "")
 
                     def _atk(b=bonus, n=aname, set_c=_set_crit):
+                        _consume_if_needed(n)
                         d20  = _rnd.randint(1, 20)
                         tot  = d20 + b
                         s    = "+" if b >= 0 else ""
@@ -2368,6 +2543,7 @@ class ChatMixin:
 
                     def _dmg(e=expr, t=dmg_type, n=aname, cv=crit_var,
                              set_c=_set_crit if rolls["hit"] is not None else None):
+                        _consume_if_needed(n)
                         is_crit  = cv.get()
                         eff_expr = _double_dice_expr(e) if is_crit else e
                         total, detail = _roll_dice(eff_expr)
@@ -2388,6 +2564,7 @@ class ChatMixin:
                     dc_val = rolls["dc"]
 
                     def _dc(dc=dc_val, sv=sv_lbl, n=aname):
+                        _consume_if_needed(n)
                         tgt = target_var.get()
                         msg = (f"**{n}** — JdS DD {dc} ({sv})\n"
                                f"  {tgt} doit réussir !")

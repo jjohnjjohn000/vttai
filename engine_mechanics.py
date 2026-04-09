@@ -39,7 +39,7 @@ CHAR_MECHANICS: dict = {
     },
     "Thorne": {  # Voleur Assassin 11 — STR12 DEX20 CON14 INT16 WIS12 CHA14 — Prof+4
         "atk_melee": +11, "atk_ranged": +11, "atk_spell": None,
-        "dmg_melee": (1, 6, +5), "dmg_sneak": (8, 6, 0),
+        "dmg_melee": (1, 6, +5), "dmg_sneak": (6, 6, 0),
         "n_attacks": 2, "save_dc": None,
         "skills": {"discrétion":+15,"escamotage":+15,"tromperie":+12,
                    "perception":+11,"perspicacité":+6,"acrobaties":+10,
@@ -108,7 +108,10 @@ def split_into_subactions(type_label: str, intention: str,
         "corps-à-corps",
     )
     _SPELL_DETECT = ("sort", "magie", "incant", "sacred flame", "flamme sacrée", 
-                     "divine favor", "faveur divine", "bless", "bénédiction")
+                     "divine favor", "faveur divine", "bless", "bénédiction",
+                     "spiritual weapon", "arme spirituelle", "marteau spirituel",
+                     "flaming sphere", "sphère de feu", "bigby", "moonbeam",
+                     "rayon de lune", "cloud of daggers", "nuage de dagues")
     _SMITE_SPELLS = ("wrathful smite", "courroux divin", "thunderous smite", 
                      "frappe tonnerre", "branding smite", "frappe lumière")
     
@@ -121,7 +124,12 @@ def split_into_subactions(type_label: str, intention: str,
     # C'est une attaque physique si :
     # 1. Mots-clés d'attaque présents OU "divine smite"
     # 2. ET ce n'est pas un sort d'attaque ou un sort de smite
-    is_physical_attack = (_has_generic_atk or _is_divine_smite) and not _is_spell
+    # 3. ET il y a une cible valide (un jet d'attaque contre "Aucune/Self" n'a pas de sens)
+    _has_target = cible.lower().strip() not in ("", "none", "-", "n/a", "aucun", "aucune", "soi-même", "self", "personne", "moi-même", "moi meme")
+    _DODGE_KW = ("esquive", "dodge", "défensive", "defensive")
+    _is_dodge = any(k in combined for k in _DODGE_KW)
+    _is_dash = any(k in combined for k in ("dash", "foncer", "sprint", "course"))
+    is_physical_attack = (_has_generic_atk or _is_divine_smite) and not _is_spell and not _is_dodge and not _is_dash and _has_target
 
     # On nettoie le type_label pour enlever "1/2" ou "Extra Attack" s'il y en a, 
     # pour garder l'UI propre, bien que l'agent ne devrait plus les générer.
@@ -244,7 +252,13 @@ def roll_damage_only(char_name: str, cible: str,
     grand_total += _extract_total(dmg_res)
 
     if smite:
-        sm_res = roll_dice(char_name, smite["dice"], 0)
+        sm_d = smite["dice"]
+        if is_crit:
+            import re as _re_smite
+            _m = _re_smite.match(r"(\d+)d(\d+)", sm_d)
+            if _m:
+                sm_d = f"{int(_m.group(1))*2}d{_m.group(2)}"
+        sm_res = roll_dice(char_name, sm_d, 0)
         lines.append(
             f"  [✨ {smite['label']}] {sm_res}  "
             f"(dégâts {smite['type']} supplémentaires)"
@@ -252,7 +266,9 @@ def roll_damage_only(char_name: str, cible: str,
         grand_total += _extract_total(sm_res)
 
     if char_name == "Thorne":
-        sn, sf, sb = char_mechanics.get("Thorne", {}).get("dmg_sneak", (8, 6, 0))
+        sn, sf, sb = char_mechanics.get("Thorne", {}).get("dmg_sneak", (6, 6, 0))
+        if is_crit:
+            sn *= 2
         snk_res = roll_dice("Thorne", f"{sn}d{sf}", sb)
         lines.append(f"  [sournoise] {snk_res}  ← si avantage/allié adjacent")
         grand_total += _extract_total(snk_res)
@@ -393,7 +409,12 @@ def execute_action_mechanics(
                 "soin","soigne","heal","cure","guéri","restaure","parole",
                 "contresort","dissipation","bannissement","désintégration",
                 "lumière","ténèbres","sacré","nécro","évocation","abjuration",
-                "divine favor", "faveur divine", "bless", "bénédiction")
+                "divine favor", "faveur divine", "bless", "bénédiction",
+                "spiritual weapon", "arme spirituelle", "marteau spirituel",
+                "flaming sphere", "sphère de feu", "bigby", "moonbeam",
+                "rayon de lune", "cloud of daggers", "nuage de dagues",
+                "flamme","sacred","flame","toll the dead","glas des morts",
+                "word of radiance","mot radieux","cantrip")
     ATK_KW   = ("attaque","frappe","coup","tir","tire","charge","poignarde",
                 "tranche","abat","corps-à-corps","distance","assaut","offensive")
     SKILL_KW = ("jet","check","compétence","sauvegarde","save","arcanes",
@@ -414,7 +435,11 @@ def execute_action_mechanics(
     # d'un déplacement, ce qui ferait firer is_skill avant la branche mouvement.
     # Défini AVANT is_atk pour éviter "referenced before assignment".
     is_move_action = "mouvement" in t_low
-    is_atk   = (any(k in r_low or k in i_low for k in ATK_KW) or any(k in r_low or k in i_low for k in _DIVINE_SMITE)) and not is_spell and not is_move_action
+    _has_target = cible.lower().strip() not in ("", "none", "-", "n/a", "aucun", "aucune", "soi-même", "self", "personne", "moi-même", "moi meme")
+    _DODGE_KW = ("esquive", "dodge", "défensive", "defensive")
+    _is_dodge = any(k in r_low or k in i_low for k in _DODGE_KW)
+    _is_dash = any(k in r_low or k in i_low for k in ("dash", "foncer", "sprint", "course"))
+    is_atk   = (any(k in r_low or k in i_low for k in ATK_KW) or any(k in r_low or k in i_low for k in _DIVINE_SMITE)) and not is_spell and not is_move_action and not _is_dodge and not _is_dash and _has_target
     is_skill = (any(k in r_low or k in i_low for k in SKILL_KW)
                 and not is_atk and not is_spell and not is_move_action)
 
@@ -446,6 +471,7 @@ def execute_action_mechanics(
         dc_val = _extract_dc(regle)
 
         results.append(f"⚔️ {char_name} — {intention} → {cible}")
+        any_crit = False
         for i in range(1, n_atk + 1):
             atk_res = roll_dice(char_name, "1d20", atk_bonus)
             lbl = f"attaque {i}/{n_atk}" if n_atk > 1 else "attaque"
@@ -455,6 +481,7 @@ def execute_action_mechanics(
             tot = _total(atk_res)
 
             if nat == 20:
+                any_crit = True
                 crit_res = roll_dice(char_name, f"{dn*2}d{df}", db)
                 results.append(f"  🎯 CRITIQUE ! {crit_res}")
                 continue
@@ -474,7 +501,13 @@ def execute_action_mechanics(
         # Smite en attente → appliqué sur la première attaque confirmée
         if single_attack and char_name in pending_smite:
             _sm = pending_smite.pop(char_name)
-            sm_res = roll_dice(char_name, _sm["dice"], 0)
+            sm_d = _sm["dice"]
+            if any_crit:
+                import re as _re_smite
+                _m = _re_smite.match(r"(\d+)d(\d+)", sm_d)
+                if _m:
+                    sm_d = f"{int(_m.group(1))*2}d{_m.group(2)}"
+            sm_res = roll_dice(char_name, sm_d, 0)
             results.append(
                 f"  [✨ {_sm['label']}] {sm_res}  "
                 f"(dégâts {_sm['type']} supplémentaires)"
@@ -482,7 +515,9 @@ def execute_action_mechanics(
 
         # Attaque sournoise Thorne
         if char_name == "Thorne":
-            sn, sf, sb = stats.get("dmg_sneak", (8, 6, 0))
+            sn, sf, sb = stats.get("dmg_sneak", (6, 6, 0))
+            if any_crit:
+                sn *= 2
             snk_res = roll_dice("Thorne", f"{sn}d{sf}", sb)
             results.append(f"  [sournoise] {snk_res}  ← si avantage/allié adjacent")
 
@@ -567,6 +602,13 @@ def execute_action_mechanics(
             # Jet d'attaque ? — jamais pour un sort de soin.
             if _sp_data.get("spell_attack") and not is_atk_roll and not is_heal:
                 is_atk_roll = True
+            # La DB de sorts fait autorité sur la détection textuelle.
+            # Si le sort n'a PAS de jet d'attaque dans ses données (ex : Projectile
+            # Magique), on désactive is_atk_roll même si le texte de la règle
+            # contient "attaque de sort". Couvre tout sort auto-hit sans hardcoder
+            # les noms.
+            elif not _sp_data.get("spell_attack") and not is_heal:
+                is_atk_roll = False
 
             # Sauvegarde ?
             _save = _sp_data.get("saving_throw", [])
@@ -646,26 +688,110 @@ def execute_action_mechanics(
                 + narrative_hint
             )
 
+        # ── PRÉ-DÉTECTION INVOCATION SPECTRALE (Pour éviter la double-consommation) ──
+        _spell_check_str = f"{_spell_name_candidate} {regle} {intention}".lower()
+        _SPECTRAL_SPAWNS = {
+            "spiritual weapon": {"name": "Arme", "src": "Spiritual_Weapon", "size": 1, "aura": 0, "color": ""},
+            "arme spirituelle": {"name": "Arme", "src": "Spiritual_Weapon", "size": 1, "aura": 0, "color": ""},
+            "marteau spirituel":{"name": "Arme", "src": "Spiritual_Weapon", "size": 1, "aura": 0, "color": ""},
+            "flaming sphere":   {"name": "Sphère", "src": "Flaming_Sphere", "size": 1, "aura": 5, "color": "#ff6600"},
+            "sphère de feu":    {"name": "Sphère", "src": "Flaming_Sphere", "size": 1, "aura": 5, "color": "#ff6600"},
+            "bigby's hand":     {"name": "Main", "src": "Bigbys_Hand", "size": 2, "aura": 0, "color": ""},
+            "main de bigby":    {"name": "Main", "src": "Bigbys_Hand", "size": 2, "aura": 0, "color": ""},
+            "moonbeam":         {"name": "Rayon", "src": "Moonbeam", "size": 1, "aura": 5, "color": "#e0e0ff"},
+            "rayon de lune":    {"name": "Rayon", "src": "Moonbeam", "size": 1, "aura": 5, "color": "#e0e0ff"},
+            "cloud of daggers": {"name": "Dagues", "src": "Cloud_of_Daggers", "size": 1, "aura": 0, "color": ""},
+            "nuage de dagues":  {"name": "Dagues", "src": "Cloud_of_Daggers", "size": 1, "aura": 0, "color": ""},
+        }
+        
+        _match = next((v for k, v in _SPECTRAL_SPAWNS.items() if k in _spell_check_str), None)
+        _cmap_win = getattr(app, "_combat_map_win", None)
+        _spectral_exists = False
+        _sum_name = f"{_match['name']} ({char_name})" if _match else ""
+
+        if _cmap_win and _match:
+            _spectral_exists = any(t.get("name") == _sum_name for t in _cmap_win.tokens)
+
         # Slot (uniquement pour les sorts NON-smite)
         if not is_cantrip and lvl:
             # ── Bypass rituel : pas de slot consommé ──
             _spell_for_ritual = extract_spell_name_fn(intention, char_name) if extract_spell_name_fn else ""
             if _spell_for_ritual and can_ritual_cast(char_name, _spell_for_ritual):
                 results.append(
-                    f"  [🕯️ RITUEL] {_spell_for_ritual} lancé en rituel "
+                    f"[🕯️ RITUEL] {_spell_for_ritual} lancé en rituel "
                     f"(+10 min d'incantation, aucun slot consommé)"
                 )
+            elif _spectral_exists:
+                # L'invocation est déjà sur la carte ! (C'est une attaque, pas une incantation)
+                results.append(f"  [✨ {_match['name']}] Déjà active sur la carte — pas de nouveau slot requis.")
             else:
-                slot_res = use_spell_slot(char_name, str(lvl))
-                results.append(f"  [slot niv.{lvl}] {slot_res}")
-                if "ÉCHEC" in slot_res:
-                    narrative_hint = (
-                        f"{char_name} n a plus de slot de niveau {lvl}. "
-                        f"Narre en 1 phrase qu il réalise qu il est à court d énergie magique."
-                    )
-                    return (f"[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ — {char_name}]\n"
-                            + "\n".join(results)
-                            + "\n\n[INSTRUCTION NARRATIVE]\n" + narrative_hint)
+                # SUPPRESSION TOTALE DE LA DOUBLE-DÉDUCTION :
+                # On supprime l'appel à use_spell_slot() pour TOUS les sorts.
+                # Le lanceur (l'agent ou le joueur) gère déjà son propre emplacement en amont.
+                results.append(f"  [slot niv.{lvl}] Validé (consommation gérée en amont par le lanceur).")
+
+        # ── INVOCATIONS AUTOMATIQUES SUR LA CARTE ──
+        if _match:
+            try:
+                if _cmap_win is not None:
+                    sum_src = _match['src']
+                    size = float(_match['size'])
+                    
+                    _c_col, _c_row = 0, 0
+                    _t_col, _t_row = None, None
+                    
+                    # 1. Chercher si la cible contient des coordonnées "Col X, Lig Y"
+                    import re as _summon_re
+                    _m_coord = _summon_re.search(r'col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)', cible + " " + intention, _summon_re.IGNORECASE)
+                    if _m_coord:
+                        _t_col = int(_m_coord.group(1)) - 1
+                        _t_row = int(_m_coord.group(2)) - 1
+                    
+                    for _tok in _cmap_win.tokens:
+                        if _tok.get("name") == char_name:
+                            _c_col, _c_row = int(round(_tok.get("col", 0))), int(round(_tok.get("row", 0)))
+                        # 2. Chercher un token cible si pas de coordonnées exactes
+                        if _t_col is None and cible and _tok.get("name", "").lower() == cible.lower():
+                            _t_col, _t_row = int(round(_tok.get("col", 0))), int(round(_tok.get("row", 0)))
+
+                    # Placer sur la cible exacte si coordonnée manuelle, sinon case libre proche cible/lanceur
+                    if _m_coord:
+                        _n_col, _n_row = _t_col, _t_row
+                    else:
+                        _ref_col, _ref_row = (_t_col, _t_row) if _t_col is not None else (_c_col, _c_row)
+                        _n_col, _n_row = _cmap_win._nearest_free_cell(_ref_col, _ref_row, from_col=_c_col, from_row=_c_row)
+                        
+                    # Déléguer le dessin au fil d'exécution principal (UI Thread) pour éviter le crash Tkinter
+                    def _spawn_on_main_thread():
+                        _existing = next((t for t in _cmap_win.tokens if t.get("name") == _sum_name), None)
+                        if _existing:
+                            _existing["col"], _existing["row"] = _n_col, _n_row
+                            _cmap_win._redraw_one_token(_existing)
+                        else:
+                            wpn_tok = {
+                                "name": _sum_name,
+                                "type": "spectral",
+                                "size": size,
+                                "col": _n_col, "row": _n_row,
+                                "hp": -1, "max_hp": -1,
+                                "source_name": sum_src,
+                                "alignment": "ally",
+                                "aura_radius": _match['aura'],
+                                "aura_color": _match['color']
+                            }
+                            _cmap_win.tokens.append(wpn_tok)
+                            _cmap_win._redraw_one_token(wpn_tok)
+                        app._save_state()
+
+                    if hasattr(app, "root"):
+                        app.root.after(0, _spawn_on_main_thread)
+                        
+                    if _spectral_exists:
+                        results.append(f"[✨ Invocation] {_sum_name} se déplace en Col {_n_col+1}, Lig {_n_row+1}.")
+                    else:
+                        results.append(f"  [✨ Invocation] {_sum_name} apparaît en Col {_n_col+1}, Lig {_n_row+1}.")
+            except Exception as e:
+                print(f"[Engine] Erreur spawn invocation : {e}")
 
         # Jet d'attaque de sort → pré-roller les dégâts
         # Header distinct pour que le calling code utilise mode="attack"
@@ -722,35 +848,82 @@ def execute_action_mechanics(
                 + narrative_hint
             )
 
-        # ── Projectile Magique (touche automatiquement) ───────────────────
-        _MM_KW = ("projectile magique", "magic missile", "projectiles magiques")
-        _is_magic_missile = any(k in r_low or k in i_low for k in _MM_KW)
-        if _is_magic_missile:
-            _mm_lvl   = lvl if lvl and lvl >= 1 else 1
-            _mm_darts = 3 + max(0, _mm_lvl - 1)   # 3 au niv.1, +1/niveau sup.
-            results.append(
-                f"  [Projectile Magique — niv.{_mm_lvl}] "
-                f"{_mm_darts} projectile(s) — touche(nt) automatiquement"
+        # ── Sort à touche automatique (pas de jet d'attaque, pas de sauvegarde) ──
+        # Détecté par les propriétés du sort dans la DB — aucun nom hardcodé.
+        # Couvre Projectile Magique et tout sort auto-hit futur.
+        _is_auto_hit = (
+            _sp_data is not None
+            and not _sp_data.get("spell_attack")
+            and not _sp_data.get("saving_throw")
+            and not is_heal
+            and not dc_val
+        )
+        if _is_auto_hit:
+            from spell_data import (
+                get_spell_damage_expr as _gde,
+                get_spell_projectile_count as _gpc,
             )
-            _mm_totals =[]
-            for _i in range(1, _mm_darts + 1):
-                _dart_res = roll_dice(char_name, "1d4", 1)   # 1d4+1 force
-                _dart_m   = _re.search(r"Total\s*=\s*(\d+)", _dart_res)
-                _dart_tot = int(_dart_m.group(1)) if _dart_m else 0
-                results.append(f"  [projectile {_i}] {_dart_res}  (dégâts de force)")
-                _mm_totals.append(_dart_tot)
-            _mm_grand_total = sum(t for t in _mm_totals if isinstance(t, int))
+            _ah_lvl   = lvl if lvl and lvl >= 1 else (_sp_data.get("level", 1) or 1)
+            _proj     = _gpc(_spell_name_candidate, _ah_lvl)
+            _total_expr = _gde(_spell_name_candidate, _ah_lvl)
+
+            # Fallback : utiliser les dés extraits de la règle si la DB est muette
+            if not _total_expr:
+                _ah_all = _all_dice(regle)
+                if _ah_all:
+                    _dn0, _df0, _db0 = _ah_all[0]
+                    _total_expr = f"{_dn0}d{_df0}+{_db0}" if _db0 else f"{_dn0}d{_df0}"
+
+            _dmg_type     = (_sp_data.get("damage_inflict") or ["force"])[0]
+            _spell_display = _spell_name_candidate or "Sort"
+
+            results.append(
+                f"  [{_spell_display} — niv.{_ah_lvl}] "
+                f"{_proj} instance(s) — touche(nt) automatiquement"
+            )
+
+            _totals_ah: list[int] = []
+            if _total_expr:
+                _m_te = _re.match(r'(\d+)d(\d+)(?:\+(\d+))?', _total_expr)
+                if _proj > 1 and _m_te:
+                    # Plusieurs projectiles : on divise l'expression totale par le
+                    # nombre de projectiles pour obtenir les dés par instance.
+                    # Ex : 3d4+3 / 3 → 1d4+1 par fléchette.
+                    _dn_p = max(1, int(_m_te.group(1)) // _proj)
+                    _df_p = int(_m_te.group(2))
+                    _db_p = int(_m_te.group(3) or 0) // _proj
+                    for _i in range(1, _proj + 1):
+                        _dr = roll_dice(char_name, f"{_dn_p}d{_df_p}", _db_p)
+                        _dm = _re.search(r"Total\s*=\s*(\d+)", _dr)
+                        _totals_ah.append(int(_dm.group(1)) if _dm else 0)
+                        results.append(f"  [instance {_i}] {_dr}  ({_dmg_type})")
+                else:
+                    # Un seul lancer (ou expression non parsable → lancer brut)
+                    if _m_te:
+                        _dn_s = int(_m_te.group(1))
+                        _df_s = int(_m_te.group(2))
+                        _db_s = int(_m_te.group(3) or 0)
+                        _dr = roll_dice(char_name, f"{_dn_s}d{_df_s}", _db_s)
+                    else:
+                        _dr = roll_dice(char_name, _total_expr, 0)
+                    _dm = _re.search(r"Total\s*=\s*(\d+)", _dr)
+                    _totals_ah.append(int(_dm.group(1)) if _dm else 0)
+                    results.append(f"  [dégâts] {_dr}  ({_dmg_type})")
+
+            _grand_total = sum(_totals_ah)
             _cible_note = (
                 "répartis librement entre les cibles"
                 if ("," in cible or " et " in cible)
                 else cible
             )
-            results.append(f"  → Total dégâts de force : {_mm_grand_total} ({_cible_note})")
+            results.append(
+                f"  → Total dégâts {_dmg_type} : {_grand_total} ({_cible_note})"
+            )
             narrative_hint = (
-                f"Le système a lancé les {_mm_darts} projectile(s) de force. "
-                f"Narre en 1-2 phrases comment les flèches de lumière dorée fusent "
-                f"inévitablement vers {cible} et l'impact (total {_mm_grand_total} dégâts de force). "
-                f"Ne mentionne pas les chiffres individuels des dés."
+                f"Le sort a été résolu automatiquement "
+                f"({_proj} instance(s), {_grand_total} dégâts {_dmg_type}). "
+                f"Narre en 1-2 phrases l'impact inévitable sur {cible}. "
+                f"Ne mentionne pas les chiffres."
             )
             return (
                 f"[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ — {char_name}]\n"
@@ -852,7 +1025,31 @@ def execute_action_mechanics(
         is_move = any(k in r_low_orig or k in i_low for k in MOVE_KW) or "mouvement" in t_low
 
         if is_move:
-            # Récupérer la position courante du token
+            target_token_name = char_name
+            # ── Détection d'invocation à déplacer (ex: "Je déplace mon arme...") ──
+            _move_intent = i_low + " " + r_low_orig + " " + cible.lower()
+            if any(w in _move_intent for w in ("arme", "weapon", "marteau", "hammer", "sphère", "sphere", "main", "hand", "rayon", "moonbeam", "beam", "dague", "dagger", "nuage", "cloud", "invocation", "summon")):
+                _summons = {
+                    "arme": f"Arme ({char_name})", "weapon": f"Arme ({char_name})",
+                    "marteau": f"Arme ({char_name})", "hammer": f"Arme ({char_name})",
+                    "sphère": f"Sphère ({char_name})", "sphere": f"Sphère ({char_name})",
+                    "main": f"Main ({char_name})", "hand": f"Main ({char_name})",
+                    "rayon": f"Rayon ({char_name})", "moonbeam": f"Rayon ({char_name})", "beam": f"Rayon ({char_name})",
+                    "dague": f"Dagues ({char_name})", "dagger": f"Dagues ({char_name})", "nuage": f"Dagues ({char_name})", "cloud": f"Dagues ({char_name})"
+                }
+                _map_tokens =[]
+                try:
+                    _cw = getattr(app, "_combat_map_win", None)
+                    _map_tokens = _cw.tokens if _cw else app._win_state.get("combat_map_data", {}).get("tokens",[])
+                except: pass
+                
+                # Vérifie si le joueur possède un de ces tokens sur la map et s'il en a mentionné le mot-clé
+                for kw, s_name in _summons.items():
+                    if kw in _move_intent and any(t.get("name") == s_name for t in _map_tokens):
+                        target_token_name = s_name
+                        break
+
+            # Récupérer la position courante du token (joueur ou invocation)
             # Priorité 1 : fenêtre live (_combat_map_win.tokens) — toujours à jour
             # Priorité 2 : _win_state["combat_map_data"] — fallback si fenêtre fermée
             _cur_col, _cur_row = 0, 0
@@ -860,8 +1057,8 @@ def execute_action_mechanics(
             try:
                 _cmap_win = getattr(app, "_combat_map_win", None)
                 if _cmap_win is not None:
-                    for _tok in getattr(_cmap_win, "tokens", []):
-                        if _tok.get("name") == char_name:
+                    for _tok in getattr(_cmap_win, "tokens",[]):
+                        if _tok.get("name") == target_token_name:
                             _cur_col = int(round(_tok.get("col", 0)))
                             _cur_row = int(round(_tok.get("row", 0)))
                             _found_in_live = True
@@ -871,8 +1068,8 @@ def execute_action_mechanics(
             if not _found_in_live:
                 try:
                     _map_data = app._win_state.get("combat_map_data", {})
-                    for _tok in _map_data.get("tokens", []):
-                        if _tok.get("name") == char_name:
+                    for _tok in _map_data.get("tokens",[]):
+                        if _tok.get("name") == target_token_name:
                             _cur_col = int(round(_tok.get("col", 0)))
                             _cur_row = int(round(_tok.get("row", 0)))
                             break
@@ -882,29 +1079,25 @@ def execute_action_mechanics(
             _combined_mv = r_low_orig + " " + i_low + " " + cible.lower()
             _new_col, _new_row = _cur_col, _cur_row
 
-            # FIX : priorité explicite "N cases / N m" dans le champ Règle 5e
-            # AVANT la recherche de coordonnées absolues.
-            # Problème original : si l'agent écrit "6 cases (9 m)" dans Règle 5e
-            # ET "Col 100, Lig 44" dans Cible, le regex abs matchait dans _combined_mv
-            # et ignorait la distance déclarée → déplacement × 5 incorrect.
             _m_cases_regle = _re.search(r'(\d+)\s*cases?', r_low_orig, _re.IGNORECASE)
             _m_met_regle   = _re.search(
                 r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\.|\b)', r_low_orig
             )
-            _has_relative_dist = bool(_m_cases_regle or _m_met_regle)
 
-            # 1. Coordonnées absolues : "col X, lig Y"
-            # Uniquement si le champ Règle 5e ne contient PAS déjà une distance relative.
-            # On cherche dans r_low_orig seulement (pas dans cible) pour éviter qu'un
-            # "Col X, Lig Y" mis dans Cible n'écrase la distance en cases.
-            _m_abs = None
-            if not _has_relative_dist:
-                _m_abs = _re.search(
-                    r'col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)',
-                    r_low_orig, _re.IGNORECASE
-                )
-            if _m_abs:
-                _new_col = int(_m_abs.group(1)) - 1   # 1-based → 0-based
+            # 1. Coordonnées explicites (ex: MJ drag preview ou Cible pure)
+            _m_exact_cible = _re.match(r'^col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)$', cible.strip(), _re.IGNORECASE)
+            
+            # 2. Coordonnées absolues dans Règle 5e (l'agent précise sa destination)
+            _m_abs = _re.search(
+                r'col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)',
+                r_low_orig, _re.IGNORECASE
+            )
+
+            if _m_exact_cible:
+                _new_col = int(_m_exact_cible.group(1)) - 1
+                _new_row = int(_m_exact_cible.group(2)) - 1
+            elif _m_abs:
+                _new_col = int(_m_abs.group(1)) - 1
                 _new_row = int(_m_abs.group(2)) - 1
             else:
                 # 2. Distance + direction
@@ -1011,14 +1204,14 @@ def execute_action_mechanics(
 
             _dist_actual = max(abs(_new_col - _cur_col), abs(_new_row - _cur_row))
             _dist_m = _dist_actual * 1.5
-            results.append(f"🏃 {char_name} — {intention}")
+            results.append(f"🏃 {target_token_name} — {intention}")
             results.append(f"  Position actuelle : Col {_cur_col+1}, Lig {_cur_row+1}")
             results.append(f"  Destination       : Col {_new_col+1}, Lig {_new_row+1}")
             results.append(f"  Distance          : {_dist_actual} cases ({_dist_m:.1f} m)")
-            results.append(f"[MOVE_TOKEN:{char_name}:{_new_col}:{_new_row}]")
+            results.append(f"[MOVE_TOKEN:{target_token_name}:{_new_col}:{_new_row}]")
             narrative_hint = (
                 f"Le système a calculé le déplacement. "
-                f"Narre en 1 phrase le mouvement de {char_name} : {intention}. "
+                f"Narre en 1 phrase le mouvement de {target_token_name} : {intention}. "
                 f"Décris la façon dont il se déplace, son attitude, pas les coordonnées."
             )
         else:

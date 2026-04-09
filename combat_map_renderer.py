@@ -254,13 +254,6 @@ class RendererMixin:
         self.canvas.tag_raise("token")
         self.canvas.tag_raise("note")
         self.canvas.tag_raise("door")
-        # Vue joueurs — réutilise bg_with_obs déjà calculé
-        if self._player_win is not None:
-            try:
-                self._player_win.refresh(bg_with_obs, self._fog_mask, self._cp,
-                                         self.cols, self.rows, self.tokens)
-            except Exception:
-                self._player_win = None
 
     # ── Entrées publiques rendu ───────────────────────────────────────────────
 
@@ -295,10 +288,13 @@ class RendererMixin:
         self._fog_pil = None
         self._obs_pil = None
         self._composite()
+        # En mode vue joueurs (fenêtre principale), recalculer la visibilité
+        # des tokens ennemis après chaque changement de fog.
+        if not getattr(self, "_dm_view", True):
+            self._redraw_all_tokens()
 
     def _schedule_tile_refresh(self, delay: int = 16):
         """Planifie un re-rendu de la tuile visible (throttlé)."""
         if self._pending_render is not None:
             self.win.after_cancel(self._pending_render)
         self._pending_render = self.win.after(delay, self._flush_render)
-

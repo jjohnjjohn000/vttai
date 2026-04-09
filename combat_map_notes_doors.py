@@ -460,6 +460,13 @@ class NotesDoorsMixin:
         avant leur prochaine action. Les déplacements engine sont déjà dans
         l'historique autogen, pas besoin de les réinjecter.
         """
+        # ── Bloqué pendant la pause ───────────────────────────────────────────
+        # Les modifications de carte faites pendant la pause sont silencieuses :
+        # aucun message chat, aucun inject_fn → les héros ne réagiront pas.
+        # L'état de la carte sera reflété via _rebuild_agent_prompts à la reprise.
+        if getattr(getattr(self, "app", None), "_session_paused", False):
+            return
+
         dcol   = new_col - old_col
         drow   = new_row - old_row
         dist_m = max(abs(dcol), abs(drow)) * 1.5
@@ -555,7 +562,14 @@ class NotesDoorsMixin:
         """
         if not names:
             return
-            
+
+        # ── Bloqué pendant la pause ───────────────────────────────────────────
+        # Suppression silencieuse : pas de message chat, pas d'inject_fn.
+        # Les agents découvriront l'absence du token via leur system prompt
+        # à la reprise (get_map_prompt → _rebuild_agent_prompts).
+        if getattr(getattr(self, "app", None), "_session_paused", False):
+            return
+
         names_str = ", ".join(names)
         chat_txt = f"🗺️ [Carte] Jeton(s) retiré(s) de la carte : **{names_str}**"
         

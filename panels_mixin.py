@@ -2310,4 +2310,5 @@ class PanelsMixin:
                 self.input_event.set(),
             ),
             update_sys_prompt_fn = lambda: self._rebuild_agent_prompts(),
+            app = self,
         )

@@ -129,6 +129,174 @@ class CombatTrackerUtilsMixin:
         widget.bind("<Enter>", show)
         widget.bind("<Leave>", hide)
 
+    # ── Application des dégâts depuis le chat ────────────────────────────────
+    def apply_damage_to_npc(self, target_name: str, damage: int) -> bool:
+        """
+        Applique des dégâts à un combatant identifié par son nom.
+
+        Priorité de recherche :
+          1. Correspondance exacte (insensible à la casse)
+          2. Correspondance partielle (le nom du tracker contient target_name
+             ou vice-versa) — utile quand le LLM écrit « Gobelin » au lieu de
+             « Gobelin Chef »
+
+        Absorbe les PV temporaires en premier (règle D&D 5e), puis réduit hp.
+        Met à jour la liste et sauvegarde l'état.
+
+        Retourne True si la cible a été trouvée et modifiée, False sinon.
+        """
+        if damage <= 0:
+            return False
+
+        name_q = target_name.strip().lower()
+
+        # 1. Recherche exacte
+        found = next(
+            (c for c in self.combatants if c.name.strip().lower() == name_q),
+            None,
+        )
+        # 2. Recherche partielle
+        if found is None:
+            found = next(
+                (c for c in self.combatants
+                 if name_q in c.name.strip().lower()
+                 or c.name.strip().lower() in name_q),
+                None,
+            )
+
+        if found is None:
+            self._log(
+                f"apply_damage_to_npc: cible « {target_name} » introuvable "
+                f"parmi {[c.name for c in self.combatants]}"
+            )
+            return False
+
+        remaining = damage
+
+        # Absorber les PV temporaires en premier
+        if found.temp_hp > 0:
+            absorbed   = min(found.temp_hp, remaining)
+            found.temp_hp -= absorbed
+            remaining  -= absorbed
+            self._log(
+                f"apply_damage_to_npc: {found.name} — "
+                f"{absorbed} absorbé·s par PV temporaires "
+                f"(temp_hp restant : {found.temp_hp})"
+            )
+
+        # Appliquer les dégâts réels
+        if remaining > 0:
+            found.hp = max(0, found.hp - remaining)
+
+        self._log(
+            f"apply_damage_to_npc: {found.name} "
+            f"−{damage} PV → {found.hp}/{found.max_hp} PV"
+        )
+
+        # ── Synchro avec la carte de combat (tokens) ──
+        if getattr(self, "app", None) is not None:
+            map_win = getattr(self.app, "_combat_map_win", None)
+            if map_win is not None and hasattr(map_win, "tokens"):
+                for tok in map_win.tokens:
+                    tok_name = tok.get("name", "").strip().lower()
+                    found_name = found.name.strip().lower()
+                    if tok_name == found_name or (tok_name and tok_name in found_name) or (found_name and found_name in tok_name):
+                        tok["hp"] = found.hp
+                        if tok.get("max_hp", -1) < 0:
+                            tok["max_hp"] = found.max_hp
+                        self._log(f"Map token match found for '{tok_name}' (vs '{found_name}'). Syncing HP to {found.hp}...")
+                        def _do_map_update(t=tok, m=map_win, dmg=damage):
+                            try:
+                                if hasattr(m, "_redraw_one_token"):
+                                    m._redraw_one_token(t)
+                                if hasattr(m, "spawn_floating_text"):
+                                    m.spawn_floating_text(t, f"−{dmg}", "#ef5350")
+                                m._save_state()
+                            except Exception as e:
+                                print(f"[_do_map_update] Error syncing map: {e}")
+                        
+                        if hasattr(self, "root"):
+                            self.root.after(0, _do_map_update)
+                        else:
+                            _do_map_update()
+
+        if hasattr(self, "win"):
+            self.win.after(0, self._refresh_list)
+        else:
+            self._refresh_list()
+        self._save_combat_state()
+        return True
+
+    def apply_healing_to_combatant(self, target_name: str, amount: int) -> bool:
+        """
+        Applique un soin à un combatant identifié par son nom.
+        Plafonne à max_hp. Même logique de recherche que apply_damage_to_npc.
+        """
+        if amount <= 0:
+            return False
+
+        name_q = target_name.strip().lower()
+        found = next(
+            (c for c in self.combatants if c.name.strip().lower() == name_q),
+            None,
+        )
+        if found is None:
+            found = next(
+                (c for c in self.combatants
+                 if name_q in c.name.strip().lower()
+                 or c.name.strip().lower() in name_q),
+                None,
+            )
+
+        if found is None:
+            self._log(f"apply_healing_to_combatant: cible « {target_name} » introuvable.")
+            return False
+
+        found.hp = min(found.max_hp, found.hp + amount)
+        # Réinitialiser les jets de mort si le combatant reprend des PV
+        if found.hp > 0:
+            found.death_saves_success = 0
+            found.death_saves_fail    = 0
+
+        self._log(
+            f"apply_healing_to_combatant: {found.name} "
+            f"+{amount} PV → {found.hp}/{found.max_hp} PV"
+        )
+
+        # ── Synchro avec la carte de combat (tokens) ──
+        if getattr(self, "app", None) is not None:
+            map_win = getattr(self.app, "_combat_map_win", None)
+            if map_win is not None and hasattr(map_win, "tokens"):
+                for tok in map_win.tokens:
+                    tok_name = tok.get("name", "").strip().lower()
+                    found_name = found.name.strip().lower()
+                    if tok_name == found_name or (tok_name and tok_name in found_name) or (found_name and found_name in tok_name):
+                        tok["hp"] = found.hp
+                        if tok.get("max_hp", -1) < 0:
+                            tok["max_hp"] = found.max_hp
+                        self._log(f"Map token match found for '{tok_name}' (vs '{found_name}'). Syncing HP to {found.hp}...")
+                        def _do_map_update(t=tok, m=map_win, amt=amount):
+                            try:
+                                if hasattr(m, "_redraw_one_token"):
+                                    m._redraw_one_token(t)
+                                if hasattr(m, "spawn_floating_text"):
+                                    m.spawn_floating_text(t, f"+{amt}", "#4caf50")
+                                m._save_state()
+                            except Exception as e:
+                                print(f"[_do_map_update] Error syncing map: {e}")
+                        
+                        if hasattr(self, "root"):
+                            self.root.after(0, _do_map_update)
+                        else:
+                            _do_map_update()
+
+        if hasattr(self, "win"):
+            self.win.after(0, self._refresh_list)
+        else:
+            self._refresh_list()
+        self._save_combat_state()
+        return True
+
     # ── Log interne ───────────────────────────────────────────────────────────
     def _log(self, text: str):
         print(f"[Combat] {text}")

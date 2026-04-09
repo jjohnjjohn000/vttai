@@ -290,7 +290,25 @@ def get_combat_prompt(class_name: str, subclass_short: str = "", level: int = 11
         # Domain/Oath spells
         sub_spells = get_subclass_spells(class_name_lower, subclass_short, level)
         if sub_spells:
-            lines.append(f"  • Sorts de domaine/serment : {', '.join(sub_spells)}")
+            try:
+                from spell_data import get_spell
+                fmt_spells =[]
+                for sp in sub_spells:
+                    sp_data = get_spell(sp)
+                    if sp_data:
+                        _u = sp_data.get("cast_time_raw", [{}])[0].get("unit", "action").lower() if sp_data.get("cast_time_raw") else "action"
+                        if "bonus" in _u:
+                            _u_fr = "Action Bonus"
+                        elif "reaction" in _u:
+                            _u_fr = "Réaction"
+                        else:
+                            _u_fr = "Action"
+                        fmt_spells.append(f"{sp} [{_u_fr}]")
+                    else:
+                        fmt_spells.append(sp)
+                lines.append(f"  • Sorts de domaine/serment : {', '.join(fmt_spells)}")
+            except Exception:
+                lines.append(f"  • Sorts de domaine/serment : {', '.join(sub_spells)}")
 
     # Proficiencies
     profs = get_proficiencies(class_name_lower)

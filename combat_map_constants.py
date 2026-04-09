@@ -44,7 +44,7 @@ CELL_PX_MAX     = 120
 _C_BG_A = (19, 19, 32, 255)
 _C_BG_B = (16, 16, 24, 255)
 # Grille
-_C_GRID = (50, 50, 90, 160)
+_C_GRID = (255, 255, 255, 35)
 # Fog — vue MJ (semi-transparent : voir la carte sous le brouillard)
 _C_FOG_DM     = (20, 20, 60, 100)    # bleuté translucide
 # Fog — vue joueur (opaque)
@@ -63,9 +63,10 @@ HERO_COLORS = {
     "Lyra":   (129, 199, 132),
 }
 TOKEN_STYLES = {
-    "hero":    {"fill": (26,  58, 106), "outline": (91, 164, 245), "shape": "circle"},
-    "monster": {"fill": (90,  10,  10), "outline": (224, 64,  64), "shape": "diamond"},
-    "trap":    {"fill": (74,  48,   0), "outline": (240, 176, 48), "shape": "triangle"},
+    "hero":     {"fill": (26,  58, 106), "outline": (91, 164, 245), "shape": "circle"},
+    "monster":  {"fill": (90,  10,  10), "outline": (224, 64,  64), "shape": "diamond"},
+    "trap":     {"fill": (74,  48,   0), "outline": (240, 176, 48), "shape": "triangle"},
+    "spectral": {"fill": (156, 39, 176), "outline": (234, 128, 252), "shape": "diamond"},
 }
 
 # Tailles de token : nombre de cases occupées (côté du carré)
@@ -88,6 +89,14 @@ DND_CONDITIONS = {
     "Entravé":        "#ce93d8",
     "Sourd":          "#90a4ae",
     "Concentré":      "#40c4ff",
+}
+
+# Statuts tactiques D&D 5e avec couleur de badge (anneau interne)
+DND_TACTICS = {
+    "Esquive":        "#00bcd4",
+    "Caché":          "#455a64",
+    "Préparé":        "#ffb300",
+    "Désengagé":      "#8d6e63",
 }
 
 def _rgb_to_hex(rgb):

@@ -124,7 +124,7 @@ def get_combat_prompt(agent_name: str) -> str:
                 "  ◈ ACTION BONUS : sort bonus action si disponible (ex. Misty Step pour te repositionner).\n"
             ),
             "Thorne": (
-                "  🗡 ACTION : 1 attaque + SNEAK ATTACK (8d6) si avantage ou allié adjacent.\n"
+                "  🗡 ACTION : 1 attaque + SNEAK ATTACK (6d6) si avantage ou allié adjacent.\n"
                 "  ◈ CUNNING ACTION : utilise ton Action Bonus pour [Foncer] (Dash), te Désengager ou te Cacher.\n"
                 "  ⚡ Priorité : Hide → avantage assuré sur la prochaine attaque + Sneak Attack garanti.\n"
             ),

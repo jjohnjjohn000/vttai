@@ -146,13 +146,6 @@ class UIToolbarMixin:
         self._view_btn.pack(side=tk.LEFT, padx=2)
 
         tk.Button(
-            row2, text="Écran Joueurs", bg="#1a2a3a", fg="#64b5f6",
-            font=("Consolas", 8, "bold"), relief="flat", padx=8, pady=3,
-            activebackground="#0e1e2c", activeforeground="#90caf9",
-            command=self._open_player_view,
-        ).pack(side=tk.LEFT, padx=2)
-
-        tk.Button(
             row2, text="→ Agents", bg="#1a2a1a", fg="#81c784",
             font=("Consolas", 8, "bold"), relief="flat", padx=8, pady=3,
             activebackground="#0e2010", activeforeground="#a5d6a7",
@@ -179,7 +172,10 @@ class UIToolbarMixin:
 
     def _toggle_dm_view(self):
         """Bascule entre vue MJ (fog transparent) et vue Joueur (fog opaque)."""
-        self._dm_view = not self._dm_view
+        # set_view_mode change _dm_view, invalide les fingerprints et
+        # appelle _redraw_all_tokens() immédiatement — les tokens ennemis
+        # dans le fog disparaissent sans attendre un zoom ou un scroll.
+        self.set_view_mode(not self._dm_view)
         if self._dm_view:
             self._view_btn.config(text="Vue MJ",     bg="#2a1a3a",
                                    fg="#c77dff", relief="sunken")
@@ -198,7 +194,8 @@ class UIToolbarMixin:
         self._full_redraw()
 
     def place_new_token(self, name: str, ttype: str = "monster", size: float = 1.0,
-                        hp: int = -1, max_hp: int = -1, alignment: str = "",
+                        hp: int = -1, max_hp: int = -1, ac: int = -1, conditions: list = None,
+                        tactics: list = None, alignment: str = "",
                         portrait: str = "", source_name: str = ""):
         """Place un nouveau token depuis le tracker au centre du viewport (recherche libre en spirale).
 
@@ -278,8 +275,10 @@ class UIToolbarMixin:
             "row":         cur_row,
             "hp":          hp,
             "max_hp":      max_hp,
+            "ac":          ac,
             "size":        size,
-            "conditions":  [],
+            "conditions":  conditions or [],
+            "tactics":     tactics or [],
             "alignment":   resolved_alignment,
             "portrait":    portrait,          # portrait brut (tooltip)
             "token_art":   _resolved_token_art,  # art de token (canvas)
@@ -517,28 +516,6 @@ class UIToolbarMixin:
         self._full_redraw()
         self._save_state()
 
-    def _open_player_view(self):
-        """Ouvre (ou ramène) la fenêtre Vue Joueurs avec fog opaque."""
-        if self._player_win is not None:
-            try:
-                self._player_win.win.deiconify()
-                self._player_win.win.lift()
-                # Rafraîchit au cas où le fog a changé depuis
-                self._player_win.refresh(self._bg_pil, self._fog_mask, self._cp,
-                                         self.cols, self.rows, self.tokens)
-                return
-            except Exception:
-                self._player_win = None
-
-        self._player_win = PlayerMapView(
-            parent   = self.win,
-            on_close = lambda: setattr(self, "_player_win", None),
-        )
-        # Rendu initial
-        if self._bg_pil is not None:
-            self._player_win.refresh(self._bg_pil, self._fog_mask, self._cp,
-                                     self.cols, self.rows, self.tokens)
-
     def _viewport_cells_rect(self) -> tuple:
         """
         Retourne (col_min, row_min, col_max, row_max) des cases actuellement
@@ -638,11 +615,20 @@ class UIToolbarMixin:
             py = min(int((r + 0.5) * cp_px), mh - 1)
             return mask_arr[py, px] > 127
 
-        # ── 3D distance helpers (locaux, pieds D&D) ────────────────────────────
         def _horiz_ft(t1, t2) -> float:
             c1, r1 = int(t1["col"]), int(t1["row"])
             c2, r2 = int(t2["col"]), int(t2["row"])
-            return max(abs(c1 - c2), abs(r1 - r2)) * 5.0
+            s1 = max(1, int(float(t1.get("size", 1))))
+            s2 = max(1, int(float(t2.get("size", 1))))
+            
+            def _dist1d(a, a_sz, b, b_sz):
+                a_end = a + a_sz - 1
+                b_end = b + b_sz - 1
+                if a_end < b: return b - a_end
+                if b_end < a: return a - b_end
+                return 0
+                
+            return max(_dist1d(c1, s1, c2, s2), _dist1d(r1, s1, r2, s2)) * 5.0
 
         def _d3d_ft(t1, t2) -> float:
             h = _horiz_ft(t1, t2)
