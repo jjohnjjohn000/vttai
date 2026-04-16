@@ -162,7 +162,7 @@ class TokenManagerMixin:
     # ─── Tokens ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _tok_fingerprint(tok: dict, zoom: float, cp: int, sel: set) -> tuple:
+    def _tok_fingerprint(tok: dict, zoom: float, cp: int, sel: set, active_turn: str = None) -> tuple:
         """Hashable fingerprint of a token's visual state."""
         return (
             tok.get("col"), tok.get("row"), tok.get("type"),
@@ -177,6 +177,7 @@ class TokenManagerMixin:
             tok.get("portrait", ""),     # portrait path — redraw if it changes
             zoom, cp,
             id(tok) in sel,
+            tok.get("name") == active_turn if active_turn else False # redessiner si l'initiative change
         )
 
     def _tok_is_visible_for_players(self, tok: dict) -> bool:
@@ -216,6 +217,7 @@ class TokenManagerMixin:
         self._redraw_all_tokens()
 
     def _redraw_all_tokens(self):
+        active_turn = getattr(self, "active_turn_name", None)
         for tok in self.tokens:
             # ── Mode vue joueurs (fenêtre principale) : cacher ennemis dans le fog ──
             if not getattr(self, "_dm_view", True):
@@ -227,7 +229,7 @@ class TokenManagerMixin:
                     tok.pop("_fp", None)
                     continue
             fp = self._tok_fingerprint(tok, self.zoom, self._cp,
-                                       self._selected_tokens)
+                                       self._selected_tokens, active_turn)
             old_fp = tok.get("_fp")
             if old_fp == fp and tok.get("ids"):
                 continue  # unchanged — skip
@@ -348,6 +350,38 @@ class TokenManagerMixin:
             outline=sel_col, width=2, fill="", dash=(4, 3),
             tags=("token", "sel_ring", tag)))
 
+        # ── Crosshair Initiative (Réticule Jaune) ──────────────────────────────
+        is_active_turn = (getattr(self, "active_turn_name", None) == name and bool(name))
+        if is_active_turn:
+            cross_color = "#ffff00"
+            cr_rad = rad + 9  # juste à l'extérieur de l'anneau de sélection
+            arr_len = max(6.0, 10.0 * self.zoom)
+            
+            # Cercle jaune du réticule
+            ids.append(self.canvas.create_oval(
+                cx - cr_rad, cy - cr_rad, cx + cr_rad, cy + cr_rad,
+                outline=cross_color, width=3, tags=("token", "crosshair", tag)))
+                
+            # Flèche Haut (pointe vers le bas)
+            ids.append(self.canvas.create_line(cx, cy - cr_rad - arr_len*1.5, cx, cy - cr_rad, fill=cross_color, width=3, tags=("token", tag)))
+            ids.append(self.canvas.create_line(cx, cy - cr_rad, cx - arr_len*0.6, cy - cr_rad - arr_len*0.8, fill=cross_color, width=3, tags=("token", tag)))
+            ids.append(self.canvas.create_line(cx, cy - cr_rad, cx + arr_len*0.6, cy - cr_rad - arr_len*0.8, fill=cross_color, width=3, tags=("token", tag)))
+            
+            # Flèche Bas (pointe vers le haut)
+            ids.append(self.canvas.create_line(cx, cy + cr_rad + arr_len*1.5, cx, cy + cr_rad, fill=cross_color, width=3, tags=("token", tag)))
+            ids.append(self.canvas.create_line(cx, cy + cr_rad, cx - arr_len*0.6, cy + cr_rad + arr_len*0.8, fill=cross_color, width=3, tags=("token", tag)))
+            ids.append(self.canvas.create_line(cx, cy + cr_rad, cx + arr_len*0.6, cy + cr_rad + arr_len*0.8, fill=cross_color, width=3, tags=("token", tag)))
+            
+            # Flèche Gauche (pointe vers la droite)
+            ids.append(self.canvas.create_line(cx - cr_rad - arr_len*1.5, cy, cx - cr_rad, cy, fill=cross_color, width=3, tags=("token", tag)))
+            ids.append(self.canvas.create_line(cx - cr_rad, cy, cx - cr_rad - arr_len*0.8, cy - arr_len*0.6, fill=cross_color, width=3, tags=("token", tag)))
+            ids.append(self.canvas.create_line(cx - cr_rad, cy, cx - cr_rad - arr_len*0.8, cy + arr_len*0.6, fill=cross_color, width=3, tags=("token", tag)))
+            
+            # Flèche Droite (pointe vers la gauche)
+            ids.append(self.canvas.create_line(cx + cr_rad + arr_len*1.5, cy, cx + cr_rad, cy, fill=cross_color, width=3, tags=("token", tag)))
+            ids.append(self.canvas.create_line(cx + cr_rad, cy, cx + cr_rad + arr_len*0.8, cy - arr_len*0.6, fill=cross_color, width=3, tags=("token", tag)))
+            ids.append(self.canvas.create_line(cx + cr_rad, cy, cx + cr_rad + arr_len*0.8, cy + arr_len*0.6, fill=cross_color, width=3, tags=("token", tag)))
+
         # Halo externe coloré selon l'alignement du token
         _ALIGN_COLORS = {
             "hostile": "#e53935",   # rouge
@@ -449,7 +483,7 @@ class TokenManagerMixin:
                 anchor="nw",
                 tags=("token", tag)))
 
-        # ── Textes (PV et AC) ─────────────────────────────────────────────────
+        # ── Barre de vie + AC intégré ─────────────────────────────────────────
         tok_ac = tok.get("ac", -1)
         hp     = tok.get("hp", -1)
         max_hp = tok.get("max_hp", -1)
@@ -478,33 +512,46 @@ class TokenManagerMixin:
                     bx0, by0, bx0 + bar_w * ratio, by1,
                     fill=bar_color, outline="", tags=("token", tag)))
 
-        # Rendre les textes si on est assez zoomé
-        if cp >= 20 and self.zoom >= 0.5:
-            text_str = ""
-            if has_hp:
-                text_str += f"{hp}/{max_hp}"
-            if has_ac:
-                if text_str:
-                    text_str += " | "
-                text_str += f"🛡️{tok_ac}"
-            
-            if text_str:
-                # Un petit fond ombré pour la lisibilité
-                fs = max(6, int(8 * self.zoom))
-                text_y = by0 - fs + 2
-                
-                # Ombre
+            # Texte PV centré dans la barre (visible si assez zoomé)
+            if cp >= 20 and self.zoom >= 0.5:
+                fs_bar = max(5, int(bar_h * 0.85))
+                bar_cx = bx0 + bar_w / 2
+                bar_cy = (by0 + by1) / 2
                 ids.append(self.canvas.create_text(
-                    cx + 1, text_y + 1,
-                    text=text_str, fill="black",
-                    font=("Consolas", fs, "bold"),
+                    bar_cx + 1, bar_cy + 1,
+                    text=f"{hp}/{max_hp}", fill="black",
+                    font=("Consolas", fs_bar, "bold"),
                     tags=("token", tag)))
-                # Texte
                 ids.append(self.canvas.create_text(
-                    cx, text_y,
-                    text=text_str, fill="white",
-                    font=("Consolas", fs, "bold"),
+                    bar_cx, bar_cy,
+                    text=f"{hp}/{max_hp}", fill="white",
+                    font=("Consolas", fs_bar, "bold"),
                     tags=("token", tag)))
+
+            # Badge AC à droite de la barre
+            if has_ac and cp >= 20 and self.zoom >= 0.5:
+                fs_ac  = max(5, int(bar_h * 0.85))
+                ac_pad = max(2, int(bar_h * 0.3))
+                ac_x   = bx0 + bar_w + ac_pad
+                ac_cy  = (by0 + by1) / 2
+                ac_str = f"{tok_ac}"
+                # Fond bouclier (petit rectangle arrondi en apparence)
+                txt_w  = fs_ac * len(ac_str) * 0.65
+                ids.append(self.canvas.create_rectangle(
+                    ac_x - 1, by0,
+                    ac_x + txt_w + 3, by1,
+                    fill="#1a237e", outline="#5c6bc0", width=1,
+                    tags=("token", tag)))
+                ids.append(self.canvas.create_text(
+                    ac_x + 1, ac_cy + 1,
+                    text=ac_str, fill="black",
+                    font=("Consolas", fs_ac, "bold"),
+                    anchor="w", tags=("token", tag)))
+                ids.append(self.canvas.create_text(
+                    ac_x, ac_cy,
+                    text=ac_str, fill="#e8eaf6",
+                    font=("Consolas", fs_ac, "bold"),
+                    anchor="w", tags=("token", tag)))
 
         # ── Badges de conditions ───────────────────────────────────────────────
         conditions = tok.get("conditions", [])
@@ -954,6 +1001,240 @@ class TokenManagerMixin:
                   cursor="hand2",
                   command=_apply).pack(pady=2)
 
+    # ─── Bidirectional tracker ↔ map bridge ──────────────────────────────────
+
+    def _resolve_bestiary_name(self, tok: dict) -> tuple[str, dict | None]:
+        """
+        Résout le nom du bestiaire et le dict monstre depuis un token.
+        Cherche dans l'ordre :
+          1. tok["bestiary_name"]  (clé canonique)
+          2. tok["source_name"]    (nom de fichier — même valeur différente clé)
+          3. nom affiché sans suffixe numérique ("Hell Hound 2" → "Hell Hound")
+        Retourne (bname, monster_dict_or_None).
+        """
+        import re
+        try:
+            from npc_bestiary_panel import get_monster
+        except ImportError:
+            return "", None
+
+        for candidate in (
+            tok.get("bestiary_name", "").strip(),
+            tok.get("source_name", "").strip(),
+            re.sub(r'\s*\d+$', '', tok.get("name", "")).strip(),
+        ):
+            if candidate:
+                m = get_monster(candidate)
+                if m:
+                    return candidate, m
+        return "", None
+
+    @staticmethod
+    def _parse_ac(ac_raw) -> int:
+        """Extrait un int depuis le champ 'ac' du bestiaire (int, list[int|dict])."""
+        if isinstance(ac_raw, int):
+            return ac_raw
+        if isinstance(ac_raw, list) and ac_raw:
+            first = ac_raw[0]
+            if isinstance(first, dict):
+                return int(first.get("ac", 13))
+            return int(first)
+        return 13
+
+    def _send_token_to_tracker(self, tok: dict):
+        """
+        Ajoute le token de la carte comme Combatant dans le CombatTracker.
+
+        • Lit bestiary_name / source_name pour récupérer les stats complètes.
+        • Tombe en arrière sur les valeurs déjà présentes dans le token.
+        • Roule l'initiative automatiquement.
+        • Refuse si un combatant du même nom est déjà dans le tracker.
+        """
+        from tkinter import messagebox
+
+        # ── 1. Stats depuis le bestiaire ──────────────────────────────────
+        bname, monster = self._resolve_bestiary_name(tok)
+
+        if monster:
+            hp_val    = monster.get("hp", {}).get("average", tok.get("max_hp", 15))
+            ac_val    = self._parse_ac(monster.get("ac", tok.get("ac", 13)))
+            dex_val   = monster.get("dex", 10)
+            dex_bonus = (int(dex_val) - 10) // 2
+            size_raw  = monster.get("size", ["M"])
+            if isinstance(size_raw, list) and size_raw:
+                size_raw = size_raw[0]
+        else:
+            hp_val    = tok.get("max_hp", 15)
+            ac_val    = tok.get("ac", 13)
+            dex_bonus = 1
+
+        hp_val = int(hp_val) if isinstance(hp_val, (int, float)) else 15
+        ac_val = int(ac_val) if isinstance(ac_val, (int, float)) else 13
+
+        # ── 2. Récupérer / ouvrir le tracker ─────────────────────────────
+        tracker = None
+        app = getattr(self, "app", None)
+        if app:
+            tracker = getattr(app, "_combat_tracker_win", None)
+            if tracker is None and hasattr(app, "_combat_tracker"):
+                tracker = app._combat_tracker()
+
+        if tracker is None:
+            messagebox.showwarning("Tracker",
+                "Le Combat Tracker n'est pas ouvert.",
+                parent=self.win)
+            return
+
+        # ── 3. Doublon ? ──────────────────────────────────────────────────
+        tok_name = tok.get("name", "?")
+        if any(c.name == tok_name for c in tracker.combatants):
+            messagebox.showinfo("Tracker",
+                f"« {tok_name} » est déjà dans le Tracker.",
+                parent=self.win)
+            return
+
+        # ── 4. Créer le Combatant ─────────────────────────────────────────
+        from combat_tracker_combatant import Combatant
+
+        _NPC_COLORS = ["#ff9966", "#ffcc66", "#99ddff", "#cc99ff",
+                       "#99ffcc", "#ff99bb", "#ddbbff", "#aaffaa"]
+        color = _NPC_COLORS[len(tracker.combatants) % len(_NPC_COLORS)]
+
+        c = Combatant(
+            name      = tok_name,
+            is_pc     = tok.get("type") == "hero",
+            max_hp    = hp_val,
+            current_hp= tok.get("hp") if tok.get("hp", -1) >= 0 else hp_val,
+            ac        = ac_val,
+            initiative= 0,
+            dex_bonus = dex_bonus,
+            color     = color,
+        )
+        c.bestiary_name = bname
+        c.portrait      = tok.get("portrait", "")
+        c.alignment     = tok.get("alignment", "hostile")
+
+        for cond in tok.get("conditions", []):
+            c.conditions[cond] = True
+        for tac in tok.get("tactics", []):
+            c.tactics[tac] = True
+
+        c.roll_initiative()
+        tracker.combatants.append(c)
+        tracker._sort_and_refresh()
+
+        # Mettre à jour le token si bestiary_name était manquant
+        if bname and not tok.get("bestiary_name"):
+            tok["bestiary_name"] = bname
+            tok["source_name"]   = bname
+            self._save_state()
+
+        # ── 5. Notifier ───────────────────────────────────────────────────
+        msg = (f"⚔️ {tok_name} ajouté au Tracker "
+               f"(Init : {c.initiative} | PV : {c.hp}/{c.max_hp} | CA : {c.ac})"
+               + (f" — {bname}" if bname else ""))
+        for q in (getattr(tracker, "chat_queue", None),
+                  getattr(self, "msg_queue", None)):
+            if q:
+                q.put({"sender": "🗺️ Carte", "text": msg, "color": "#ffcc66"})
+
+    def _open_monster_sheet_for_token(self, tok_name: str, bestiary_name: str):
+        """Ouvre la MonsterSheetWindow pour le token sélectionné."""
+        try:
+            from npc_bestiary_panel import MonsterSheetWindow
+            MonsterSheetWindow(self.win, tok_name, bestiary_name)
+        except ImportError:
+            pass
+
+    def place_token_for_combatant(self, c,
+                                   col: int = None, row: int = None) -> dict | None:
+        """
+        API publique — place (ou met à jour) un token sur la carte pour un Combatant
+        issu du CombatTracker.
+
+        • Si un token portant le même nom existe déjà, ses stats sont mises à jour
+          in-place (HP, CA, bestiary_name, alignment) sans le déplacer.
+        • Sinon, crée un nouveau token dict complet — avec bestiary_name, source_name,
+          portrait, hp, max_hp, ac, alignment, size (depuis le bestiaire).
+        • col / row optionnels : si omis, le token est placé sur la case libre la
+          plus proche du centre de la carte.
+
+        Retourne le token dict (nouveau ou mis à jour), ou None si la carte
+        n'est pas encore prête.
+        """
+        if not hasattr(self, "tokens") or not hasattr(self, "canvas"):
+            return None
+
+        # ── 1. Token existant → mise à jour in-place ──────────────────────
+        existing = next(
+            (t for t in self.tokens
+             if t.get("name") == c.name and not t.get("is_preview")),
+            None
+        )
+        if existing:
+            existing["hp"]           = c.hp
+            existing["max_hp"]       = c.max_hp
+            existing["ac"]           = c.ac
+            existing["bestiary_name"] = c.bestiary_name
+            existing["source_name"]   = c.bestiary_name
+            existing["alignment"]     = c.alignment
+            if c.portrait:
+                existing["portrait"] = c.portrait
+            existing["conditions"] = list(c.conditions.keys())
+            existing["tactics"]    = list(c.tactics.keys())
+            tok_fp_key = "_fp"
+            existing.pop(tok_fp_key, None)   # forcer le redraw
+            self._redraw_one_token(existing)
+            self._save_state()
+            return existing
+
+        # ── 2. Position ────────────────────────────────────────────────────
+        if col is None or row is None:
+            col, row = self._nearest_free_cell(self.cols // 2, self.rows // 2)
+        else:
+            col, row = self._nearest_free_cell(int(col), int(row))
+
+        # ── 3. Taille depuis le bestiaire ──────────────────────────────────
+        tok_size = 1
+        if c.bestiary_name:
+            try:
+                from npc_bestiary_panel import get_monster
+                m = get_monster(c.bestiary_name)
+                if m:
+                    _SIZE_MAP = {"T": 0.5, "S": 0.5, "M": 1, "L": 2, "H": 3, "G": 4}
+                    s = m.get("size", ["M"])
+                    if isinstance(s, list) and s:
+                        s = s[0]
+                    tok_size = _SIZE_MAP.get(s, 1)
+            except Exception:
+                pass
+
+        # ── 4. Construire le token dict ────────────────────────────────────
+        tok = {
+            "name":         c.name,
+            "type":         "hero" if c.is_pc else "monster",
+            "col":          col,
+            "row":          row,
+            "size":         tok_size,
+            "hp":           c.hp,
+            "max_hp":       c.max_hp,
+            "ac":           c.ac,
+            "alignment":    c.alignment,
+            "conditions":   list(c.conditions.keys()),
+            "tactics":      list(c.tactics.keys()),
+            "altitude_ft":  0,
+            # ── Clés de liaison bestiaire (les deux pour compatibilité) ────
+            "bestiary_name": c.bestiary_name,
+            "source_name":   c.bestiary_name,
+            # ── Portrait pré-résolu depuis le tracker ──────────────────────
+            "portrait":      c.portrait,
+        }
+
+        self.tokens.append(tok)
+        self._redraw_one_token(tok)
+        self._save_state()
+        return tok
+
     # ─── Recherche de case libre (utilisée par les agents) ───────────────────
 
     def _nearest_free_cell(self, target_col: int, target_row: int,
@@ -1081,7 +1362,8 @@ class TokenManagerMixin:
             for t in self.tokens if id(t) in self._selected_tokens
         }
         
-        # --- NOUVEAU : On s'assure qu'aucun ancien compteur ne traîne ---
+        # --- NOUVEAU : Réinitialiser les compteurs et waypoints ---
+        self._drag_waypoints = []
         self.canvas.delete("drag_counter")
 
     def _tok_drag(self, event, tok):
@@ -1094,28 +1376,52 @@ class TokenManagerMixin:
         dcol = new_col - self._drag_origins[id(tok)][0]
         drow = new_row - self._drag_origins[id(tok)][1]
         
-        # --- NOUVEAU : Calcul et affichage du compteur de distance (D&D 5e) ---
+        # --- NOUVEAU : Calcul avec waypoints et tracé de ligne ---
         oc, or_ = self._drag_origins[id(tok)]
-        dist_cases = max(abs(new_col - oc), abs(new_row - or_))
-        dist_ft = dist_cases * 5.0
-        label = f"{dist_cases:.1f} cases ({dist_ft:.0f} ft)"
-
-        tx, ty = cx, cy - 40  # Affichage 40 pixels au-dessus du curseur
-
-        if not self.canvas.find_withtag("drag_counter_txt"):
-            # Création du fond et du texte
-            self.canvas.create_rectangle(tx-10, ty-10, tx+10, ty+10, 
-                                         fill="#1e1e1e", outline="#fff176", width=1, 
-                                         tags=("drag_counter", "drag_counter_bg"))
-            self.canvas.create_text(tx, ty, text=label, fill="#fff176", 
-                                    font=("Consolas", 10, "bold"), 
-                                    tags=("drag_counter", "drag_counter_txt"))
-        else:
-            # Mise à jour
-            self.canvas.itemconfigure("drag_counter_txt", text=label)
-            self.canvas.coords("drag_counter_txt", tx, ty)
         
-        # Ajustement du fond noir à la taille du texte
+        # Liste de tous les points : Départ -> Ancres -> Position fluide actuelle
+        pts = [(round(oc), round(or_))] + getattr(self, "_drag_waypoints", []) + [(round(new_col), round(new_row))]
+        
+        # Calcul de la distance totale (D&D 5e : les diagonales coûtent 1 case)
+        dist_cases = 0
+        for i in range(len(pts)-1):
+            c1, r1 = pts[i]
+            c2, r2 = pts[i+1]
+            dist_cases += max(abs(c2 - c1), abs(r2 - r1))
+            
+        dist_ft = dist_cases * 5.0
+        label = f"{dist_cases} cases ({dist_ft:.0f} ft)"
+
+        self.canvas.delete("drag_counter")
+
+        # Tracer les lignes reliant chaque waypoint
+        sz = float(tok.get("size", 1.0))
+        for i in range(len(pts)-1):
+            c1, r1 = pts[i]
+            c2, r2 = pts[i+1]
+            x1 = (c1 + sz / 2.0) * cp
+            y1 = (r1 + sz / 2.0) * cp
+            
+            if i == len(pts) - 2:
+                # Dernier segment élastique vers le token flottant
+                x2, y2 = (new_col + sz / 2.0) * cp, (new_row + sz / 2.0) * cp
+            else:
+                x2 = (c2 + sz / 2.0) * cp
+                y2 = (r2 + sz / 2.0) * cp
+                # Dessiner le marqueur du waypoint
+                self.canvas.create_oval(x2-4, y2-4, x2+4, y2+4, fill="#fff176", outline="#1e1e1e", width=2, tags=("drag_counter",))
+                
+            self.canvas.create_line(x1, y1, x2, y2, fill="#fff176", width=2, dash=(4,3), tags=("drag_counter",))
+
+        # Tracer l'encart de distance
+        tx, ty = cx, cy - 40
+        self.canvas.create_rectangle(tx-10, ty-10, tx+10, ty+10, 
+                                     fill="#1e1e1e", outline="#fff176", width=1, 
+                                     tags=("drag_counter", "drag_counter_bg"))
+        self.canvas.create_text(tx, ty, text=label, fill="#fff176", 
+                                font=("Consolas", 10, "bold"), 
+                                tags=("drag_counter", "drag_counter_txt"))
+        
         bbox = self.canvas.bbox("drag_counter_txt")
         if bbox:
             self.canvas.coords("drag_counter_bg", bbox[0]-6, bbox[1]-3, bbox[2]+6, bbox[3]+3)
@@ -1125,17 +1431,18 @@ class TokenManagerMixin:
         for t in self.tokens:
             if id(t) not in self._selected_tokens:
                 continue
-            oc, or_ = self._drag_origins[id(t)]
-            t["col"] = max(0.0, min(self.cols - 1.0, oc + dcol))
-            t["row"] = max(0.0, min(self.rows - 1.0, or_ + drow))
+            t_oc, t_or_ = self._drag_origins[id(t)]
+            t["col"] = max(0.0, min(self.cols - 1.0, t_oc + dcol))
+            t["row"] = max(0.0, min(self.rows - 1.0, t_or_ + drow))
             self._redraw_one_token(t)
 
     def _tok_release(self, event, tok):
         if getattr(self, "_drag_token", None) is None:
             return
             
-        # --- NOUVEAU : Suppression du compteur à la fin du mouvement ---
+        # --- NOUVEAU : Nettoyage post-mouvement ---
         self.canvas.delete("drag_counter")
+        self._drag_waypoints = []
         
         moved =[]
         for t in self.tokens:
@@ -1292,6 +1599,36 @@ class TokenManagerMixin:
                 print(f"[CombatMap] Erreur tooltip image : {e}")
 
     # ─── Prévisualisation de mouvement ────────────────────────────────────────
+
+    def remove_token_by_name(self, name: str) -> int:
+        """
+        Retire tous les tokens réels (non-preview) portant ce nom de la carte.
+        Supprime leurs canvas items, met à jour self.tokens et sauvegarde l'état.
+        Retourne le nombre de tokens effectivement retirés.
+
+        Appelé par CombatTrackerNPCMixin._prompt_npc_death lorsque le MJ
+        confirme la suppression du token après un PNJ réduit à 0 PV.
+        """
+        to_remove = [
+            t for t in list(self.tokens)
+            if t.get("name") == name and not t.get("is_preview")
+        ]
+        if not to_remove:
+            return 0
+
+        for t in to_remove:
+            # Supprimer chaque canvas item enregistré sur le token
+            for iid in t.get("ids", ()):
+                try:
+                    self.canvas.delete(iid)
+                except Exception:
+                    pass
+            self.tokens.remove(t)
+
+        # Redessiner la couche tokens et persister
+        self._redraw_all_tokens()
+        self._save_state()
+        return len(to_remove)
 
     def request_movement_preview(self, name: str, col: float, row: float):
         """Affiche un carré factice déplaçable (is_preview: True) pour le mouvement en cours."""

@@ -35,6 +35,9 @@ class Combatant:
         self.dex_bonus  = dex_bonus
         self.color      = color
         self.concentration = concentration
+        self.conc_spell        = ""   # nom du sort maintenu en concentration
+        self.conc_rounds_left  = 0    # tours restants avant expiration
+        self.conc_total_rounds = 0    # durée totale originale (pour affichage)
         self.bestiary_name = ""   # nom exact dans le bestiary (pour la fiche)
 
         # ── Portrait pré-résolu depuis images/portraits/ ──────────────────────
@@ -122,6 +125,9 @@ class Combatant:
             "dex_bonus":          self.dex_bonus,
             "color":              self.color,
             "concentration":      self.concentration,
+            "conc_spell":         self.conc_spell,
+            "conc_rounds_left":   self.conc_rounds_left,
+            "conc_total_rounds":  self.conc_total_rounds,
             "bestiary_name":      self.bestiary_name,
             "portrait":           self.portrait,
             "alignment":          self.alignment,
@@ -149,6 +155,9 @@ class Combatant:
             color         = d.get("color", "#e0e0e0"),
             concentration = d.get("concentration", False),
         )
+        c.conc_spell        = d.get("conc_spell", "")
+        c.conc_rounds_left  = d.get("conc_rounds_left", 0)
+        c.conc_total_rounds = d.get("conc_total_rounds", 0)
         c.bestiary_name       = d.get("bestiary_name", "")
         c.portrait            = d.get("portrait", "")
         c.alignment           = d.get("alignment", "ally" if d["is_pc"] else "hostile")

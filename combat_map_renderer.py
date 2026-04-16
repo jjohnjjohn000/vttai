@@ -46,9 +46,11 @@ class RendererMixin:
         self.canvas.bind("<Double-Button-1>",   self._mb1_double)
         self.canvas.bind("<ButtonPress-2>",     self._pan_start)
         self.canvas.bind("<B2-Motion>",         self._pan_drag)
+        self.canvas.bind("<ButtonRelease-2>",   lambda e: self._schedule_tile_refresh())
         self.canvas.bind("<ButtonPress-3>",     self._mb3_down)
         self.canvas.bind("<Alt-ButtonPress-1>", self._pan_start)
         self.canvas.bind("<Alt-B1-Motion>",     self._pan_drag)
+        self.canvas.bind("<Alt-ButtonRelease-1>", lambda e: self._schedule_tile_refresh())
         self.canvas.bind("<MouseWheel>",        self._do_zoom)
         self.canvas.bind("<Button-4>",          self._do_zoom)
         self.canvas.bind("<Button-5>",          self._do_zoom)
@@ -164,9 +166,10 @@ class RendererMixin:
 
         # ── Grille (vectorisée — une seule opération numpy) ─────────────────
         if self._show_grid and cp >= 4:
+            grid_c = getattr(self, "_grid_color", _C_GRID)
             bg_arr = np.array(bg, dtype=np.float32)
-            gc = np.array(_C_GRID[:3], dtype=np.float32)
-            ga = _C_GRID[3] / 255.0
+            gc = np.array(grid_c[:3], dtype=np.float32)
+            ga = grid_c[3] / 255.0
             inv_ga = 1.0 - ga
             # Colonnes : positions x de toutes les lignes verticales dans la tuile
             col_xs = np.arange(tx0 // cp, tx1 // cp + 2) * cp - tx0
@@ -219,9 +222,36 @@ class RendererMixin:
         """Non utilisé avec le fog mask — garde uniquement pour compat d'appel."""
         self._rebuild_fog()
 
+    def _is_tile_stale(self) -> bool:
+        """Retourne True si le viewport actuel déborde du rectangle de tuile courant.
+
+        Se produit quand le canvas est décalé via scan_dragto (pan souris centrale)
+        sans passer par les callbacks _scroll_x/_scroll_y → _tile_rect n'est pas
+        mis à jour → les obstacles et le fog sont rendus avec un offset obsolète.
+        """
+        tx0, ty0, tx1, ty1 = getattr(self, "_tile_rect", (0, 0, 0, 0))
+        if tx1 <= tx0 or ty1 <= ty0:
+            return True                     # tuile vide / non initialisée
+        W_full, H_full = self._wh
+        sr_w = W_full + 40
+        sr_h = H_full + 40
+        x0f, x1f = self.canvas.xview()
+        y0f, y1f = self.canvas.yview()
+        vx0 = int(x0f * sr_w)
+        vy0 = int(y0f * sr_h)
+        vx1 = int(x1f * sr_w)
+        vy1 = int(y1f * sr_h)
+        # La tuile est valide si elle couvre entièrement le viewport courant
+        return not (tx0 <= vx0 and ty0 <= vy0 and tx1 >= vx1 and ty1 >= vy1)
+
     def _composite(self):
         """alpha_composite(bg, obstacles, fog) → PhotoImage placé aux coords canvas."""
-        if self._bg_pil is None:
+        # Si le viewport a bougé sans que _tile_rect ait été mis à jour
+        # (cas typique : pan via scan_dragto qui bypasse _scroll_x/_scroll_y),
+        # on force un rebuild complet avant de recomposer.
+        if self._bg_pil is None or self._is_tile_stale():
+            self._fog_pil = None   # fog tile aussi liée au tile_rect
+            self._obs_pil = None   # idem pour les obstacles
             self._rebuild_bg()
         if self._fog_pil is None:
             self._rebuild_fog()
@@ -276,6 +306,83 @@ class RendererMixin:
                           f"↑↓ taille  ←→ offset")
         if self.tool == "resize_map":
             self._draw_map_handles()
+
+    # ─── Modes de couleur de grille ──────────────────────────────────────────
+
+    # Palette des modes disponibles :  label  →  RGBA (0-255)
+    GRID_COLOR_MODES = {
+        "auto":   None,                    # utilise _C_GRID (valeur constante)
+        "noir":   (0,   0,   0,   200),    # lignes noires — lisibles sur fond clair
+        "blanc":  (255, 255, 255, 200),    # lignes blanches — lisibles sur fond sombre
+        "rouge":  (220,  60,  60, 180),    # lignes rouges (ambiance donjon)
+        "bleu":   ( 80, 140, 255, 160),    # lignes bleu acier
+    }
+
+    def _set_grid_color_mode(self, mode: str):
+        """Change le mode couleur de la grille et force un re-rendu."""
+        color = self.GRID_COLOR_MODES.get(mode)
+        self._grid_color_mode = mode
+        self._grid_color      = color if color is not None else _C_GRID
+        self._bg_pil = None
+        self._full_redraw()
+        btn = getattr(self, "_grid_color_btn", None)
+        if btn:
+            btn.config(text=f"Grille: {mode.capitalize()}")
+
+    def _build_grid_color_selector(self, parent_frame):
+        """
+        Crée le sélecteur de couleur de grille à insérer dans la barre d'outils,
+        juste à côté du bouton « Grille ON/OFF ».
+
+        Appel depuis combat_map_window.py :
+            self._build_grid_color_selector(toolbar_frame)
+
+        Retourne le widget Frame créé.
+        """
+        if not hasattr(self, "_grid_color_mode"):
+            self._grid_color_mode = "auto"
+            self._grid_color      = _C_GRID
+
+        frame = tk.Frame(parent_frame, bg="#0d1018")
+
+        # Bouton principal : affiche le mode courant et cycle au clic gauche
+        self._grid_color_btn = tk.Button(
+            frame,
+            text=f"Grille: {self._grid_color_mode.capitalize()}",
+            bg="#1a1a2e", fg="#aaaacc",
+            font=("Consolas", 8), relief="flat", padx=6, pady=2,
+            command=self._cycle_grid_color_mode,
+        )
+        self._grid_color_btn.pack(side=tk.LEFT)
+
+        # Menu déroulant (clic droit / clic milieu)
+        menu = tk.Menu(frame, tearoff=0, bg="#0d1018", fg="#ccccee",
+                       font=("Consolas", 8), relief="flat")
+        for mode_key in self.GRID_COLOR_MODES:
+            menu.add_command(
+                label=f"  {mode_key.capitalize()}",
+                command=lambda m=mode_key: self._set_grid_color_mode(m),
+            )
+
+        def _show_menu(event):
+            menu.tk_popup(event.x_root, event.y_root)
+
+        self._grid_color_btn.bind("<Button-3>", _show_menu)
+        self._grid_color_btn.bind("<Button-2>", _show_menu)
+
+        self._grid_color_btn.bind("<Enter>", lambda e: self._status_var.set(
+            "Grille couleur : clic gauche = cycle  |  clic droit = menu complet"))
+        self._grid_color_btn.bind("<Leave>", lambda e: self._status_var.set(""))
+
+        frame.pack(side=tk.LEFT, padx=(0, 4))
+        return frame
+
+    def _cycle_grid_color_mode(self):
+        """Passe au mode couleur suivant dans la liste."""
+        modes   = list(self.GRID_COLOR_MODES.keys())
+        current = getattr(self, "_grid_color_mode", "auto")
+        next_m  = modes[(modes.index(current) + 1) % len(modes)] if current in modes else "auto"
+        self._set_grid_color_mode(next_m)
 
     def _fog_dirty_update(self, cells: list):
         """Dirty-patch fog + composite throttlé à ~60 fps."""

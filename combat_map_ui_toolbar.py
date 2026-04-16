@@ -160,6 +160,9 @@ class UIToolbarMixin:
             command=self._toggle_grid)
         self._grid_btn.pack(side=tk.LEFT, padx=2)
 
+        # ── Sélecteur couleur de grille (cycle + menu déroulant) ─────────────
+        self._build_grid_color_selector(row2)
+
         # Taille case + zoom (droite ligne 2)
         self._cellpx_lbl = tk.Label(row2, text=f"{self.cell_px}px",
                                     bg="#13131f", fg="#ccccee",
@@ -633,7 +636,7 @@ class UIToolbarMixin:
         def _d3d_ft(t1, t2) -> float:
             h = _horiz_ft(t1, t2)
             v = abs(int(t1.get("altitude_ft", 0)) - int(t2.get("altitude_ft", 0)))
-            return _math.sqrt(h * h + v * v)
+            return max(float(h), float(v))
 
         def _tok_label(tok) -> str:
             name = tok.get("name", tok["type"])
@@ -656,7 +659,7 @@ class UIToolbarMixin:
             f"Viewport : colonnes {col_min+1}–{col_max+1}, lignes {row_min+1}–{row_max+1}"
             f"  ({vp_cols}×{vp_rows} cases)  |  zoom {int(self.zoom*100)}%",
             f"{visible}/{vp_total} cases visibles dans ce cadre  |  {hidden} sous brouillard",
-            "Distances : 3D réelles — dist_3D = √(horiz² + Δalt²). Mêlée ≤5ft 3D. Reach ≤10ft 3D.",
+            "Distances : 1-1-1 en 3D — dist_3D = max(horiz, Δalt). Mêlée ≤5ft 3D. Reach ≤10ft 3D.",
             "",
         ]
 
@@ -711,7 +714,7 @@ class UIToolbarMixin:
                     if dalt == 0:
                         breakdown = f"{horiz:.0f}ft horiz, même altitude"
                     else:
-                        breakdown = f"{horiz:.0f}ft horiz + {dalt}ft vertical = {d3d:.0f}ft 3D"
+                        breakdown = f"max({horiz:.0f}ft ↔, {dalt}ft ↕) = {d3d:.0f}ft 3D"
                     if d3d <= 5:
                         verdict = "mêlée ✅"
                     elif d3d <= 10:
@@ -731,7 +734,7 @@ class UIToolbarMixin:
                     horiz = _horiz_ft(t1, t2)
                     dalt  = abs(int(t1.get("altitude_ft",0)) - int(t2.get("altitude_ft",0)))
                     d3d   = _d3d_ft(t1, t2)
-                    breakdown = (f"{horiz:.0f}ft horiz + {dalt}ft vertical = {d3d:.0f}ft 3D"
+                    breakdown = (f"max({horiz:.0f}ft ↔, {dalt}ft ↕) = {d3d:.0f}ft 3D"
                                  if dalt else f"{horiz:.0f}ft")
                     lines.append(f"  • {t1.get('name','?')} ↔ {t2.get('name','?')} : {breakdown}")
 
@@ -825,11 +828,12 @@ class UIToolbarMixin:
             except Exception as e:
                 print(f"[CombatMap] render_viewport calque '{layer.get('name','?')}' : {e}")
 
-        # ── Grille ────────────────────────────────────────────────────────────
+        # ── Grille (couleur dynamique selon le mode actif) ───────────────────
         if self._show_grid and cp >= 4:
+            grid_c = getattr(self, "_grid_color", _C_GRID)
             bg_arr = np.array(bg, dtype=np.float32)
-            gc = np.array(_C_GRID[:3], dtype=np.float32)
-            ga = _C_GRID[3] / 255.0
+            gc = np.array(grid_c[:3], dtype=np.float32)
+            ga = grid_c[3] / 255.0
             for c in range(vx0 // cp, vx1 // cp + 2):
                 x = c * cp - vx0
                 if 0 <= x < VW:

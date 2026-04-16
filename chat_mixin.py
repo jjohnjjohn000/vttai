@@ -181,6 +181,91 @@ class ChatMixin:
                     )
                 elif action == "skill_check_confirm":
                     try:
+                        # ── INTERCEPTION : Forcer la cible et le bonus via la carte ──
+                        try:
+                            map_win = getattr(self, "_combat_map_win", None)
+                            if map_win and hasattr(map_win, "_selected_tokens") and map_win._selected_tokens:
+                                # Récupère l'ID du premier token sélectionné
+                                sel_id = next(iter(map_win._selected_tokens))
+                                token = next((t for t in getattr(map_win, "tokens",[]) if id(t) == sel_id), None)
+                                
+                                if token and "name" in token:
+                                    target_name = token["name"]
+                                    tracker = getattr(self, "_combat_tracker_win", None)
+                                    combatant = next((c for c in getattr(tracker, "combatants",[]) if c.name == target_name), None) if tracker else None
+                                    
+                                    if combatant:
+                                        # 1. On remplace le nom ciblé par celui du token
+                                        msg["char_name"] = combatant.name
+                                        
+                                        # 2. Déduction de la statistique/compétence demandée
+                                        s_lbl  = msg.get("skill_label", "").lower()
+                                        st_lbl = msg.get("stat_label", "").lower()
+                                        comb   = s_lbl + " " + st_lbl
+                                        
+                                        stat_map = {
+                                            "force": "str", "str": "str", "strength": "str", "athlétisme": "str", "athletics": "str",
+                                            "dextérité": "dex", "dex": "dex", "acrobaties": "dex", "discrétion": "dex", "escamotage": "dex", "stealth": "dex", "sleight of hand": "dex",
+                                            "constitution": "con", "con": "con",
+                                            "intelligence": "int", "int": "int", "arcanes": "int", "histoire": "int", "investigation": "int", "nature": "int", "religion": "int", "arcana": "int", "history": "int",
+                                            "sagesse": "wis", "wis": "wis", "dressage": "wis", "médecine": "wis", "perception": "wis", "perspicacité": "wis", "survie": "wis", "animal handling": "wis", "medicine": "wis", "insight": "wis", "survival": "wis",
+                                            "charisme": "cha", "cha": "cha", "intimidation": "cha", "persuasion": "cha", "représentation": "cha", "tromperie": "cha", "performance": "cha", "deception": "cha"
+                                        }
+                                        
+                                        stat_key = next((v for k, v in stat_map.items() if k in comb), None)
+                                        is_save  = "sauvegarde" in comb or "save" in comb
+                                        
+                                        if stat_key:
+                                            if combatant.is_pc:
+                                                # Pour les PJs, l'état global ne stocke que la Constitution (pour les jets de concentration)
+                                                if stat_key == "con" and is_save:
+                                                    from state_manager import load_state
+                                                    st = load_state()
+                                                    c_data = st.get("characters", {}).get(combatant.name, {})
+                                                    if "con_mod" in c_data:
+                                                        msg["bonus"] = c_data["con_mod"]
+                                            else:
+                                                # Pour un PNJ, on va extraire dynamiquement les infos du bestiaire
+                                                b_name = combatant.bestiary_name
+                                                if b_name:
+                                                    from npc_bestiary_panel import get_monster
+                                                    import re
+                                                    monster = get_monster(b_name)
+                                                    if monster:
+                                                        # Calcul du modificateur brut de la caractéristique
+                                                        bonus = (monster.get(stat_key, 10) - 10) // 2
+                                                        
+                                                        if is_save:
+                                                            # Vérifie s'il y a maîtrise sur le jet de sauvegarde
+                                                            saves = monster.get("save", {})
+                                                            if stat_key in saves:
+                                                                m = re.search(r'([+-]?\d+)', str(saves[stat_key]))
+                                                                if m: bonus = int(m.group(1))
+                                                        else:
+                                                            # Vérifie s'il y a maîtrise sur la compétence
+                                                            skills = monster.get("skill", {})
+                                                            skill_en_keys = {
+                                                                "athlétisme": "athletics", "acrobaties": "acrobatics", "discrétion": "stealth", "escamotage": "sleight of hand",
+                                                                "arcanes": "arcana", "histoire": "history", "investigation": "investigation", "nature": "nature", "religion": "religion",
+                                                                "dressage": "animal handling", "médecine": "medicine", "perception": "perception", "perspicacité": "insight", "survie": "survival",
+                                                                "intimidation": "intimidation", "persuasion": "persuasion", "représentation": "performance", "tromperie": "deception"
+                                                            }
+                                                            match_k = None
+                                                            for fr_k, en_k in skill_en_keys.items():
+                                                                if fr_k in comb or en_k in comb:
+                                                                    match_k = next((k for k in skills if k.lower().replace(" ", "") == en_k.replace(" ", "")), None)
+                                                                    break
+                                                            
+                                                            if match_k:
+                                                                m = re.search(r'([+-]?\d+)', str(skills[match_k]))
+                                                                if m: bonus = int(m.group(1))
+                                                        
+                                                        # 3. Écrasement du bonus final !
+                                                        msg["bonus"] = bonus
+                        except Exception as override_err:
+                            print(f"[Token Override] Erreur d'interception de la carte : {override_err}")
+                        # ── FIN DE L'INTERCEPTION ──
+
                         self._append_skill_check_confirm(
                             msg["char_name"],
                             msg["skill_label"],
@@ -195,7 +280,6 @@ class ChatMixin:
                         import traceback as _tb_sc
                         print(f"[process_queue] Erreur skill_check_confirm : {_e_sc}")
                         _tb_sc.print_exc()
-                        # Débloquer le thread AutoGen si l'UI a planté
                         try:
                             msg["resume_callback"](False, 0, "")
                         except Exception:
@@ -1005,7 +1089,7 @@ class ChatMixin:
         # Badge type + libellé selon le mode
         _mode_labels = {
             "attack":  f" 🎯 {type_label} — jet d'attaque ",
-            "smite":   f" ✨ Divine Smite — appliquer ? ",
+            "smite":   f" ✨ {type_label} — appliquer ? ",
             "damage":  f" 🎲 {type_label} — dégâts ",
             "healing": f" 💚 {type_label} — soin ",
             "save":    f" 🛡️ {type_label} — jet de sauvegarde ",
@@ -1072,7 +1156,7 @@ class ChatMixin:
                 note = note_entry.get().strip()
                 frame.destroy()
                 _cleanup_header()
-                lbl = "Touché ✅" if mode == "attack" else "Divine Smite appliqué ✅"
+                lbl = "Touché ✅" if mode == "attack" else f"{type_label} appliqué ✅"
                 self.append_message(
                     f"⚔️ MJ — {type_label}",
                     lbl + (f"  — {note}" if note else ""),
@@ -1087,7 +1171,7 @@ class ChatMixin:
                 note = note_entry.get().strip()
                 frame.destroy()
                 _cleanup_header()
-                lbl = "Raté ❌" if mode == "attack" else "Divine Smite ignoré ❌"
+                lbl = "Raté ❌" if mode == "attack" else f"{type_label} ignoré ❌"
                 self.append_message(
                     f"⚔️ MJ — {type_label}",
                     lbl + (f"  — {note}" if note else ""),
@@ -1130,6 +1214,112 @@ class ChatMixin:
                       activebackground="#1a4a1a", command=_apply_heal).pack(side=tk.LEFT)
 
         elif mode == "save":
+            # ── AUTO-ROLL (JDS) ──────────────────────────────────────────────
+            # Priorité de résolution de la cible :
+            #   1) paramètre `target` passé explicitement
+            #   2) extraction depuis results_text ("→ NomCible")
+            #   3) fallback : token sélectionné sur la carte
+            try:
+                import re as _re_save
+                tracker = getattr(self, "_combat_tracker_win", None)
+                _combatants = getattr(tracker, "combatants", []) if tracker else []
+
+                _target_name = target if target else None
+
+                if not _target_name:
+                    _m_tgt = _re_save.search(
+                        r'→\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s\-\']+?)(?:\s*[\n:(]|$)',
+                        results_text)
+                    if _m_tgt:
+                        _target_name = _m_tgt.group(1).strip()
+
+                if not _target_name:
+                    _map_win = getattr(self, "_combat_map_win", None)
+                    if _map_win and hasattr(_map_win, "_selected_tokens") and _map_win._selected_tokens:
+                        _sel_id = next(iter(_map_win._selected_tokens))
+                        _tok = next((t for t in getattr(_map_win, "tokens", []) if id(t) == _sel_id), None)
+                        if _tok:
+                            _target_name = _tok.get("name")
+
+                combatant = None
+                if _target_name:
+                    combatant = next(
+                        (c for c in _combatants
+                         if c.name.lower() == _target_name.lower()
+                         or _target_name.lower() in c.name.lower()),
+                        None)
+
+                if combatant is not None:
+                    import re
+                    comb = results_text.lower()
+                    
+                    # Déduction de la stat
+                    stat_map = {
+                        "force": "str", "str": "str", "strength": "str",
+                        "dextérité": "dex", "dex": "dex", "dexterity": "dex",
+                        "constitution": "con", "con": "con",
+                        "intelligence": "int", "int": "int",
+                        "sagesse": "wis", "wis": "wis", "wisdom": "wis",
+                        "charisme": "cha", "cha": "cha", "charisma": "cha"
+                    }
+                    stat_key = next((v for k, v in stat_map.items() if re.search(r'\b' + k + r'\b', comb)), None)
+                    
+                    # Déduction du DC (DD)
+                    dc_match = re.search(r'(?:dc|dd)\s*(\d+)', comb)
+                    dc_val = int(dc_match.group(1)) if dc_match else None
+
+                    if stat_key:
+                        bonus = 0
+                        if combatant.is_pc:
+                            if stat_key == "con":
+                                try:
+                                    from state_manager import load_state
+                                    st = load_state()
+                                    c_data = st.get("characters", {}).get(combatant.name, {})
+                                    bonus = c_data.get("con_mod", 0)
+                                except Exception: pass
+                        else:
+                            b_name = combatant.bestiary_name
+                            if b_name:
+                                try:
+                                    from npc_bestiary_panel import get_monster
+                                    monster = get_monster(b_name)
+                                    if monster:
+                                        bonus = (monster.get(stat_key, 10) - 10) // 2
+                                        saves = monster.get("save", {})
+                                        if stat_key in saves:
+                                            m = re.search(r'([+-]?\d+)', str(saves[stat_key]))
+                                            if m: bonus = int(m.group(1))
+                                except Exception: pass
+
+                        # Le système fait le jet !
+                        import random
+                        d20 = random.randint(1, 20)
+                        total = d20 + bonus
+                        
+                        # Création d'une zone d'affichage du jet
+                        roll_frame = tk.Frame(frame, bg="#0a1222", padx=6, pady=4, relief="flat", highlightthickness=1, highlightbackground="#3498db")
+                        # On l'insère visuellement juste AU-DESSUS des boutons du MJ
+                        roll_frame.pack(fill=tk.X, pady=(0, 6), before=row_btns)
+                        
+                        res_color = "#88bbee"
+                        res_icon = "🎲"
+                        if dc_val is not None:
+                            if total >= dc_val:
+                                res_color = "#66ee66"
+                                res_icon = "✅ (Réussi)"
+                            else:
+                                res_color = "#ee6666"
+                                res_icon = "❌ (Raté)"
+                                
+                        sign = "+" if bonus >= 0 else ""
+                        
+                        tk.Label(roll_frame, text=f"Jet auto pour {combatant.name} :", bg="#0a1222", fg="#88bbee", font=("Consolas", 8, "bold")).pack(side=tk.LEFT, padx=(0, 8))
+                        tk.Label(roll_frame, text=f"d20({d20}) {sign}{bonus} = ", bg="#0a1222", fg="#dddddd", font=("Consolas", 9)).pack(side=tk.LEFT)
+                        tk.Label(roll_frame, text=f"{total} {res_icon}", bg="#0a1222", fg=res_color, font=("Consolas", 10, "bold")).pack(side=tk.LEFT)
+            except Exception as e:
+                print(f"[Auto-Roll Save] Erreur : {e}")
+
             # ── Mode sauvegarde : Sauvegarde réussie / Sauvegarde ratée ──────
             def _save_success(event=None):
                 if _callback_done[0]:
@@ -1394,13 +1584,18 @@ class ChatMixin:
                  anchor="w").pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # ── Cas spécifique : Prévisualisation de Mouvement ───────────────────
-        is_move = "mouvement" in type_low or "move" in type_low
-        if is_move and hasattr(self, "_combat_map_win") and self._combat_map_win:
+        _MOVE_KEYWORDS = ("mouvement", "déplace", "deplace", "dash", "foncer", "sprint", "avance", "recule", "fonce", "move")
+        _type_is_move = any(k in type_low for k in _MOVE_KEYWORDS)
+        _type_is_generic = type_low in ("", "action", "action bonus", "réaction", "reaction")
+        _intent_has_move = any(k in intention.lower() for k in _MOVE_KEYWORDS)
+        is_move = _type_is_move or (_type_is_generic and _intent_has_move)
+        
+        if is_move and hasattr(self, "_combat_map_win") and getattr(self, "_combat_map_win", None):
             def _calc_coords():
                 import re
                 _cur_col, _cur_row = 0, 0
                 try:
-                    for _tok in getattr(self._combat_map_win, "tokens", []):
+                    for _tok in getattr(self._combat_map_win, "tokens",[]):
                         if _tok.get("name") == char_name:
                             _cur_col = int(round(_tok.get("col", 0)))
                             _cur_row = int(round(_tok.get("row", 0)))
@@ -1413,50 +1608,55 @@ class ChatMixin:
                 c_low = cible.lower()
                 _combined = r_low + " " + i_low + " " + c_low
                 
-                _m_cases_regle = re.search(r'(\d+)\s*cases?', r_low, re.IGNORECASE)
-                _m_met_regle   = re.search(r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\.|\b)', r_low)
-                _has_rel = bool(_m_cases_regle or _m_met_regle)
-                
                 _m_exact_cible = re.match(r'^col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)$', c_low.strip(), re.IGNORECASE)
                 _m_abs_r = re.search(r'col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)', r_low, re.IGNORECASE)
                 _m_abs_c = re.search(r'col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)', _combined, re.IGNORECASE)
 
-                if _m_exact_cible:
-                    return int(_m_exact_cible.group(1)) - 1, int(_m_exact_cible.group(2)) - 1
-                elif _m_abs_r:
-                    return int(_m_abs_r.group(1)) - 1, int(_m_abs_r.group(2)) - 1
-                elif not _has_rel and _m_abs_c:
+                if _m_exact_cible: return int(_m_exact_cible.group(1)) - 1, int(_m_exact_cible.group(2)) - 1
+                if _m_abs_r: return int(_m_abs_r.group(1)) - 1, int(_m_abs_r.group(2)) - 1
+                
+                _dist = 6 # Défaut 30ft (6 cases)
+                _m_ft = re.search(r'(\d+)\s*ft', _combined)
+                _m_cases = re.search(r'(\d+)\s*cases?', _combined)
+                _m_met = re.search(r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\b)', _combined)
+                
+                if _m_ft: _dist = max(1, round(int(_m_ft.group(1)) / 5.0))
+                elif _m_cases: _dist = int(_m_cases.group(1))
+                elif _m_met: _dist = max(1, round(float(_m_met.group(1).replace(",", ".")) / 1.5))
+
+                if not _m_ft and not _m_cases and not _m_met and _m_abs_c:
                     return int(_m_abs_c.group(1)) - 1, int(_m_abs_c.group(2)) - 1
 
+                # 1. Recherche par cible (ex: VexSira) en priorité absolue
+                try:
+                    for _other in getattr(self._combat_map_win, "tokens",[]):
+                        _oname = _other.get("name", "").lower()
+                        if _oname and _oname in _combined and _other.get("name") != char_name:
+                            _oc = int(round(_other.get("col", 0)))
+                            _or = int(round(_other.get("row", 0)))
+                            _raw_dc = _oc - _cur_col
+                            _raw_dr = _or - _cur_row
+                            _mag    = max(abs(_raw_dc), abs(_raw_dr)) or 1
+                            _dcol   = round(_raw_dc / _mag)
+                            _drow   = round(_raw_dr / _mag)
+                            return _cur_col + _dcol * _dist, _cur_row + _drow * _dist
+                except Exception:
+                    pass
+
+                # 2. Directions Cardinales
+                _DIR_EXACT =[("nord-est", (1, -1)), ("nord-ouest", (-1, -1)), ("sud-est", (1, 1)), ("sud-ouest", (-1, 1))]
+                _DIR_WORD =[("nord", (0, -1)), ("sud", (0, 1)), ("ouest", (-1, 0)), ("est", (1, 0)),
+                             ("north", (0, -1)), ("south", (0, 1)), ("west", (-1, 0)), ("east", (1, 0))]
                 
-                # Relative
-                if _m_cases_regle: _dist = int(_m_cases_regle.group(1))
-                elif _m_met_regle: _dist = max(1, round(float(_m_met_regle.group(1).replace(",", ".")) / 1.5))
-                else:
-                    _m_cases = re.search(r'(\d+)\s*cases?', _combined)
-                    _m_met   = re.search(r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\.|\b)', _combined)
-                    if _m_cases: _dist = int(_m_cases.group(1))
-                    elif _m_met: _dist = max(1, round(float(_m_met.group(1).replace(",", ".")) / 1.5))
-                    else: _dist = 6
-                
-                _DIR_EXACT = [("nord-est", (1, -1)), ("nord-ouest", (-1, -1)), ("sud-est", (1, 1)), ("sud-ouest", (-1, 1))]
-                _DIR_WORD = [("nord", (0, -1)), ("sud", (0, 1)), ("est", (1, 0)), ("ouest", (-1, 0)),
-                             ("north", (0, -1)), ("south", (0, 1)), ("east", (1, 0)), ("west", (-1, 0))]
-                
-                _dcol, _drow = 0, 0
                 for _kd, (_dc, _dr) in _DIR_EXACT:
-                    if _kd in _combined:
-                        _dcol, _drow = _dc, _dr
-                        break
-                if _dcol == 0 and _drow == 0:
-                    for _kd, (_dc, _dr) in _DIR_WORD:
-                        if re.search(r'\b' + _kd + r'\b', _combined):
-                            _dcol, _drow = _dc, _dr
-                            break
-                            
-                if _dcol == 0 and _drow == 0: return None
-                
-                return _cur_col + _dcol * _dist, _cur_row + _drow * _dist
+                    if _kd in _combined: return _cur_col + _dc * _dist, _cur_row + _dr * _dist
+                for _kd, (_dc, _dr) in _DIR_WORD:
+                    if _kd == "est" and not re.search(r"(vers l'|à l'|direction )\b" + _kd + r"\b", _combined):
+                        continue # Ignore "est" si ce n'est pas précédé d'un indicateur de direction
+                    if re.search(r'\b' + _kd + r'\b', _combined):
+                        return _cur_col + _dc * _dist, _cur_row + _dr * _dist
+                        
+                return None
 
             coords = _calc_coords()
             if coords:

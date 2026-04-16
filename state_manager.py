@@ -679,7 +679,7 @@ def update_hp(character_name: str, amount: int) -> str:
     action = "soigné" if amount > 0 else "blessé"
     return (
         f"[RÉSULTAT SYSTÈME] {character_name} a été {action} de {abs(amount)}{detail}. "
-        f"PV actuels : {new_hp}/{max_hp}{temp_suffix}."
+        f"PV actuels : {int((new_hp / max(1, max_hp)) * 100)}%{temp_suffix}."
     )
 
 
@@ -1460,123 +1460,106 @@ def get_full_campaign_history_prompt() -> str:
 # ============================================================
 
 def get_spells_prompt(char_name: str) -> str:
-    """Génère le bloc FICHE DE SORTS à injecter dans le system_message de l'agent.
-
-    Architecture :
-      - campaign_state.json contient UNIQUEMENT la liste de noms (spells_prepared).
-      - Les données complètes (niveau, école, description) viennent des fichiers
-        spells-*.json chargés dynamiquement par spell_data.py.
-      - Sources découvertes via sources.json — rien n'est hardcodé.
-
-    Si un sort n'est pas trouvé dans le cache spell_data (sort homebrew ou
-    nom non-standard), il est affiché avec une description vide.
     """
-    # ── Imports locaux (évite les imports circulaires) ────────────────────────
+    Retourne la description des sorts préparés par le personnage.
+    Ne gère PLUS l'économie d'action (déplacée dans get_combat_prompt).
+    """
     try:
         from spell_data import load_spells, get_spell
-        load_spells()   # no-op si déjà chargé
+        load_spells()
     except Exception:
-        get_spell = lambda n: None   # fallback silencieux
+        get_spell = lambda n: None
 
     state = load_state()
-    char  = state.get("characters", {}).get(char_name, {})
-
-    # ── Nouvelle structure : liste de noms seulement ─────────────────────────
-    spell_names = list(char.get("spells_prepared", []))
+    char = state.get("characters", {}).get(char_name, {})
+    spell_names = list(char.get("spells_prepared",[]))
     
-    # Auto-inject subclass (domain/oath) spells
     c_name = char.get("class", "")
     sub_c  = char.get("subclass", "")
     c_lvl  = char.get("level", 1)
     if c_name and sub_c:
         try:
             from class_data import get_subclass_spells
-            extra_spells = get_subclass_spells(c_name, sub_c, c_lvl)
-            for x in extra_spells:
+            for x in get_subclass_spells(c_name, sub_c, c_lvl):
                 if x not in spell_names:
                     spell_names.append(x)
         except Exception:
             pass
 
-    slots       = char.get("spell_slots", {})
-
     if not spell_names:
         return ""
 
-    # ── Construire la fiche par niveau ────────────────────────────────────────
-    by_level: dict[int, list[tuple[str, str]]] = {}  # level → [(name, desc)]
-    for name in spell_names:
-        sp_data = get_spell(name)
-        if sp_data:
-            lvl  = int(sp_data.get("level", 0))
-            desc = sp_data.get("description", "")
-            # Tronquer la description à 90 chars
-            if len(desc) > 90:
-                desc = desc[:87] + "…"
-            conc = " ◉" if sp_data.get("concentration") else ""
-            rit  = " ®" if sp_data.get("ritual") else ""
-            
-            time_raw = sp_data.get("cast_time_raw",[])
-            time_str = ""
-            if time_raw and isinstance(time_raw, list):
-                _u = time_raw[0].get("unit", "action").lower()
-                # On formate exactement comme le LLM doit l'écrire dans [ACTION] Type:
-                if "bonus" in _u:
-                    _u_fr = "Action Bonus"
-                elif "reaction" in _u:
-                    _u_fr = "Réaction"
-                else:
-                    _u_fr = "Action"
-                time_str = f" [{_u_fr}]"
-                
-            entry = (f"{name}{time_str}", f"{desc}{conc}{rit}")
-        else:
-            lvl   = 0   # inconnu → traité comme cantrip (disponible à volonté)
-            entry = (name, "")
-        by_level.setdefault(lvl,[]).append(entry)
+    # ── Vérification de l'état de combat ──
+    in_combat = False
+    is_active_turn = False
+    has_action = True
+    has_bonus = True
+    reaction_used = False
+    avail_levels =[]
 
-    if not by_level:
-        return ""
+    try:
+        from combat_tracker_state import COMBAT_STATE as _CS
+        in_combat = _CS.get("active", False)
+        is_active_turn = (_CS.get("active_combatant") == char_name)
+        turn_res = _CS.get("turn_res", {}).get(char_name, {})
+        has_action = turn_res.get("action", True)
+        has_bonus = turn_res.get("bonus", True)
+        reaction_used = char_name in _CS.get("reactions_used", set())
+        slots = char.get("spell_slots", {})
+        avail_levels =[int(lvl) for lvl, count in slots.items() if int(count) > 0]
+    except Exception:
+        pass
 
     lines =[
-        f"\n\n╔══════════════════════════════════════════════════════",
-        f"║  FICHE DE SORTS — {char_name.upper()} — SORTS DISPONIBLES AUJOURD'HUI",
-        f"╠══════════════════════════════════════════════════════",
-        f"║  RÈGLE ABSOLUE : Tu ne peux lancer QUE les sorts listés ici.",
-        f"║  Tout sort absent de cette liste N'EXISTE PAS dans ton grimoire.",
-        f"║  N'invente JAMAIS un sort. Sources : PHB, XGE, TCE et extensions.",
-        f"╠══════════════════════════════════════════════════════",
+        f"\n\n--- GRIMOIRE DE SORTS ({char_name.upper()}) ---",
+        "Rappel des effets de tes sorts connus :"
     ]
+    
+    count_visible = 0
 
-    # Emplacements disponibles
-    if slots:
-        parts =[]
-        for k in sorted(slots.keys(), key=lambda x: int(x)):
-            v = slots[k]
-            parts.append(f"Niv.{k}×{v}" if v > 0 else f"~~Niv.{k}(0)~~")
-        lines.append(f"║  EMPLACEMENTS : {' | '.join(parts)}")
-        lines.append(f"╠══════════════════════════════════════════════════════")
-
-    for lvl in sorted(by_level.keys()):
-        entries = by_level[lvl]
-        nb_slots = slots.get(str(lvl), "∞") if lvl > 0 else "∞"
-        if lvl == 0:
-            header = "║  TOURS DE MAGIE (à volonté, pas d'emplacement)"
+    for name in spell_names:
+        sp = get_spell(name)
+        if sp:
+            if in_combat:
+                s_lvl = int(sp.get("level", 0))
+                # Vérifie si un emplacement est dispo (ou cantrip)
+                is_castable = (s_lvl == 0) or any(l >= s_lvl for l in avail_levels)
+                if not is_castable:
+                    continue
+                
+                # Vérifie l'économie d'action
+                time_raw = sp.get("cast_time_raw",[])
+                unit = str(time_raw[0].get("unit", "")).lower() if time_raw else "action"
+                
+                if is_active_turn:
+                    if "action" in unit and "bonus" not in unit and not has_action:
+                        continue
+                    if "bonus" in unit and not has_bonus:
+                        continue
+                else:
+                    # S'il est hors de son tour : seuls les sorts de réaction sont permis
+                    if "reaction" not in unit:
+                        continue
+                    if reaction_used:
+                        continue
+            desc = sp.get("description", "")
+                
+            # Ajout d'un petit indicateur visuel
+            _u_tag = ""
+            if sp.get("cast_time_raw"):
+                _raw = sp["cast_time_raw"][0].get("unit", "").lower()
+                if "bonus" in _raw: _u_tag = " [Action Bonus]"
+                elif "reaction" in _raw: _u_tag = " [Réaction]"
+                elif "minute" in _raw or "hour" in _raw: _u_tag = " [Rituel]"
+                else: _u_tag = " [Action]"
+                
+            lines.append(f"• {name}{_u_tag} : {desc}")
+            count_visible += 1
         else:
-            # --- MODIFICATION ICI ---
-            if str(nb_slots) == "0":
-                header = f"║  NIVEAU {lvl}[❌ ÉPUISÉ — UPCAST OBLIGATOIRE : précise un niveau sup. dispo dans 'Règle 5e']"
-            else:
-                header = f"║  NIVEAU {lvl}[{nb_slots} emplacement(s) disponible(s)]"
-            # ------------------------
-        lines.append(header)
-        for spell_name, desc in entries:
-            lines.append(f"║    • {spell_name}" + (f" — {desc}" if desc else ""))
-        lines.append("║")
-
-    lines.append("╠══════════════════════════════════════════════════════")
-    lines.append("║  RAPPEL : Cantrips (niv.0) = toujours disponibles.")
-    lines.append("║  Long Rest restaure TOUS les emplacements.")
-    lines.append("║  Tout sort absent de cette liste est INTERDIT.")
-    lines.append("╚══════════════════════════════════════════════════════")
-    return "\n".join(lines)
+            lines.append(f"• {name}")
+            count_visible += 1
+            
+    if count_visible == 0:
+        lines.append("• Aucun sort disponible (plus d'emplacements ou actions épuisées).")
+    
+    return "\n".join(lines) + "\n"

@@ -70,7 +70,12 @@ def _resolve(model_name: str) -> tuple:
     if m.startswith("groq/"):
         return _GROQ_BASE, os.getenv("GROQ_API_KEY", ""), m[len("groq/"):], {}
     if m.startswith("openrouter/"):
-        return _ROUTER_BASE, os.getenv("OPENROUTER_API_KEY", ""), m[len("openrouter/"):], {
+        k = os.getenv("OPENROUTER_API_KEY", "")
+        if not k:
+            for i in range(1, 10):
+                k = os.getenv(f"OPENROUTER_API_KEY_{i}", "")
+                if k: break
+        return _ROUTER_BASE, k, m[len("openrouter/"):], {
             "HTTP-Referer": "https://dnd-moteur-aube-brisee",
             "X-Title": "Moteur de l Aube Brisee",
         }
@@ -187,6 +192,10 @@ def get_all_llm_config_models() -> list:
     gemini_key   = os.getenv("GEMINI_API_KEY", "")
     groq_key     = os.getenv("GROQ_API_KEY", "")
     router_key   = os.getenv("OPENROUTER_API_KEY", "")
+    if not router_key:
+        for i in range(1, 10):
+            router_key = os.getenv(f"OPENROUTER_API_KEY_{i}", "")
+            if router_key: break
     deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
 
     models = []
@@ -201,6 +210,8 @@ def get_all_llm_config_models() -> list:
     if gemini_key:
         _add("gemini-2.5-pro")
         _add("gemini-3.1-pro-preview")
+        _add("gemma-4-31b-it")
+        _add("gemma-4-26b-a4b-it")
         _add("gemini-3.1-flash-lite-preview")
         _add("gemini-2.5-flash")
 

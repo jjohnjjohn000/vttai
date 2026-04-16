@@ -263,9 +263,24 @@ def _open_damage_popup(self,
         _type_om = _make_optionmenu(type_frame, _type_var, _DMG_TYPES, fg="#ff9944")
         _type_om.pack(side=tk.LEFT, padx=(4, 0), fill=tk.X, expand=True)
 
+    # ── Champ Commentaire MJ (pour les LLMs) ─────────────────────────────────
+    comment_frame = tk.Frame(popup, bg="#1e1e2e")
+    comment_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
+
+    tk.Label(comment_frame, text="Note MJ :",
+             bg="#1e1e2e", fg="#aaaaaa",
+             font=("Arial", 10), width=14, anchor="w").pack(side=tk.LEFT)
+
+    _comment_var = tk.StringVar(value="")
+    _comment_entry = tk.Entry(comment_frame, textvariable=_comment_var,
+                              bg="#252535", fg="#aaaaaa", font=("Consolas", 10),
+                              insertbackground="white", relief="flat", highlightthickness=1)
+    _comment_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=3)
+    _comment_entry.bind("<Return>", lambda e: _confirm())
+
     # ── Spinbox de modification ──────────────────────────────────────────────
     edit_frame = tk.Frame(popup, bg="#1e1e2e")
-    edit_frame.pack(fill=tk.X, padx=12, pady=(6, 6))
+    edit_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
 
     field_lbl = "Soins finaux :" if _is_heal else "Dégâts finaux :"
     tk.Label(edit_frame, text=field_lbl,
@@ -297,13 +312,18 @@ def _open_damage_popup(self,
         except ValueError:
             final = total
         _sel_target = _cible_var.get()
+        _mj_note = _comment_var.get().strip()
+        
         popup.destroy()
-        # Appel avec (final, selected_target) — fallback (final) pour les
-        # callbacks engine_receive.py qui n'acceptent qu'un seul argument.
+        
+        # Appel avec (final, selected_target, mj_note) — fallback 2 ou 1 arg
         try:
-            resume_callback(final, _sel_target)
+            resume_callback(final, _sel_target, _mj_note)
         except TypeError:
-            resume_callback(final)
+            try:
+                resume_callback(final, _sel_target)
+            except TypeError:
+                resume_callback(final)
 
         # L'application de dégâts (apply_damage_to_npc) est désormais entièrement gérée par
         # engine_receive.py après _dl_ev.wait(). On ne le fait plus ici en double !

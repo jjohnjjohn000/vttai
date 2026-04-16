@@ -406,6 +406,9 @@ class CombatTrackerRowMixin:
             if cb.is_pc and cb.hp == 0 and was_up:
                 self._refresh_list()
                 self._open_death_saves(cb)
+            elif not cb.is_pc and cb.hp == 0 and was_up:
+                self._refresh_list()
+                self.win.after(80, lambda cb=cb: self._confirm_npc_death(cb))
 
         tk.Button(hp_btn_f, text="+ Soin",
                   bg=_darken(C["green"], 0.35), fg=C["green_bright"],
@@ -446,6 +449,17 @@ class CombatTrackerRowMixin:
                     except Exception as _e:
                         print(f"[CombatTracker] Sync temp_hp : {_e}")
                 threading.Thread(target=_sync_tmp, daemon=True, name="ct-tmp-sync").start()
+            # ── Sync carte de combat (temp_hp) ──
+            if getattr(self, "app", None) is not None:
+                map_win = getattr(self.app, "_combat_map_win", None)
+                if map_win is not None and hasattr(map_win, "tokens"):
+                    for tok in map_win.tokens:
+                        if tok.get("name") == cb.name:
+                            tok["temp_hp"] = cb.temp_hp
+                            if hasattr(map_win, "_redraw_one_token"):
+                                map_win._redraw_one_token(tok)
+                    if hasattr(map_win, "_save_state"):
+                        map_win._save_state()
             self._schedule_save()
 
         tk.Button(hp_btn_f, text="+Tmp",
@@ -535,6 +549,35 @@ class CombatTrackerRowMixin:
         def _toggle_conc(cb=c, var=conc_var, btn=conc_cb):
             cb.concentration = var.get()
             btn.config(fg=C["conc"] if cb.concentration else C["fg_dim"])
+            # Si désactivé manuellement, remettre à zéro les métadonnées
+            if not cb.concentration:
+                cb.conc_spell        = ""
+                cb.conc_rounds_left  = 0
+                cb.conc_total_rounds = 0
+                cb.conditions.pop("Concentré", None)
+            else:
+                cb.conditions["Concentré"] = True
+            # Sync badge condition Concentré dans la grille
+            cond_btns = self._row_widgets.get(cb.uid, {}).get("cond_btns", {})
+            cond_btn = cond_btns.get("Concentré")
+            if cond_btn:
+                from combat_tracker_constants import CONDITIONS as _CONDS
+                _cd = _CONDS.get("Concentré", {})
+                if cb.concentration:
+                    cond_btn.config(bg=_cd.get("color", "#40c4ff"), fg="#ffffff")
+                else:
+                    cond_btn.config(bg=_darken(_cd.get("color", "#40c4ff"), 0.25), fg="#666677")
+            # Sync carte de combat
+            if getattr(self, "app", None) and getattr(self.app, "_combat_map_win", None):
+                for t in self.app._combat_map_win.tokens:
+                    if t.get("name") == cb.name:
+                        conds = t.setdefault("conditions", [])
+                        if cb.concentration and "Concentré" not in conds:
+                            conds.append("Concentré")
+                        elif not cb.concentration and "Concentré" in conds:
+                            conds.remove("Concentré")
+                        self.app._combat_map_win._redraw_one_token(t)
+            self._schedule_save()
 
         conc_var.trace_add("write", lambda *a: _toggle_conc())
 
@@ -729,6 +772,125 @@ class CombatTrackerRowMixin:
         # Le bouton "↺ Réinit. actions" est ajouté par _build_row (actif)
         # ou par _update_active_rows (changement de tour) — pas ici.
         return inner, {"action": v_act, "bonus": v_bon, "react": v_rea, "move": mv_var}
+
+    def _confirm_npc_death(self, cb):
+        """Boîte de confirmation quand un PNJ tombe à 0 PV.
+        - Confirmer la mort  → kill pool + suppression du token sur la carte.
+        - Laisser KO (0 PV)  → rien (le PNJ reste à 0 PV avec le badge [~]).
+        """
+        # Fenêtre déjà ouverte pour ce combatant ? On n'en affiche pas deux.
+        attr = f"_death_dlg_{cb.uid}"
+        if getattr(self, attr, None):
+            try:
+                if getattr(self, attr).winfo_exists():
+                    return
+            except Exception:
+                pass
+
+        dlg = tk.Toplevel(self.win)
+        setattr(self, attr, dlg)
+        dlg.title("Confirmation de mort")
+        dlg.configure(bg=C["bg"])
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.lift()
+
+        # ── Pause LLM pendant que le MJ décide ───────────────────────────────
+        # On mémorise si la session était déjà en pause AVANT l'ouverture du
+        # dialogue, pour ne pas la reprendre si le MJ avait mis pause manuellement.
+        _app = getattr(self, "app", None)
+        _was_already_paused = getattr(_app, "_session_paused", False)
+        if _app is not None and not _was_already_paused:
+            try:
+                _app._do_pause()
+            except Exception as _pe:
+                print(f"[DeathConfirm] Erreur _do_pause : {_pe}")
+
+        def _resume_if_we_paused():
+            """Reprend la session uniquement si c'est nous qui l'avons mise en pause."""
+            if _app is not None and not _was_already_paused:
+                try:
+                    _app._do_resume()
+                except Exception as _re:
+                    print(f"[DeathConfirm] Erreur _do_resume : {_re}")
+
+        # ── Titre ────────────────────────────────────────────────────────────
+        tk.Label(dlg,
+                 text=f"💀  {cb.name}  tombe à 0 PV !",
+                 bg=C["bg"], fg=C["skull"],
+                 font=("Consolas", 13, "bold")).pack(pady=(18, 4), padx=24)
+
+        tk.Label(dlg,
+                 text=f"PV max : {cb.max_hp}  |  CA : {cb.ac}",
+                 bg=C["bg"], fg=C["fg_dim"],
+                 font=("Consolas", 9)).pack(pady=(0, 12))
+
+        tk.Frame(dlg, bg=C["border"], height=1).pack(fill=tk.X, padx=12, pady=(0, 14))
+
+        tk.Label(dlg,
+                 text="Que souhaitez-vous faire ?",
+                 bg=C["bg"], fg=C["fg"],
+                 font=("Consolas", 10)).pack(pady=(0, 10))
+
+        btn_frame = tk.Frame(dlg, bg=C["bg"])
+        btn_frame.pack(pady=(0, 18), padx=24)
+
+        def _do_kill():
+            dlg.destroy()
+            setattr(self, attr, None)
+            _resume_if_we_paused()
+            # 1. Kill pool dans le tracker
+            if hasattr(self, "_add_to_kill_pool"):
+                self._add_to_kill_pool(cb)
+            # 2. Suppression du token sur la carte de combat
+            map_win = getattr(getattr(self, "app", None), "_combat_map_win", None)
+            if map_win is not None and hasattr(map_win, "tokens"):
+                for tok in list(map_win.tokens):
+                    if tok.get("name") == cb.name and not tok.get("is_preview"):
+                        if hasattr(map_win, "_delete_single_token"):
+                            map_win._delete_single_token(tok)
+                        break
+            # 3. Log
+            self._log(f"💀 {cb.name} est mort(e) — retiré du combat.")
+            if self.chat_queue:
+                self.chat_queue.put({
+                    "sender": "⚔️ Combat",
+                    "text":   f"💀 **{cb.name}** est mort(e) et retiré(e) du combat.",
+                    "color":  "#c0392b",
+                })
+
+        def _do_ko():
+            dlg.destroy()
+            setattr(self, attr, None)
+            _resume_if_we_paused()
+            self._log(f"⚠️ {cb.name} est KO (0 PV) — laissé dans le combat.")
+
+        # Bouton Mort
+        tk.Button(btn_frame,
+                  text="💀  Confirmer la mort  (Kill Pool)",
+                  bg=_darken("#800080", 0.45), fg="#cc66cc",
+                  font=("Consolas", 10, "bold"), relief="flat",
+                  padx=10, pady=6, cursor="hand2",
+                  command=_do_kill).pack(fill=tk.X, pady=(0, 8))
+
+        # Bouton KO seulement
+        tk.Button(btn_frame,
+                  text="⚠️  Laisser KO  (garder à 0 PV)",
+                  bg=_darken(C["gold"], 0.3), fg=C["gold"],
+                  font=("Consolas", 10, "bold"), relief="flat",
+                  padx=10, pady=6, cursor="hand2",
+                  command=_do_ko).pack(fill=tk.X)
+
+        # Centrer la fenêtre sur le tracker
+        dlg.update_idletasks()
+        try:
+            wx = self.win.winfo_rootx() + (self.win.winfo_width()  - dlg.winfo_width())  // 2
+            wy = self.win.winfo_rooty() + (self.win.winfo_height() - dlg.winfo_height()) // 2
+            dlg.geometry(f"+{wx}+{wy}")
+        except Exception:
+            pass
+
+        dlg.protocol("WM_DELETE_WINDOW", _do_ko)  # fermeture = KO
 
     def _mini_death_saves(self, parent, c):
         """Affiche les jets de mort compacts sous la barre de vie."""

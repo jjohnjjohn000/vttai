@@ -575,6 +575,12 @@ NO_ROLL_FEATURES: dict = {
         "rogue", "Evasion",
         "Passif — s'applique automatiquement sur les jets de Dex vs zone.",
     ),
+    "steady aim": (
+        "rogue", "Steady Aim",
+        "Action Bonus (Tasha) : {name} se concentre pour ajuster son prochain tir. "
+        "Avantage sur le prochain jet d'attaque, mais {name} ne peut plus se déplacer "
+        "ce tour. Aucun jet de dés — déclare l'attaque dans un [ACTION] suivant.",
+    ),
     # ── Druide ────────────────────────────────────────────────────────────────
     "wild shape": (
         "druid", "Wild Shape",

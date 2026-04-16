@@ -307,6 +307,14 @@ def _normalize_spell(raw: dict) -> dict:
         if higher_txt:
             desc += "\n▸ Aux niveaux supérieurs : " + higher_txt
 
+    # Détection "half damage on save" depuis le texte brut des entries
+    import json as _json_half
+    _entries_text = _json_half.dumps(entries_raw).lower()
+    _half_on_save = (
+        bool(raw.get("savingThrow"))
+        and ("half as much" in _entries_text or "half damage" in _entries_text)
+    )
+
     return {
         "name":          raw.get("name", ""),
         "level":         raw.get("level", 0),
@@ -317,6 +325,7 @@ def _normalize_spell(raw: dict) -> dict:
         "range":         _fmt_range(raw.get("range", {})),
         "components":    _fmt_components(raw.get("components", {})),
         "duration":      dur_txt,
+        "duration_raw":  raw.get("duration", []),
         "concentration": conc,
         "ritual":        ritual,
         "description":   desc,
@@ -324,6 +333,7 @@ def _normalize_spell(raw: dict) -> dict:
         "saving_throw":  raw.get("savingThrow", []),
         "damage_inflict": raw.get("damageInflict", []),
         "spell_attack":  raw.get("spellAttack", []),
+        "half_on_save":  _half_on_save,
         "entries":       entries_raw,
         "entries_higher": entries_higher,
     }
@@ -411,6 +421,36 @@ def get_spell(name: str) -> dict | None:
     """Retourne le dict normalisé d'un sort (None si introuvable)."""
     load_spells()
     return _SPELL_DATA.get(name.lower())
+
+
+# ─── Durée de concentration en rounds ────────────────────────────────────────
+
+_UNIT_TO_ROUNDS = {
+    "round":  1,
+    "minute": 10,     # 1 minute = 10 rounds (6 sec/round)
+    "hour":   600,    # 1 heure  = 600 rounds
+    "day":    14400,  # 1 jour   = 14 400 rounds  (cap pratique)
+}
+
+def get_concentration_rounds(spell_name: str) -> int:
+    """Retourne la durée de concentration en rounds de combat.
+    1 round = 6 secondes, 1 minute = 10 rounds, 1 heure = 600 rounds.
+    Retourne 0 si le sort n'est pas à concentration ou introuvable.
+    """
+    sp = get_spell(spell_name)
+    if sp is None or not sp.get("concentration"):
+        return 0
+    dur_list = sp.get("duration_raw", [])
+    if not dur_list:
+        return 0
+    d = dur_list[0]
+    if d.get("type") != "timed":
+        return 100   # durée spéciale → par défaut 10 minutes (100 rounds)
+    inner = d.get("duration", {})
+    amount = inner.get("amount", 1)
+    unit   = inner.get("type", "minute")
+    multiplier = _UNIT_TO_ROUNDS.get(unit, 10)
+    return amount * multiplier
 
 
 def format_spell_card(sp: dict) -> str:

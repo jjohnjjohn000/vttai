@@ -963,12 +963,50 @@ class PanelsMixin:
             if hasattr(self, "_agents") and self._agents:
                 try:
                     self._rebuild_agent_prompts()
+                    
+                    import autogen
+                    import copy
+                    
+                    if getattr(self, "_combat_llm_active", False):
+                        if hasattr(self, "_set_combat_llm"):
+                            self._set_combat_llm(True)
+                    else:
+                        from state_manager import load_state
+                        from app_config import get_agent_config, get_chronicler_config
+                        from llm_config import build_llm_config, _default_model
+                        
+                        _char_state = load_state().get("characters", {})
+                        
+                        for name, agent in self._agents.items():
+                            if name == "mj":
+                                _chron_cfg = get_chronicler_config()
+                                model = _chron_cfg.get("model", _default_model)
+                                temp = _chron_cfg.get("temperature", 0.7)
+                            else:
+                                cs_char = _char_state.get(name, {})
+                                model = (cs_char.get("llm_session_override", "")
+                                         or cs_char.get("llm", "")
+                                         or get_agent_config(name).get("model", "")
+                                         or _default_model)
+                                temp = get_agent_config(name).get("temperature", 0.7)
+                                
+                            new_cfg = build_llm_config(model, temperature=temp)
+                            old_cfg = agent.llm_config or {}
+                            if "tools" in old_cfg: new_cfg["tools"] = copy.deepcopy(old_cfg["tools"])
+                            if "functions" in old_cfg: new_cfg["functions"] = copy.deepcopy(old_cfg["functions"])
+                            agent.llm_config = new_cfg
+                            agent.client = autogen.OpenAIWrapper(
+                                **{k: v for k, v in new_cfg.items() if k not in ("functions", "tools")}
+                            )
+
                     self.msg_queue.put({
                         "sender": "⚙️ Config",
-                        "text":   "✅ Paramètres appliqués aux agents en cours de session.",
+                        "text":   "✅ Paramètres (y compris les LLMs) appliqués aux agents en ligne.",
                         "color":  "#aaaacc",
                     })
                 except Exception as e:
+                    import traceback
+                    traceback.print_exc()
                     print(f"[Config] Erreur mise à jour agents : {e}")
 
         _open_cfg_panel(

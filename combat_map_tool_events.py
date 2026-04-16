@@ -225,6 +225,11 @@ class ToolEventMixin:
 
     def _mb3_down(self, event):
         cx, cy = self._canvas_xy(event)
+
+        if getattr(self, "_drag_token", None) is not None:
+            self._drop_drag_anchor(event)
+            return
+
         if self.tool in ("reveal", "hide"):
             self._poly_apply()
             return
@@ -277,6 +282,24 @@ class ToolEventMixin:
             # Token isolé → menu contextuel (renommer, déplacer, supprimer)
             self._show_token_context_menu(event, hit_tok)
 
+    def _drop_drag_anchor(self, event):
+        """Dépose un point de passage sur la case survolée pendant un drag."""
+        tok = getattr(self, "_drag_token", None)
+        if not tok: return
+        cx, cy = self._canvas_xy(event)
+        cp = self._cp
+        new_col = (cx - self._drag_offset[0]) / cp - 0.5
+        new_row = (cy - self._drag_offset[1]) / cp - 0.5
+        
+        if not hasattr(self, "_drag_waypoints"):
+            self._drag_waypoints = []
+            
+        # On sauvegarde la case (arrondie) en tant qu'ancre
+        self._drag_waypoints.append((round(new_col), round(new_row)))
+        
+        # On force un re-calcul visuel immédiat
+        self._tok_drag(event, tok)
+
     # ─── Menus contextuels ────────────────────────────────────────────────────
 
     def _show_token_context_menu(self, event, tok):
@@ -319,6 +342,28 @@ class ToolEventMixin:
         # ─── AURA ───
         menu.add_command(label="🌀 Configurer l'aura",
                          command=lambda: self._edit_token_aura(tok))
+
+        # ─── TRACKER / BESTIARY ──────────────────────────────────────────────
+        menu.add_separator()
+
+        # Fiche de monstre — visible seulement si bestiary_name est connu
+        bname = tok.get("bestiary_name", "").strip()
+        if not bname:
+            # Tentative de résolution à la volée pour l'affichage du menu
+            bname, _ = self._resolve_bestiary_name(tok)
+            if bname:
+                tok["bestiary_name"] = bname   # mise en cache immédiate
+
+        if bname:
+            menu.add_command(
+                label=f"📋  Fiche : {bname}",
+                command=lambda b=bname, n=name:
+                    self._open_monster_sheet_for_token(n, b))
+
+        # Envoyer au tracker — toujours disponible (gère les cas dégradés)
+        menu.add_command(
+            label="⚔️  Envoyer au Tracker",
+            command=lambda: self._send_token_to_tracker(tok))
 
         menu.add_separator()
         menu.add_command(label="✕  Supprimer",
@@ -391,4 +436,3 @@ class ToolEventMixin:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
-

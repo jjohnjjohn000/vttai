@@ -255,11 +255,12 @@ class RulerMixin:
             except Exception:
                 pass
 
-        # Grille
+        # Grille (couleur dynamique selon le mode actif)
         if self._show_grid and cp >= 4:
+            grid_c = getattr(self, "_grid_color", _C_GRID)
             bg_arr = np.array(bg, dtype=np.float32)
-            gc = np.array(_C_GRID[:3], dtype=np.float32)
-            ga = _C_GRID[3] / 255.0
+            gc = np.array(grid_c[:3], dtype=np.float32)
+            ga = grid_c[3] / 255.0
             for c in range(vx0 // cp, vx1 // cp + 2):
                 x = c * cp - vx0
                 if 0 <= x < VW:

@@ -139,9 +139,38 @@ class CoreMixin:
         self._active_map_name: str = ""   # nom de la carte courante
         self._map_selector_var: "tk.StringVar | None" = None  # dropdown Tk
 
+        # Nom du token ayant l'initiative actuelle (pour le réticule)
+        self.active_turn_name: "str | None" = None
+
         # Charger état sauvegardé
         self._init_maps_system()
         self._build_window()
+        
+        # Démarrer le sondage du tour actif
+        self._poll_active_turn()
+
+    def _poll_active_turn(self):
+        """Interroge le combat tracker pour savoir qui joue et dessine le réticule."""
+        if getattr(self, "win", None) is None or not self.win.winfo_exists():
+            return
+            
+        new_active = None
+        if getattr(self, "app", None):
+            tracker = getattr(self.app, "_combat_tracker_win", None)
+            if tracker and getattr(tracker, "combat_active", False):
+                idx = getattr(tracker, "current_idx", -1)
+                c_list = getattr(tracker, "combatants", [])
+                if 0 <= idx < len(c_list):
+                    new_active = c_list[idx].name
+                    
+        # Si le tour a changé ou si le combat s'est arrêté
+        if getattr(self, "active_turn_name", None) != new_active:
+            self.active_turn_name = new_active
+            if hasattr(self, "_redraw_all_tokens"):
+                self._redraw_all_tokens()
+                
+        # Revérifier dans 500 ms
+        self.win.after(500, self._poll_active_turn)
 
     # ─── Propriétés calculées ─────────────────────────────────────────────────
 

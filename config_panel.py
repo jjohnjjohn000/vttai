@@ -149,6 +149,23 @@ def _tab_agents(nb, cfg, vars_):
 
         vars_["agents"][char] = {"model": m_var, "temperature": t_var}
 
+    # ── Combat LLM ────────────────────────────────────────────────────────────
+    _section(scroll_frame, "⚔  Mode Combat — LLM partagé par tous les PJ", RED)
+
+    tk.Label(scroll_frame,
+             text=("  En combat, tous les PJ sont basculés vers ce modèle unique\n"
+                   "  (plus rapide et moins cher). Restauré automatiquement en fin de combat."),
+             bg=BG, fg=FG_DIM, font=("Consolas", 8), justify=tk.LEFT,
+             ).pack(anchor="w", padx=20, pady=(0, 4))
+
+    combat_cfg = cfg.get("combat", DEFAULTS.get("combat", {}))
+    combat_model_var = tk.StringVar(
+        value=combat_cfg.get("model", "gemini-3.1-flash-lite-preview")
+    )
+    _row(scroll_frame, "Modèle LLM Combat", _model_dropdown, var=combat_model_var)
+
+    vars_["combat"] = {"model": combat_model_var}
+
     return tab
 
 
@@ -759,6 +776,17 @@ def _tab_llm_resources(nb, cfg):
                 keys.append((f"GROQ_API_KEY_{i}", k))
         return keys
 
+    def _collect_openrouter_keys() -> list[tuple[str, str]]:
+        keys = []
+        k = os.getenv("OPENROUTER_API_KEY", "")
+        if k:
+            keys.append(("OPENROUTER_API_KEY", k))
+        for i in range(1, 10):
+            k = os.getenv(f"OPENROUTER_API_KEY_{i}", "")
+            if k and k not in [v for _, v in keys]:
+                keys.append((f"OPENROUTER_API_KEY_{i}", k))
+        return keys
+
     def _card(parent, pady=(4, 2)) -> tk.Frame:
         f = tk.Frame(parent, bg=BG2, relief="flat")
         f.pack(fill=tk.X, padx=20, pady=pady)
@@ -885,6 +913,33 @@ def _tab_llm_resources(nb, cfg):
             _thr.Thread(target=_run, daemon=True).start()
         return _fn
 
+    def _test_openrouter(key_val: str):
+        def _fn(sv, sl):
+            sv.set("⏳ chargement…")
+            sl.config(fg=GOLD)
+            def _run():
+                try:
+                    import httpx
+                    r = httpx.get(
+                        "https://openrouter.ai/api/v1/key",
+                        headers={"Authorization": f"Bearer {key_val}"},
+                        timeout=5.0,
+                    )
+                    if r.status_code == 200:
+                        from llm_config import format_openrouter_status
+                        data = r.json().get("data", {})
+                        txt = format_openrouter_status(data)
+                        sv.set(txt.split("\n")[0] if txt else "✓ Clé valide")
+                        sl.config(fg=GREEN)
+                    else:
+                        sv.set("✗ Clé invalide ou erreur")
+                        sl.config(fg=RED)
+                except Exception as e:
+                    sv.set(f"✗ Erreur réseau")
+                    sl.config(fg=RED)
+            _thr.Thread(target=_run, daemon=True).start()
+        return _fn
+
     # ── Construction du contenu (rebuildable) ─────────────────────────────────
     def _build():
         for w in inner.winfo_children():
@@ -895,7 +950,7 @@ def _tab_llm_resources(nb, cfg):
 
         gemini_keys = _collect_gemini_keys()
         groq_keys   = _collect_groq_keys()
-        or_key      = os.getenv("OPENROUTER_API_KEY", "")
+        or_keys     = _collect_openrouter_keys()
         ds_key      = os.getenv("DEEPSEEK_API_KEY", "")
 
         # ══════════════════════════════════════════════════════════════════════
@@ -953,44 +1008,21 @@ def _tab_llm_resources(nb, cfg):
         c3 = _card(inner)
         h3 = tk.Frame(c3, bg=BG2)
         h3.pack(fill=tk.X, padx=12, pady=(8, 4))
-        ok_or = bool(or_key)
+        ok_or = bool(or_keys)
         tk.Label(h3, text="OpenRouter", bg=BG2, fg="#80cbc4",
                  font=("Arial", 9, "bold"), width=12, anchor="w").pack(side=tk.LEFT)
         tk.Label(h3, text=("✓" if ok_or else "—"),
                  bg=BG2, fg=(GREEN if ok_or else FG_DIM),
                  font=("Arial", 10, "bold")).pack(side=tk.LEFT)
-        if ok_or:
-            tk.Label(h3, text=f"  {_mask(or_key)}", bg=BG2, fg=ACCENT,
-                     font=("Consolas", 9)).pack(side=tk.LEFT, padx=8)
-            bal_var = tk.StringVar(value="")
-            bal_lbl = tk.Label(h3, textvariable=bal_var, bg=BG2,
-                               fg=GOLD, font=("Consolas", 8))
-            bal_lbl.pack(side=tk.LEFT, padx=4)
+        tk.Label(h3, text=f"  {len(or_keys)} clé(s) dans .env",
+                 bg=BG2, fg=(FG if ok_or else FG_DIM),
+                 font=("Consolas", 8)).pack(side=tk.LEFT, padx=8)
 
-            def _fetch_or_balance(sv=bal_var, sl=bal_lbl):
-                sv.set("⏳ chargement…")
-                def _run():
-                    try:
-                        from llm_config import fetch_openrouter_key_status, format_openrouter_status
-                        data = fetch_openrouter_key_status()
-                        if data:
-                            txt = format_openrouter_status(data)
-                            sv.set(txt.split("\n")[0] if txt else "OK")
-                            sl.config(fg=GREEN)
-                        else:
-                            sv.set("✗ Clé invalide ou erreur")
-                            sl.config(fg=RED)
-                    except Exception as e:
-                        sv.set(f"✗ {e}")
-                        sl.config(fg=RED)
-                _thr.Thread(target=_run, daemon=True).start()
-
-            tk.Button(h3, text="Solde", bg=BG3, fg=ACCENT,
-                      font=("Arial", 8), relief="flat", padx=6,
-                      command=_fetch_or_balance).pack(side=tk.LEFT, padx=6)
-        else:
-            tk.Label(h3, text="  OPENROUTER_API_KEY non définie",
-                     bg=BG2, fg=FG_DIM, font=("Consolas", 8)).pack(side=tk.LEFT, padx=8)
+        for key_name, key_val in or_keys:
+            _key_row(c3, key_name, key_val, _test_openrouter(key_val))
+        if not ok_or:
+            tk.Label(c3, text="  Aucune clé OPENROUTER_API_KEY* trouvée dans .env",
+                     bg=BG2, fg=FG_DIM, font=("Consolas", 8)).pack(anchor="w", padx=16, pady=4)
         tk.Frame(c3, bg=BG2, height=6).pack()
 
         # ── DeepSeek ──────────────────────────────────────────────────────────
@@ -1113,12 +1145,14 @@ def _tab_llm_resources(nb, cfg):
             ("gemini-2.5-flash",               "Gemini",      len(gemini_keys), "stable · recommandé",         False),
             ("gemini-2.5-pro",                 "Gemini",      len(gemini_keys), "stable · recommandé",         False),
             ("gemini-2.0-flash",               "Gemini",      len(gemini_keys), "stable",                      False),
+            ("gemma-4-31b-it",                 "Gemini",      len(gemini_keys), "preview — 404 possible",      True),
+            ("gemma-4-26b-a4b-it",             "Gemini",      len(gemini_keys), "preview — 404 possible",      True),
             ("gemini-3-flash-preview",         "Gemini",      len(gemini_keys), "preview — 404 possible",      True),
             ("gemini-3.1-flash-lite-preview",  "Gemini",      len(gemini_keys), "preview — 404 possible",      True),
             ("groq/llama-4-scout-17b-16e-…",   "Groq",        len(groq_keys),   "cross-provider",              False),
-            ("openrouter/llama-3.3-70b:free",  "OpenRouter",  1 if or_key else 0, "dernier recours",           False),
-            ("openrouter/mistral-small:free",  "OpenRouter",  1 if or_key else 0, "dernier recours",           False),
-            ("openrouter/arcee-trinity:free",  "OpenRouter",  1 if or_key else 0, "dernier recours",           False),
+            ("openrouter/llama-3.3-70b:free",  "OpenRouter",  len(or_keys), "dernier recours",           False),
+            ("openrouter/mistral-small:free",  "OpenRouter",  len(or_keys), "dernier recours",           False),
+            ("openrouter/arcee-trinity:free",  "OpenRouter",  len(or_keys), "dernier recours",           False),
         ]
 
         for i, (model, provider, n_keys, note, warn) in enumerate(FALLBACK_ROWS, 1):
@@ -1209,6 +1243,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
     vars_: dict = {
         "agents": {}, "chronicler": {}, "groupchat": {},
         "memories": {}, "voice": {}, "ui": {}, "piper": {}, "ptt": {},
+        "combat": {},
     }
 
     # Créer les 6 onglets
@@ -1242,17 +1277,10 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
         open_config_panel(root, win_state, track_fn, on_saved)
 
     def _save():
-        new_cfg: dict = {
-            "agents":     {},
-            "chronicler": {},
-            "groupchat":  {},
-            "memories":   {},
-            "voice":      {},
-            "piper":      {},
-            "ui":         {},
-            "ptt":        {},
-        }
+        # Start with the existing config to preserve keys not managed by this UI (e.g., voice.volume, campaign_name)
+        new_cfg = dict(cfg)
 
+        if "agents" not in new_cfg: new_cfg["agents"] = {}
         for char, cvars in vars_["agents"].items():
             new_cfg["agents"][char] = {
                 "model":       cvars["model"].get(),
@@ -1260,33 +1288,38 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
             }
 
         cv = vars_["chronicler"]
-        new_cfg["chronicler"] = {
+        if "chronicler" not in new_cfg: new_cfg["chronicler"] = {}
+        new_cfg["chronicler"].update({
             "model":               cv["model"].get(),
             "temperature":         round(cv["temperature"].get(), 2),
             "memories_importance": cv["memories_importance"].get(),
             "system_prompt":       cv["system_prompt_box"].get("1.0", tk.END).strip(),
-        }
+        })
 
         gv = vars_["groupchat"]
-        new_cfg["groupchat"] = {
+        if "groupchat" not in new_cfg: new_cfg["groupchat"] = {}
+        new_cfg["groupchat"].update({
             "max_round":            gv["max_round"].get(),
             "allow_repeat_speaker": gv["allow_repeat_speaker"].get(),
-        }
+        })
 
         mv = vars_["memories"]
-        new_cfg["memories"] = {
+        if "memories" not in new_cfg: new_cfg["memories"] = {}
+        new_cfg["memories"].update({
             "compact_importance_min":    mv["compact_importance_min"].get(),
             "contextual_tag_min_length": mv["contextual_tag_min_length"].get(),
-        }
+        })
 
         vv = vars_["voice"]
-        new_cfg["voice"] = {
+        if "voice" not in new_cfg: new_cfg["voice"] = {}
+        new_cfg["voice"].update({
             "enabled": vv["enabled"].get(),
             "backend": vv["backend"].get(),
-        }
+        })
 
         pv = vars_["piper"]
-        new_cfg["piper"] = {
+        if "piper" not in new_cfg: new_cfg["piper"] = {}
+        new_cfg["piper"].update({
             "models_dir": pv["models_dir"].get().strip() or "piper_models",
             "voices": {
                 char: sv.get().strip()
@@ -1296,7 +1329,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
                 char: round(dv.get(), 1)
                 for char, dv in pv["pitch_vars"].items()
             },
-        }
+        })
         # Conserver la voix default si absente
         if "default" not in new_cfg["piper"]["voices"]:
             new_cfg["piper"]["voices"]["default"] = (
@@ -1306,15 +1339,23 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
             new_cfg["piper"]["pitch"]["default"] = 0.0
 
         uv = vars_["ui"]
-        new_cfg["ui"] = {
+        if "ui" not in new_cfg: new_cfg["ui"] = {}
+        new_cfg["ui"].update({
             "poll_geometry_ms":  uv["poll_geometry_ms"].get(),
             "stats_refresh_ms":  uv["stats_refresh_ms"].get(),
-        }
+        })
 
         ptt_v = vars_.get("ptt", {})
-        new_cfg["ptt"] = {
+        if "ptt" not in new_cfg: new_cfg["ptt"] = {}
+        new_cfg["ptt"].update({
             "hotkey": ptt_v.get("hotkey", tk.StringVar(value="F12")).get(),
-        }
+        })
+
+        combat_v = vars_.get("combat", {})
+        if "combat" not in new_cfg: new_cfg["combat"] = {}
+        new_cfg["combat"].update({
+            "model": combat_v.get("model", tk.StringVar(value="gemini-3.1-flash-lite-preview")).get(),
+        })
 
         save_app_config(new_cfg)
         reload_app_config()

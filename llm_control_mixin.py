@@ -592,7 +592,7 @@ class LLMControlMixin:
                     (_c.max_hp for _c in tracker.combatants if _c.name == target), None
                 )
                 _action = "soigné" if delta > 0 else "blessé"
-                _pv_txt = f"  PV actuels : {_cur}/{_max}." if _cur is not None else ""
+                _pv_txt = f"  PV actuels : {int((_cur / max(1, _max)) * 100)}%." if _cur is not None and _max else ""
                 return (
                     f"[RÉSULTAT SYSTÈME] {target} a été {_action} de {abs(delta)}.{_pv_txt}"
                 )

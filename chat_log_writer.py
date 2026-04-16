@@ -31,12 +31,12 @@ import re
 
 # Patterns de nettoyage
 _SYSTEM_PREFIX   = re.compile(r'^\s*\[RÉSULTAT SYSTÈME', re.IGNORECASE)
-_ACTION_ONLY     = re.compile(r'^\s*\[ACTION\]', re.IGNORECASE)
+_ACTION_ONLY     = re.compile(r'^\s*(?:\[ACTION\])?\s*(?:Type|Action|Type d\'action)\s*:', re.IGNORECASE)
 _SILENCE         = re.compile(r'^\s*\[SILENCE\]\s*$', re.IGNORECASE)
 
 # Patterns pour le filtrage TTS
 _ACTION_BLOCK_RE = re.compile(
-    r'\[ACTION\].*?(?=\n\n|\[ACTION\]|$)',
+    r'(?:\[ACTION\])?\s*(?:Type|Action|Type d\'action)\s*:.*?(?=\n\n|\[ACTION\]|</thought>|$)',
     re.DOTALL | re.IGNORECASE,
 )
 _ERR_SYSTEM_RE = re.compile(r'\[Erreur système.*?\]', re.DOTALL | re.IGNORECASE)
@@ -56,6 +56,8 @@ _RULE_BLOCK_RE = re.compile(r'\[RÈGLES DU BLOC ACTION[^\]]*\](?:\s*•[^\n]*)*'
 def strip_mechanical_blocks(text: str) -> str:
     """Supprime les blocs mécaniques et[Erreur système] du texte avant envoi au TTS.
     Le roleplay narratif est conservé intégralement."""
+    text = re.sub(r'<thought>.*?(?:</thought>|$)', '', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'<think>.*?(?:</think>|$)', '', text, flags=re.IGNORECASE | re.DOTALL)
     text = _RULE_BLOCK_RE.sub('', text)
     text = _ACTION_BLOCK_RE.sub('', text)
     text = _ERR_SYSTEM_RE.sub('', text)

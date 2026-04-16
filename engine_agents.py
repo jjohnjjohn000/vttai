@@ -224,27 +224,14 @@ def _build_regle_en_combat() -> str:
         _REGLES_COMMUNES
         # ── Section spécifique EN COMBAT ─────────────────────────────────────
         + "\n▶ COMBAT EN COURS — RÈGLES D'INITIATIVE"
-        "\nChaque round tu disposes de :"
-        "\n  • 1 Action       (attaque, sort, Dash, Disengage, Ready/Se tenir prêt, Help, Hide, etc.)"
-        "\n  • 1 Action Bonus (si ta classe ou un sort t'en donne une)"
-        "\n  • 1 Déplacement  (≤ ta vitesse — peut être fractionné avant/après l'action)"
-        "\n  • 1 Réaction     (par round, uniquement hors de ton tour)\n"
-        "\n▶ SE TENIR PRÊT (READY ACTION)"
-        "\nPréparer une action coûte ton Action normale. Cela ne se fait jamais en Action Bonus."
-        "\nLe déclenchement ultérieur coûtera ta Réaction.\n"
         "\n▶ RÈGLE FONDAMENTALE — UNE ACTION À LA FOIS"
         "\nDéclare UN SEUL bloc[ACTION] par message — jamais plusieurs à la fois."
         "\nAprès chaque action confirmée, le système t'envoie un [TOUR EN COURS]"
         "\nqui liste tes ressources restantes. Tu déclares alors ta prochaine action."
-        "\nQuand tu n'as plus rien à faire, envoie simplement une[ACTION] de type 'Fin de tour'.\n"
+        "\n⚠️ RAPPEL TRÈS IMPORTANT : Quand tu n'as plus rien à faire ou que tes ressources sont épuisées, TU DOIS terminer ton tour en envoyant [ACTION] de type: Fin de tour.\n"
         "\n▶ ACTIONS EN COMBAT — FORMAT OBLIGATOIRE\n\n"
         + _ACTION_FORMAT
-        + "\n▶ MOUVEMENT SUR LA CARTE — EN COMBAT"
-        "\nTa distance de déplacement par tour est LIMITÉE à ta vitesse de base (souvent 30 ft = 6 cases)."
-        "\n   • SANS Dash : max 30 ft (6 cases)"
-        "\n   • AVEC Dash (coûte ton Action) : max 60 ft (12 cases)"
-        "\nTout déplacement DOIT être déclaré via[ACTION] Type: Mouvement. Le système mettra ton token à jour.\n"
-        "\n⚔️ PORTÉE DE MÊLÉE — VÉRIFIE AVANT D'ATTAQUER"
+        + "\n⚔️ PORTÉE DE MÊLÉE — VÉRIFIE AVANT D'ATTAQUER"
         "\n   Consulte la section 📏 DISTANCES HÉROS → ENNEMIS dans ton prompt."
         "\n   • Mêlée standard : tu dois être à ≤ 5 ft (1 case adjacente). Au-delà → IMPOSSIBLE."
         "\n   • Si l'ennemi est hors de portée, tu dois D'ABORD te DÉPLACER avec un bloc Mouvement AVANT d'attaquer.\n\n"
@@ -395,14 +382,19 @@ def _filter_turn_private_messages(msgs: list, agent_name: str) -> list:
     )
     
     _action_block_re = _re_f.compile(
-        r'\s*\[ACTION\].*?(?=\[ACTION\]|\Z)', 
+        r'\s*(?:\[ACTION\])?\s*(?:Type|Action|Type d\'action)\s*:.*?(?=\n\n|\[ACTION\]|</thought>|</think>|\Z)', 
         _re_f.IGNORECASE | _re_f.DOTALL
     )
+    
+    _thought_re = _re_f.compile(r'<(thought|think)>.*?</\1>\s*', _re_f.IGNORECASE | _re_f.DOTALL)
 
-    filtered_msgs =[]
+    filtered_msgs = []
     for m in msgs:
         content = str(m.get("content", ""))
         sender = str(m.get("name", ""))
+        
+        # 0. Retirer les blocs de pensée
+        content = _thought_re.sub('', content).strip()
         
         # 1. Retirer complètement le message s'il correspond aux regex privées (MJ -> autre)
         if _private_re.search(content):
@@ -418,35 +410,17 @@ def _filter_turn_private_messages(msgs: list, agent_name: str) -> list:
             new_m["content"] = content
             filtered_msgs.append(new_m)
 
-    # ── REMPLACEMENT TOTAL DU CHAT CONTEXT PAR L'HISTORIQUE DE COMBAT ──
+    # ── SUPPRESSION DE TOUT L'HISTORIQUE EN COMBAT ──
     try:
         from combat_tracker import COMBAT_STATE
         if COMBAT_STATE.get("active"):
-            # On garde seulement les 3 derniers messages techniques 
-            # (le [RÉSULTAT SYSTÈME], le [TOUR EN COURS], et le trigger de fin)
-            recent_msgs = filtered_msgs[-3:] if len(filtered_msgs) > 3 else filtered_msgs
-            
-            history_lines = COMBAT_STATE.get("combat_history",[])
-            if not history_lines:
-                history_text = "Le combat vient de commencer. Personne n'a encore agi."
-            else:
-                # On prend les 15 derniers événements pour le contexte tactique
-                history_text = "\n".join(history_lines[-15:])
-                
-            combat_log_msg = {
-                "role": "system",
-                "content": (
-                    f"=== HISTORIQUE RÉCENT DU COMBAT ===\n"
-                    f"{history_text}\n"
-                    f"===================================\n"
-                    f"(Ceci remplace l'historique de conversation habituel. "
-                    f"Utilise ce résumé factuel pour comprendre qui a fait quoi récemment, "
-                    f"mais réponds UNIQUEMENT à la directive de ton tour.)"
-                ),
-                "name": "Systeme"
-            }
-            
-            return [combat_log_msg] + recent_msgs
+            # En combat, l'historique complet, les événements tactiques récents, ou
+            # même les messages des autres agents ont tendance à embrouiller l'agent.
+            # On ne conserve STRICTEMENT QUE le tout dernier message (la directive
+            # de tour du MJ "C'est à toi Kaelen, déclare ton action").
+            if filtered_msgs:
+                return [filtered_msgs[-1]]
+            return []
     except Exception:
         pass
             
@@ -525,11 +499,8 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                 try:
                     try:
                         # Logger les messages filtrés — c'est ce que le LLM reçoit réellement
-                        _msgs_to_log = (
-                            _filter_turn_private_messages(messages, name)
-                            if messages is not None
-                            else messages
-                        )
+                        _actual_messages = messages if messages is not None else self_agent.chat_messages.get(sender, [])
+                        _msgs_to_log = _filter_turn_private_messages(_actual_messages, name)
                         _log_full_prompt(self_agent, sender, _msgs_to_log)
                     except Exception:
                         pass
@@ -553,11 +524,8 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                     # On les retire ici pour que chaque agent ne voie que les
                     # messages qui le concernent — les résultats d'actions
                     # observables (ATTAQUE, SOIN, SORT…) restent visibles par tous.
-                    _msgs_for_llm = (
-                        _filter_turn_private_messages(messages, name)
-                        if messages is not None
-                        else messages
-                    )
+                    _actual_messages = messages if messages is not None else self_agent.chat_messages.get(sender, [])
+                    _msgs_for_llm = _filter_turn_private_messages(_actual_messages, name)
 
                     result[0] = _orig_gr(
                         self_agent, messages=_msgs_for_llm, sender=sender, **_safe_kwargs
@@ -636,7 +604,8 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                     #   HORS COMBAT  → modèle configuré dans la fiche du personnage
                     #                  (llm_session_override > llm > app_config, même logique que _cfg())
                     if COMBAT_STATE.get("active"):
-                        _recovery_model = "gemini-3.1-flash-lite-preview"
+                        from app_config import get_combat_config as _gcc
+                        _recovery_model = _gcc().get("model", "gemini-3.1-flash-lite-preview")
                     else:
                         try:
                             _cs_rec = load_state().get("characters", {}).get(name, {})
@@ -1162,7 +1131,7 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
             "qui tire les ficelles, est-ce un piège, qu'est-ce qu'on peut ramasser, "
             "comment sortir vivant de là. Tes observations sont tactiques et pragmatiques, "
             "jamais magiques ni théoriques.\n"
-            "FORMAT ATTAQUE OBLIGATOIRE — Tu te bats avec deux armes :\n"
+            "FORMAT ATTAQUE OBLIGATOIRE — Tu te bats avec deux armes, tu n'es pas obligé de faire tes deux attaques:\n"
             "  Tu dois déclarer chaque attaque SÉPARÉMENT dans des messages distincts.\n"
             "  Message 1 (Première attaque) :\n"
             "    [ACTION]\n"
@@ -1172,7 +1141,7 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
             "    Cible     : [la cible]\n"
             "  Message 2 (après avoir reçu le résultat du MJ) :\n"
             "    [ACTION]\n"
-            "    Type      : Extra Attack (ou Action Bonus si attaque avec offhand)\n"
+            "    Type      : Action Bonus\n"
             "    Intention : Frapper avec ma seconde lame\n"
             "    Règle 5e  : Attaque : corps-à-corps +11, 1d6+5\n"
             "    Cible     : [la cible]\n"

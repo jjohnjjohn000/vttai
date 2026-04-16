@@ -418,13 +418,6 @@ class DnDApp(
         Appele apres chaque message joueur et apres toute activation de memoire contextuelle."""
         combat_block_fn = get_combat_prompt  # importe depuis combat_tracker
 
-        # Snapshot live des spell slots (source de verite : campaign_state)
-        try:
-            from state_manager import load_state as _ls_slots
-            _slots_state = _ls_slots().get("characters", {})
-        except Exception:
-            _slots_state = {}
-
         # Contexte de scène courant pour la recherche dans le journal long terme
         try:
             _scene_context = get_scene_prompt()
@@ -442,38 +435,6 @@ class DnDApp(
             # Carte de combat : personnalisée par agent (distances propres uniquement)
             map_block = get_map_prompt(self._win_state, for_hero=name, in_combat=COMBAT_STATE["active"])
 
-            # Bloc spell slots dynamique - relit campaign_state a chaque rebuild
-            slots_block = ""
-            _char_slots = _slots_state.get(name, {}).get("spell_slots", {})
-            if _char_slots:
-                _avail = [(int(k), v) for k, v in sorted(_char_slots.items(), key=lambda x: int(x[0])) if v > 0]
-                _empty = [int(k) for k, v in sorted(_char_slots.items(), key=lambda x: int(x[0])) if v == 0]
-                lines_slots = [
-                    "\n\n══════════════════════════════════════════════",
-                    f"⚡ EMPLACEMENTS DE SORT DE {name.upper()} — CONTRAINTE ABSOLUE",
-                    "══════════════════════════════════════════════",
-                ]
-                if _avail:
-                    lines_slots.append("  ✅ DISPONIBLES : " + ", ".join(f"niv.{k}×{v}" for k, v in _avail))
-                else:
-                    lines_slots.append("  ❌ AUCUN emplacement disponible — sorts à slot IMPOSSIBLES.")
-                if _empty:
-                    lines_slots.append("  ❌ ÉPUISÉS     : " + ", ".join(f"niv.{k}" for k in _empty))
-                lines_slots +=[
-                    "",
-                    "RÈGLE OBLIGATOIRE — AVANT CHAQUE DÉCLARATION DE SORT :",
-                    "  1. Identifie le niveau de base du sort que tu veux lancer.",
-                    "  2. Vérifie dans la liste ✅ ci-dessus si ce niveau est disponible.",
-                    "  3a. Si OUI → déclare-le via un bloc [ACTION] classique en précisant le niveau dans la Règle 5e.",
-                    "  3b. Si NON (niveau épuisé ❌) → DEUX options seulement :",
-                    "        • UPCAST : prends le plus petit niveau ✅ supérieur dispo",
-                    "                   → déclare-le via un bloc [ACTION] en précisant ce niveau supérieur dans la Règle 5e.",
-                    "        • AUTRE ACTION : sort inférieur ✅, tour de magie, ou attaque physique.",
-                    "  ⛔ INTERDIT : déclarer un sort à un niveau ❌ épuisé. Le moteur rejettera l'action.",
-                    "══════════════════════════════════════════════",
-                ]
-                slots_block = "\n".join(lines_slots)
-
             # ── MODE COMBAT : prompt minimal — contexte lore supprimé ────────
             # Seuls les blocs mécaniquement utiles pendant un round sont injectés.
             # Tout le lore (scène, quêtes, mémoires, calendrier, journal) est élidé :
@@ -483,7 +444,6 @@ class DnDApp(
                     base
                     + get_spells_prompt(name)
                     + get_inventory_prompt()
-                    + slots_block
                     + combat_block
                     + map_block
                 )
@@ -506,7 +466,7 @@ class DnDApp(
                     + sessions_block + toc_block + log_block
                     + get_spells_prompt(name)
                     + get_inventory_prompt()
-                    + ctx_block + slots_block + combat_block + map_block
+                    + ctx_block + combat_block + map_block
                 )
 
     # Alias conservé pour compatibilité avec les appels existants depuis le combat

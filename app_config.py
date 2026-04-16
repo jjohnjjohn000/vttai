@@ -38,6 +38,8 @@ KNOWN_MODELS = [
     # Gemini — modèles actifs
     "gemini-3.1-flash-lite-preview",
     "gemini-3-flash-preview",
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
@@ -138,6 +140,9 @@ DEFAULTS: dict = {
     "ptt": {
         "hotkey": "F12",   # keysym Tk — ex: "F12", "space", "Insert", "grave"
     },
+    "combat": {
+        "model": "gemini-3.1-flash-lite-preview",   # LLM utilisé par TOUS les PJ en mode combat
+    },
     "campaign_name": "campagne",   # Nom du dossier de sauvegarde (campagne/<nom>/)
 }
 
@@ -193,6 +198,10 @@ def get_groupchat_config() -> dict:
 
 def get_memories_config() -> dict:
     return APP_CONFIG.get("memories", DEFAULTS["memories"])
+
+
+def get_combat_config() -> dict:
+    return APP_CONFIG.get("combat", DEFAULTS["combat"])
 
 
 def get_voice_config() -> dict:

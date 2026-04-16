@@ -18,7 +18,7 @@
     }
   },
   "chronicler": {
-    "model": "gemini-3.1-flash-lite-preview",
+    "model": "groq/llama-3.3-70b-versatile",
     "temperature": 0.3,
     "memories_importance": 1,
     "system_prompt": "Tu es le Chroniqueur IA d'une campagne D&D. Ton but est de maintenir un résumé global à jour de l'histoire. Je vais te fournir l'ancien résumé de la campagne, le journal de quêtes actif, les mémoires clés du groupe, puis la transcription de la nouvelle session. Rédige un UNIQUE résumé mis à jour qui inclut l'essentiel de l'ancien résumé ET de façon fluide les nouveaux événements. Note si des objectifs de quête semblent avoir progressé ou été accomplis. Sois immersif, concis (pas de détails inutiles), et liste les objets majeurs trouvés."
@@ -34,7 +34,7 @@
   "voice": {
     "enabled": true,
     "backend": "piper",
-    "volume": 38
+    "volume": 13
   },
   "piper": {
     "models_dir": "piper_models",
@@ -59,6 +59,9 @@
   },
   "ptt": {
     "hotkey": "numbersign"
+  },
+  "combat": {
+    "model": "gemma-4-31b-it"
   },
   "campaign_name": "campagne"
 }

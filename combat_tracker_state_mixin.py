@@ -54,25 +54,52 @@ class CombatTrackerStateMixin:
         self._save_timer = None
         self._save_combat_state()
 
+    def _sync_hp_to_map(self, name: str, hp: int, temp_hp: int = None):
+        """Propage les PV (et temp_hp optionnel) d'un combatant vers le token
+        correspondant sur la carte de combat.  Thread-safe : doit être appelé
+        depuis le thread Tk (via root.after si nécessaire)."""
+        map_win = getattr(getattr(self, "app", None), "_combat_map_win", None)
+        if map_win is None or not hasattr(map_win, "tokens"):
+            return
+        changed = False
+        for tok in map_win.tokens:
+            if tok.get("name") == name:
+                tok["hp"] = hp
+                if temp_hp is not None:
+                    tok["temp_hp"] = temp_hp
+                if hasattr(map_win, "_redraw_one_token"):
+                    map_win._redraw_one_token(tok)
+                changed = True
+        if changed and hasattr(map_win, "_save_state"):
+            map_win._save_state()
+
     def apply_damage_to_npc(self, target_name: str, damage: int):
         """Recherche un PNJ par nom et applique les dégâts (temp hp inclus)."""
         target_lower = target_name.lower()
         hit = False
+        newly_downed = []   # PNJ qui viennent de tomber à 0 PV pendant cet appel
         for c in self.combatants:
             if not c.is_pc:
                 if c.name.lower() in target_lower or target_lower in c.name.lower():
+                    was_up = c.hp > 0
                     actual_dmg = damage
                     if c.temp_hp > 0:
                         absorbed = min(c.temp_hp, actual_dmg)
                         c.temp_hp -= absorbed
                         actual_dmg -= absorbed
-                    
+
                     c.hp = max(0, c.hp - actual_dmg)
+                    self._sync_hp_to_map(c.name, c.hp)
                     hit = True
+                    if was_up and c.hp == 0:
+                        newly_downed.append(c)
         if hit:
             try:
                 self.win.after(0, self._refresh_list)
                 self._schedule_save()
+                # Ouvrir la boîte de confirmation de mort pour chaque PNJ tombé
+                for c in newly_downed:
+                    self.win.after(120, lambda cb=c: self._confirm_npc_death(cb))
             except Exception:
                 pass
 
@@ -127,6 +154,8 @@ class CombatTrackerStateMixin:
                         was_up   = cb.hp > 0
                         cb.hp    = new_hp
                         cb.temp_hp = new_temp
+                        # Sync carte de combat
+                        self._sync_hp_to_map(cb.name, cb.hp, cb.temp_hp)
                         rw = self._row_widgets.get(cb.uid)
                         if rw:
                             try:

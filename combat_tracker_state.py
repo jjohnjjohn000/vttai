@@ -30,7 +30,17 @@ COMBAT_STATE: dict = {
     # Ex: "Éliminer Chain Devil 1 et 2", "Protéger Mira jusqu'à la sortie", "Survivre 5 rounds"
     # Injecté dans le prompt de chaque agent (actif ET hors-tour) pour orienter leurs décisions.
     "combat_goal": "",
+    # Historique très concis des événements récents du combat (max ~20 entrées)
+    "combat_history": [],
 }
+
+
+def add_combat_history(text: str):
+    """Ajoute une entrée courte narrativo-mécanique pour les prompts des agents."""
+    ch = COMBAT_STATE.setdefault("combat_history", [])
+    ch.append(text.strip())
+    if len(ch) > 20:
+        ch.pop(0)
 
 
 def _is_fully_silenced(agent_name: str) -> bool:
@@ -59,12 +69,6 @@ def get_combat_prompt(agent_name: str) -> str:
     Retourne le bloc de règles de combat à injecter dans le system_message
     de l'agent selon l'état courant du combat.
     Appelé depuis main.py à chaque changement de tour.
-
-    Deux ressources hors-tour INDÉPENDANTES par round :
-      • Réaction   — déclenchée mécaniquement (Attaque d'opportunité, Bouclier…)
-      • Parole     — une phrase courte si l'information est VRAIMENT importante
-    Chacune ne vaut que si elle apporte une information cruciale ou répond
-    à une question directe. Le bavardage tactique est interdit.
     """
     cs = COMBAT_STATE
     if not cs["active"]:
@@ -83,121 +87,246 @@ def get_combat_prompt(agent_name: str) -> str:
         if _goal else ""
     )
 
-    # ── Tour actif ───────────────────────────────────────────────────────────
+    # ── Santé du groupe ───────────────────────────────────────────────
+    group_hp_lines = []
+    if _sm_load_state is not None:
+        try:
+            _st = _sm_load_state()
+            for _n, _d in _st.get("characters", {}).items():
+                if _d.get("active", True):
+                    _hp = _d.get("hp", 0)
+                    _max = max(1, _d.get("max_hp", 1))
+                    group_hp_lines.append(f"  • {_n} : {int((_hp / _max) * 100)}% PV")
+        except Exception:
+            pass
+    if group_hp_lines:
+        _goal_block += "\n❤️ ÉTAT DE SANTÉ DES HÉROS :\n" + "\n".join(group_hp_lines) + "\n"
+
+    # ── Historique du combat ──────────────────────────────────────────────────
+    _history = cs.get("combat_history", [])
+    if _history:
+        lines = "\n".join(_history)
+        _goal_block += f"\n📜 HISTORIQUE RÉCENT DU COMBAT :\n{lines}\n"
+
+    # ── Tour actif (NOUVEAU FORMAT STRICT) ───────────────────────────────────
     if agent_name == active:
-        # ── Snapshot emplacements de sorts ───────────────────────────────────
-        _slot_block = ""
+        # 1. Vérifier les ressources consommées
+        _tr = COMBAT_STATE.get("turn_res", {}).get(agent_name, {})
+        has_action = _tr.get("action", True)
+        has_bonus = _tr.get("bonus", True)
+
+        # 2. Récupérer la classe et les sorts
+        _char_class = ""
+        _slots = {}
+        _prepared =[]
         if _sm_load_state is not None:
             try:
-                _st    = _sm_load_state()
-                _slots = (
-                    _st.get("characters", {})
-                       .get(agent_name, {})
-                       .get("spell_slots", {})
-                )
-                if _slots:
-                    _slot_lines =[]
-                    for _lvl in sorted(_slots.keys(), key=lambda x: int(x)):
-                        _n = _slots[_lvl]
-                        _icon = "✅" if _n > 0 else "❌"
-                        _slot_lines.append(f"    Niv.{_lvl} : {_icon} {_n} slot(s)")
-                    _slot_block = (
-                        "  📖 EMPLACEMENTS DE SORTS (état actuel) :\n"
-                        + "\n".join(_slot_lines) + "\n"
-                        "  ⚠ Ne tente JAMAIS un sort dont le slot est à ❌ 0 —\n"
-                        "    si tu veux le lancer, choisis un niveau avec ✅ slots dispo (upcast),\n"
-                        "    ou opte pour un tour de magie / action physique.\n"
-                    )
+                _st = _sm_load_state()
+                _char_data = _st.get("characters", {}).get(agent_name, {})
+                _char_class = _char_data.get("class", "").lower()
+                _slots = _char_data.get("spell_slots", {})
+                _prepared = list(_char_data.get("spells_prepared",[]))
+                _sub_c = _char_data.get("subclass", "")
+                _c_lvl = _char_data.get("level", 1)
+                
+                if _char_class and _sub_c:
+                    try:
+                        from class_data import get_subclass_spells
+                        for x in get_subclass_spells(_char_class, _sub_c, _c_lvl):
+                            if x not in _prepared:
+                                _prepared.append(x)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
-        # Rappels spécifiques par personnage
-        _char_hints = {
-            "Kaelen": (
-                "  🗡 EXTRA ATTACK : ton Action te donne 2 attaques, mais tu DOIS les déclarer SÉPARÉMENT (1 seule attaque par message).\n"
-                "  ✦ CHÂTIMENT DIVIN : Ajoute simplement '| Divine Smite niv.X si touche' dans la Règle 5e de ton attaque.\n"
-                "  ◈ SORTS (Action Bonus) : Si tu veux lancer un sort de châtiment ou Faveur Divine, fais-le dans un bloc[ACTION] séparé AVANT ton attaque.\n"
-            ),
-            "Elara": (
-                "  🔮 ACTION : choisis le sort le plus efficace pour la situation.\n"
-                "  ◈ CONCENTRATION : vérifie si un sort actif tourne déjà avant d'en lancer un nouveau.\n"
-                "  ◈ ACTION BONUS : sort bonus action si disponible (ex. Misty Step pour te repositionner).\n"
-            ),
-            "Thorne": (
-                "  🗡 ACTION : 1 attaque + SNEAK ATTACK (6d6) si avantage ou allié adjacent.\n"
-                "  ◈ CUNNING ACTION : utilise ton Action Bonus pour [Foncer] (Dash), te Désengager ou te Cacher.\n"
-                "  ⚡ Priorité : Hide → avantage assuré sur la prochaine attaque + Sneak Attack garanti.\n"
-            ),
-            "Lyra": (
-                "  ✦ ACTION : sort de soin/attaque ou Esquive si en danger.\n"
-                "  ◈ ARME SPIRITUELLE : si invoquée, attaque bonus gratuite chaque tour (ne pas oublier !).\n"
-                "  ◈ CHANNEL DIVINITY disponible si non utilisé ce repos court.\n"
-            ),
-        }
-        hint = _char_hints.get(agent_name, "")
-        
-        # Récupération de la vitesse de base du personnage (30 ft par défaut)
-        _speed = 30
+        # 3. Trier les sorts disponibles par type d'action
+        action_spells = []
+        bonus_spells =[]
         try:
-            from engine_mechanics import CHAR_MECHANICS
-            _speed = CHAR_MECHANICS.get(agent_name, {}).get("speed", 30)
-        except ImportError:
+            from spell_data import get_spell
+            avail_levels =[lvl for lvl, count in _slots.items() if int(count) > 0]
+            for s_name in _prepared:
+                sp = get_spell(s_name)
+                if not sp: continue
+                
+                time_raw = sp.get("cast_time_raw", [])
+                unit = str(time_raw[0].get("unit", "")).lower() if time_raw else "action"
+                s_lvl = int(sp.get("level", 0))
+                
+                is_castable = (s_lvl == 0) or any(int(l) >= s_lvl for l in avail_levels)
+                if is_castable:
+                    if "action" in unit and "bonus" not in unit:
+                        action_spells.append(s_name)
+                    elif "bonus" in unit:
+                        bonus_spells.append(s_name)
+        except Exception:
             pass
 
-        # Récupération des ressources restantes
-        _tr = COMBAT_STATE.get("turn_res", {}).get(agent_name, {})
-        _act_str = "✅ Disponible" if _tr.get("action", True) else "❌ Épuisée"
-        _bon_str = "✅ Disponible" if _tr.get("bonus", True) else "❌ Épuisée"
-        _mv_rem  = _tr.get("movement_ft", _speed)
-        _mv_str  = f"✅ {_mv_rem} ft restants" if _mv_rem > 0 else "❌ Épuisé"
-        _re_str  = "❌ Épuisée" if agent_name in COMBAT_STATE.get("reactions_used", set()) else "✅ Disponible"
+        # 4. Construire le prompt strict
+        lines =[
+            f"RONDE DE COMBAT {rnd} C'EST TON TOUR",
+            "Utilise uniquement les ressources listées ci-dessous",
+            "Actions:"
+        ]
 
-        _res_block = (
-            f"  [RESSOURCES ACTUELLES RESTANTES POUR {agent_name}]\n"
-            f"  • Action       : {_act_str}\n"
-            f"  • Action Bonus : {_bon_str}\n"
-            f"  • Déplacement  : {_mv_str} (Vitesse de base: {_speed} ft)\n"
-            f"  • Réaction     : {_re_str}\n\n"
-        )
+        # -- Détection contexte (Cibles à portée & Conditions) --
+        has_melee_target = True  # Vrai par défaut si pas de carte active
+        is_grappled = False
+        
+        try:
+            import __main__
+            app_inst = getattr(__main__, "app", None)
+            if app_inst:
+                # 1. Vérification condition Agrippé (Escape)
+                ct = getattr(app_inst, "_combat_tracker", None)
+                if ct and hasattr(ct, "combatants"):
+                    for c in ct.combatants:
+                        if c.name == agent_name:
+                            conds =[k.lower() for k in getattr(c, "conditions", {}).keys()]
+                            if any("agrip" in x or "grap" in x or "entrav" in x or "restr" in x for x in conds):
+                                is_grappled = True
+                            break
+                            
+                # 2. Vérification distances au corps-à-corps (Melee/Grapple/Shove)
+                cw = getattr(app_inst, "_combat_map_win", None)
+                tokens = getattr(cw, "tokens",[]) if cw else app_inst._win_state.get("combat_map_data", {}).get("tokens",[])
+                
+                if tokens:
+                    my_col, my_row = None, None
+                    for t in tokens:
+                        if t.get("name") == agent_name:
+                            my_col, my_row = t.get("col"), t.get("row")
+                            break
+                            
+                    if my_col is not None and my_row is not None:
+                        has_melee_target = False
+                        for t in tokens:
+                            if t.get("name") != agent_name:
+                                t_col, t_row = t.get("col"), t.get("row")
+                                if t_col is not None and t_row is not None:
+                                    # Tolérance de 2 cases (10ft) pour armes à allonge et monstres larges
+                                    if abs(t_col - my_col) <= 2 and abs(t_row - my_row) <= 2:
+                                        has_melee_target = True
+                                        break
+        except Exception:
+            pass
 
-        return (
-            _goal_block
-            + f"\n\n⚔️ ═══ COMBAT — ROUND {rnd} — C'EST TON TOUR ═══\n"
-            "Utilise TON ÉCONOMIE D'ACTION COMPLÈTE de façon AUTONOME :\n\n"
-            f"{_res_block}"
-            f"{hint}"
-            f"{_slot_block}"
-            f"  🏃 MOUVEMENT — LIMITE STRICTE :\n"
-            f"    ⛔ Tu as {_speed} ft ({_speed//5} cases) de déplacement par tour. PAS PLUS.\n"
-            f"    • Si tu veux aller plus loin, utilise ton Action pour Foncer (Dash) → {_speed*2} ft max.\n"
-            f"    • Les ft restants sont indiqués plus haut — ne les dépasse JAMAIS.\n"
-            f"    • Exemple INTERDIT : déclarer 95 ft ou 50 ft avec {_speed} ft de vitesse.\n"
-            f"    • Exemple VALIDE  : déclarer {_speed} ft ({_speed//5} cases) vers le nord.\n\n"
-            "  ⚔️ AVANT D'ATTAQUER EN MÊLÉE :\n"
-            "    Lis la section 📏 DISTANCES ci-dessous. Si l'ennemi est marqué 🏹 (portée distance),\n"
-            "    tu DOIS te déplacer pour te mettre à portée (≤5ft) AVANT d'attaquer.\n"
-            "    ⛔ Attaque corps-à-corps hors portée = REJETÉE automatiquement.\n\n"
-            "RÈGLE ABSOLUE — NARRATION D'ABORD :\n"
-            "1. Narre d'abord ce que ton personnage fait, dit ou ressent (roleplay).\n"
-            "2. Puis déclare chaque action mécanique dans un bloc [ACTION].\n"
-            "3. N'appelle AUCUN outil directement (update_hp, roll_dice, etc.) — "
-            "le MJ les exécute lui-même après validation dans le chat.\n"
-            "4. Ne modifie jamais tes PV, slots ou état toi-même.\n"
-            "5. Pour les sorts : vérifie la liste 📋 ci-dessus et indique un niveau ✅ disponible.\n\n"
-            "⚠ Ne laisse JAMAIS ton Action inutilisée — au minimum : Esquive (Dodge) ou Aide (Help).\n"
-            "⚠ N'attends PAS que le MJ te liste tes options — c'est TON tour, décide.\n\n"
-            "FORMAT STRICT — DÉCLARE UNE SEULE ACTION À LA FOIS :\n"
-            "Termine ton message par UN SEUL bloc [ACTION]. N'essaie PAS de faire toute ton économie d'action d'un coup.\n\n"
-            "  [ACTION]\n"
-            "  Type      : <Action / Extra Attack / Action Bonus / Réaction / Mouvement / Fin de tour>\n"
-            "  Intention : <ce que ton personnage fait, en une phrase claire>\n"
-            "  Règle 5e  : <mécanique exacte : attaque + bonus + dégâts, sort + niveau, etc.>\n"
-            "  Cible     : <sur qui ou quoi> (Optionnel)\n\n"
-            "Si tu as Attaque Supplémentaire (Extra Attack) ou te bats à deux armes :\n"
-            "  Tu DOIS déclarer ta première attaque, attendre le résultat du MJ, puis déclarer ta seconde attaque dans un NOUVEAU message.\n"
-            "  Ne groupe JAMAIS plusieurs attaques dans le même bloc.\n\n"
-            "Joue avec intensité et concision."
-        )
+        # ── Pré-calcul ba_list (nécessaire pour la détection d'épuisement) ──────
+        ba_list = []
+        _has_cunning = False
+        if has_bonus:
+            if _char_class == "rogue":
+                ba_list.append("Cunning Action (Dash, Disengage, Hide)")
+                _has_cunning = True
+            if bonus_spells:
+                ba_list.append(f"[{', '.join(bonus_spells)}]")
+
+        # 5. Extra attack + vitesse de base
+        n_atk = 1
+        base_speed = 30
+        try:
+            from engine_mechanics import CHAR_MECHANICS
+            n_atk = CHAR_MECHANICS.get(agent_name, {}).get("n_attacks", 1)
+            base_speed = CHAR_MECHANICS.get(agent_name, {}).get("speed", 30)
+        except Exception:
+            pass
+
+        # 6. Mouvement restant (en pieds)
+        rem_mov = _tr.get("movement", base_speed)
+
+        # ── Détection épuisement total → fin de tour automatique ─────────────
+        _no_action  = not has_action
+        _no_bonus   = not ba_list          # slot dispo mais rien à faire = inutile
+        _no_move    = (rem_mov == 0)
+
+        if _no_action and _no_bonus and _no_move:
+            return (
+                _goal_block
+                + f"\n\n⚔️ RONDE {rnd} — {agent_name} — TOUTES RESSOURCES ÉPUISÉES\n"
+                "🚫 Plus d'action, plus d'action bonus, plus de mouvement.\n"
+                "✅ Fin de tour automatique.\n\n"
+                "[ACTION]\n"
+                "Type      : Fin de tour\n"
+                f"Intention : {agent_name} a épuisé toutes ses ressources (action, action bonus, mouvement).\n"
+                "Règle 5e  : Fin de tour automatique — aucune action envisageable.\n"
+                "Cible     : —"
+            )
+
+        # ── Ajout des lignes au prompt normal ────────────────────────────────
+        if has_action:
+            act_list = []
+            if has_melee_target:
+                act_list.append("Melee")
+            act_list.append("ranged attack")
+            if has_melee_target:
+                act_list.extend(["Grapple", "Shove"])
+
+            if action_spells:
+                act_list.append(f"[{', '.join(action_spells)}]")
+
+            # Si Cunning Action est dispo, Dash/Disengage/Hide sont déjà
+            # en Bonus Action → ne pas les lister en Action normale.
+            if _has_cunning:
+                act_list.append("Dodge")
+            else:
+                act_list.extend(["Dash", "Disengage", "Dodge"])
+
+            if is_grappled:
+                act_list.append("Escape")
+
+            if _has_cunning:
+                act_list.extend(["Help", "Equip a shield, Unequip a shield", "Ready"])
+            else:
+                act_list.extend(["Help", "Equip a shield, Unequip a shield", "Hide", "Ready"])
+
+            specials = []
+            if _char_class == "paladin": specials.extend(["Lay on Hands", "Turn the Unholy", "Channel Divinity"])
+            elif _char_class == "cleric": specials.extend(["Turn Undead", "Channel Divinity"])
+            elif _char_class == "rogue": specials.append("Sneak Attack")
+
+            if specials:
+                act_list.append(f"[{', '.join(specials)}]")
+
+            lines.append(f"ACTION (1 par tour): {', '.join(act_list)}")
+        else:
+            lines.append("ACTION: 🚫 DÉJÀ UTILISÉE (Tu n'as plus d'action normale disponible ce tour, utilise seulement action bonus ou mouvement)")
+
+        if ba_list:
+            lines.append(f"BONUS ACTION (1 par tour): {', '.join(ba_list)}")
+
+        if n_atk > 1 and has_action:
+            lines.append("Special: EXTRA ATTACK (martial classes) AFTER ATTACK ACTION")
+
+        lines.append(f"MOUVEMENT RESTANT: {rem_mov} ft ({rem_mov // 5} cases) — 1 case = 5 ft")
+
+        lines.append("")
+        lines.append("Déclare UN choix mécanique en utilisant exactement UN bloc [ACTION].")
+
+        # ── Rappel concentration ─────────────────────────────────────────
+        try:
+            import __main__ as _m_conc
+            _app_conc = getattr(_m_conc, "app", None)
+            if _app_conc:
+                _ct_conc = (
+                    getattr(_app_conc, "_combat_tracker_win", None)
+                    or getattr(_app_conc, "_combat_tracker", None)
+                )
+                if _ct_conc and hasattr(_ct_conc, "combatants"):
+                    for _cc in _ct_conc.combatants:
+                        if _cc.name == agent_name and _cc.concentration and _cc.conc_spell:
+                            lines.append(
+                                f"\n🔮 TU ES CONCENTRÉ SUR : {_cc.conc_spell} "
+                                f"({_cc.conc_rounds_left} tour(s) restant(s)).\n"
+                                f"   ⚠️ Lancer un autre sort à concentration "
+                                f"mettra AUTOMATIQUEMENT fin à {_cc.conc_spell}."
+                            )
+                            break
+        except Exception:
+            pass
+
+        return _goal_block + "\n\n" + "\n".join(lines)
+
 
     # ── Hors-tour : les deux ressources épuisées → silence total ────────────
     if reacted and spoken:
@@ -222,7 +351,7 @@ def get_combat_prompt(agent_name: str) -> str:
             "✅ Il te reste UNE parole possible — seulement si :\n"
             "  • Tu révèles une information tactique CRITIQUE (danger immédiat, piège)\n"
             "  • Tu réponds à une question directe d'un allié\n"
-            "  Sinon → [SILENCE]\n"
+            "  Sinon →[SILENCE]\n"
             "✅ Si le MJ te demande un jet (dégâts, attaque, sauvegarde…) : exécute roll_dice\n"
             "   immédiatement — cela ne coûte aucune ressource.\n"
             "\n"
@@ -276,5 +405,5 @@ def get_combat_prompt(agent_name: str) -> str:
         "  • Commenter l'action, donner des conseils, décrire une posture\n"
         "\n"
         "Si aucune condition ne justifie d'agir → réponds [SILENCE].\n"
-        "Après chaque ressource utilisée, réponds [SILENCE] pour les tours suivants."
+        "Après chaque ressource utilisée, réponds[SILENCE] pour les tours suivants."
     )

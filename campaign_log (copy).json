@@ -203,10 +203,10 @@
       "importance": 2,
       "auto_archived": true,
       "agent_reads": {
-        "Kaelen": "2026-04-15T21:55:05",
-        "Elara": "2026-04-15T21:55:05",
-        "Thorne": "2026-04-15T21:55:05",
-        "Lyra": "2026-04-15T21:55:05"
+        "Kaelen": "2026-04-12T20:20:32",
+        "Elara": "2026-04-12T20:20:32",
+        "Thorne": "2026-04-12T20:20:32",
+        "Lyra": "2026-04-12T20:20:32"
       }
     },
     {
@@ -307,10 +307,10 @@
       "importance": 2,
       "auto_archived": true,
       "agent_reads": {
-        "Kaelen": "2026-04-15T21:55:05",
-        "Elara": "2026-04-15T21:55:05",
-        "Thorne": "2026-04-15T21:55:05",
-        "Lyra": "2026-04-15T21:55:05"
+        "Kaelen": "2026-04-12T20:20:32",
+        "Elara": "2026-04-12T20:20:32",
+        "Thorne": "2026-04-12T20:20:32",
+        "Lyra": "2026-04-12T20:20:32"
       }
     },
     {
@@ -415,58 +415,6 @@
         "Elara": "2026-03-28T11:37:13",
         "Thorne": "2026-03-28T11:37:13",
         "Lyra": "2026-03-28T11:37:13"
-      }
-    },
-    {
-      "id": "clog_009",
-      "label": "Sessions 10–12",
-      "session_range": [
-        10,
-        12
-      ],
-      "date_archived": "2026-04-12T22:24:55",
-      "summary": "### Archives de la Campagne : La Fracture de l’Abîme et le Temple d'Ambre (Sessions 10–12)\n\n**Synthèse Historique**\n\nLa Barovie a cessé d’être un domaine isolé pour devenir l'épicentre d'une conflagration planaire. Après la victoire chèrement acquise contre les diables à épines au Gué de la Tser, le groupe — **Kaelen, Elara, Thorne et Lyra** — a dû faire face à la réalité brutale d'un monde dont les fondations s'effritent. Le « Mur Noir », cette cicatrice d'obsidienne qui lacère le réel, n’est plus une simple anomalie locale, mais la preuve tangible qu'un verrou antique a été brisé, permettant aux légions infernales de déverser leur entropie dans la vallée.\n\n**La Triangulation de la Menace**\nSous la direction de **Rudolph van Richten** et d’**Ezmerelda d'Avenir**, le groupe a entamé une course contre la montre. Tandis que les forces de défense maintenaient une formation rigide autour du Gué de la Tser pour contrer les incursions incessantes, **Elara** a orchestré une synchronisation arcanique complexe, utilisant l'échantillon de liane cristalline collecté lors de combats précédents. Grâce à cet effort, couplé au soutien spirituel indéfectible de **Lyra**, la source de la corruption a été identifiée : le légendaire **Temple d'Ambre**. Cette révélation a agi comme un choc, confirmant que le mal qui déchire la Barovie ne provient pas seulement de l'intérieur, mais d'une source occulte s'étendant bien au-delà des frontières connues.\n\n**L'Incursion de Vex'sira**\nAlors que le groupe finalisait son analyse, la réalité a basculé de nouveau. **Érinye Vex'sira**, une commandante redoutable au service du Général Haruman, a fait une apparition glaçante au Gué de la Tser. Affirmant que la Barovie est destinée à devenir une forteresse infernale, elle a lancé un assaut brutal, soutenu par des chiens de l'enfer. Ce combat a marqué une rupture : les assaillants, protégés par des défenses mystiques, ont contraint les héros à une lutte de haute intensité. Si le groupe a survécu à cette démonstration de force, il est désormais clair qu'ils sont en état de guerre ouverte contre une armée organisée.\n\n**État de la Situation**\nArgynvostholt, bien que fortifié par les efforts des artisans **Gil et Mart**, est passé au second plan. La protection du bastion reste une nécessité, mais elle est devenue indissociable de la neutralisation du Temple d'Ambre. \n\n*   **Progression des Quêtes** :\n    *   🗺️ **[Principale] Stopper la brèche planaire** : Épicentre localisé. L'objectif est passé de la simple défense à l'infiltration du Temple d'Ambre.\n    *   🗺️ **[Principale] Défendre Argynvostholt** : En pause stratégique, le sort du manoir dépendant désormais de l'élimination de la source du fléau.\n    *   🗺️ **[Spirituelle] Les restes d'Argynvost** : Statut inchangé ; la quête reste la pierre angulaire symbolique pour restaurer l'intégrité énergétique de la vallée.\n\n**Continuité Narrative**\nLe groupe se trouve à un tournant funeste. La nature du combat a changé : ils ne luttent plus seulement contre l'ombre d'un vampire, mais contre une invasion planifiée visant à faire de la Barovie le pivot d'une domination cosmique. Van Richten se retire temporairement pour recalibrer ses outils tactiques, tandis qu'Ezmerelda s'apprête à accompagner les héros dans leur périlleuse ascension vers le Temple. Ils ne marchent plus vers un mystère, mais vers le cœur battant de leur ennemi.\n\n*Archivé le 12 avril 2026 par le Chroniqueur IA.*",
-      "keywords": [
-        "Temple",
-        "Barovie",
-        "contre",
-        "groupe",
-        "d'Ambre",
-        "Kaelen",
-        "Lyra",
-        "sort",
-        "Ezmerelda",
-        "vampire",
-        "quête",
-        "Thorne",
-        "combat",
-        "Argynvostholt",
-        "Elara",
-        "Manoir",
-        "cosmique",
-        "d'une",
-        "source",
-        "Campagne",
-        "Fracture",
-        "Abîme",
-        "Sessions",
-        "Synthèse",
-        "Historique"
-      ],
-      "characters": [
-        "Kaelen",
-        "Elara",
-        "Thorne",
-        "Lyra"
-      ],
-      "locations": [],
-      "importance": 2,
-      "auto_archived": true,
-      "agent_reads": {
-        "Kaelen": "2026-04-13T12:28:38",
-        "Elara": "2026-04-13T12:28:38",
-        "Thorne": "2026-04-13T12:28:38",
-        "Lyra": "2026-04-13T12:28:38"
       }
     }
   ],

@@ -32,12 +32,13 @@ class ObstacleManagerMixin:
 
     def _obs_poly_add(self, cx: float, cy: float):
         """Ajoute un sommet au polygone obstacle en cours."""
+        scale = self._cp / self.cell_px
         pts = self._obs_poly_pts
         col = self._obs_color
         if pts:
             x0, y0 = pts[-1]
             iid = self.canvas.create_line(
-                x0 * self.zoom, y0 * self.zoom,
+                x0 * scale, y0 * scale,
                 cx, cy,
                 fill=col, width=2, dash=(4, 2), tags="obs_preview")
             self._obs_poly_ids.append(iid)
@@ -47,7 +48,7 @@ class ObstacleManagerMixin:
             outline=col, fill="#1a1a1a", width=2, tags="obs_preview")
         self._obs_poly_ids.append(iid)
         # Stocke en coordonnées monde (indépendant du zoom)
-        pts.append((cx / self.zoom, cy / self.zoom))
+        pts.append((cx / scale, cy / scale))
         self._obs_poly_update_preview(cx, cy)
 
     def _obs_poly_update_preview(self, cx: float, cy: float):
@@ -55,16 +56,17 @@ class ObstacleManagerMixin:
         pts = self._obs_poly_pts
         if not pts:
             return
+        scale = self._cp / self.cell_px
         col = self._obs_color
         x0, y0 = pts[-1]
         self.canvas.create_line(
-            x0 * self.zoom, y0 * self.zoom, cx, cy,
+            x0 * scale, y0 * scale, cx, cy,
             fill=col, width=2, dash=(4, 3),
             tags=("obs_preview", "obs_preview_cursor"))
         if len(pts) >= 2:
             x1, y1 = pts[0]
             self.canvas.create_line(
-                cx, cy, x1 * self.zoom, y1 * self.zoom,
+                cx, cy, x1 * scale, y1 * scale,
                 fill=col, width=1, dash=(2, 6),
                 tags=("obs_preview", "obs_preview_cursor"))
 
@@ -85,7 +87,8 @@ class ObstacleManagerMixin:
 
     def _obs_free_start(self, cx: float, cy: float):
         """Commence un tracé main levée."""
-        self._obs_free_pts = [(cx / self.zoom, cy / self.zoom)]
+        scale = self._cp / self.cell_px
+        self._obs_free_pts = [(cx / scale, cy / scale)]
         self._obs_free_id  = self.canvas.create_line(
             cx, cy, cx, cy,
             fill=self._obs_color, width=3, tags="obs_preview")
@@ -94,9 +97,10 @@ class ObstacleManagerMixin:
         """Ajoute un point au tracé en cours."""
         if not self._obs_free_pts:
             return
-        self._obs_free_pts.append((cx / self.zoom, cy / self.zoom))
+        scale = self._cp / self.cell_px
+        self._obs_free_pts.append((cx / scale, cy / scale))
         # Met à jour la ligne canvas
-        flat = [c * self.zoom for pt in self._obs_free_pts for c in pt]
+        flat = [c * scale for pt in self._obs_free_pts for c in pt]
         if len(flat) >= 4:
             self.canvas.coords(self._obs_free_id, *flat)
 
@@ -153,10 +157,11 @@ class ObstacleManagerMixin:
     def _obs_delete_at(self, cx: float, cy: float):
         """Supprime l'obstacle dont la forme contient le point (cx, cy) canvas.
         Utilisé par le clic droit en mode obstacle_poly / select."""
-        wx, wy = cx / self.zoom, cy / self.zoom
+        scale = self._cp / self.cell_px
+        wx, wy = cx / scale, cy / scale
         for obs in reversed(self._obstacles):
             if self._obs_contains(obs["pts"], wx, wy) or \
-               self._obs_near_segments(obs["pts"], wx, wy, tol=12 / self.zoom):
+               self._obs_near_segments(obs["pts"], wx, wy, tol=12 / scale):
                 self._obstacles.remove(obs)
                 self._obs_pil = None
                 self._composite()
@@ -167,9 +172,10 @@ class ObstacleManagerMixin:
         """Outil efface : supprime tout obstacle dont un segment passe dans le
         rayon du pinceau autour de (cx, cy) en coordonnées canvas.
         Fonctionne sur les traits fins (type free) ET les polygones remplis."""
+        scale = self._cp / self.cell_px
         brush_r = max(self._brush_var.get(), 1) * self._cp * 0.5
-        tol_world = brush_r / self.zoom
-        wx, wy = cx / self.zoom, cy / self.zoom
+        tol_world = brush_r / scale
+        wx, wy = cx / scale, cy / scale
         removed = []
         for obs in self._obstacles:
             pts = obs["pts"]
@@ -258,6 +264,7 @@ class ObstacleManagerMixin:
             return img
         draw = _ID.Draw(img)
         tx0, ty0 = getattr(self, "_tile_rect", (0, 0, 0, 0))[:2]
+        scale = self._cp / self.cell_px
         for obs in self._obstacles:
             pts = obs["pts"]
             if len(pts) < 2:
@@ -272,7 +279,7 @@ class ObstacleManagerMixin:
             fill_rgba    = (r, g, b, 200)
             outline_rgba = (min(255, r+60), min(255, g+60), min(255, b+60), 255)
             # Convertit les coords monde → pixels et applique l'offset de la vue (zoom/scroll)
-            scaled = [(px * self.zoom - tx0, py * self.zoom - ty0) for px, py in pts]
+            scaled = [(px * scale - tx0, py * scale - ty0) for px, py in pts]
             if len(scaled) >= 3:
                 draw.polygon(scaled, fill=fill_rgba, outline=outline_rgba)
             else:

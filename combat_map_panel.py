@@ -134,7 +134,7 @@ def get_map_prompt(win_state: dict, for_hero: str = "", in_combat: bool = True) 
     def _dist3d_ft(t1, t2) -> float:
         horiz = _dist_horiz_ft(t1, t2)
         dalt  = abs(int(t1.get("altitude_ft", 0)) - int(t2.get("altitude_ft", 0)))
-        return _math.sqrt(horiz ** 2 + dalt ** 2)
+        return max(float(horiz), float(dalt))
 
     def _reach_verdict(t1, t2) -> str:
         d3d = _dist3d_ft(t1, t2)
@@ -147,7 +147,7 @@ def get_map_prompt(win_state: dict, for_hero: str = "", in_combat: bool = True) 
             f"\n\n🗺️ ═══ CARTE DE COMBAT ({cols}×{rows} cases — 1 case = 5ft) ═══",
             "  • L'axe des Colonnes (Col) va de GAUCHE (1) vers la DROITE (est).",
             "  • L'axe des Rangées/Lignes (Lig) va du HAUT (1) vers le BAS (sud).",
-            "  • Les distances intègrent l'ALTITUDE (vol 3D) : dist_3D = √(horiz²+Δalt²).",
+            "  • Les distances intègrent l'ALTITUDE (règle 1-1-1) : dist_3D = max(horiz, Δalt).",
             "  • Portée de mêlée : ≤5ft en 3D.",
             "  • Un token en vol ne peut être attaqué en mêlée que si la dist 3D ≤ 5ft.",
             "  • 🌫️ Seuls les ennemis sur des cases RÉVÉLÉES sont listés ci-dessous.",
@@ -206,7 +206,7 @@ def get_map_prompt(win_state: dict, for_hero: str = "", in_combat: bool = True) 
                     dalt      = abs(h_alt - int(m.get("altitude_ft", 0)))
                     d3d       = _dist3d_ft(hero_token, m)
                     breakdown = (f"{horiz:.0f}ft horiz, même altitude" if dalt == 0
-                                 else f"{horiz:.0f}ft horiz + {dalt}ft vertical = {d3d:.0f}ft 3D")
+                                 else f"max({horiz:.0f}ft ↔, {dalt}ft ↕) = {d3d:.0f}ft 3D")
                     lines.append(f"  → {_label(m)} : {breakdown} — {_reach_verdict(hero_token, m)}")
         else:
             lines.append("\n📏 DISTANCES HÉROS → ENNEMIS (distances 3D — altitude incluse) :")
@@ -218,7 +218,7 @@ def get_map_prompt(win_state: dict, for_hero: str = "", in_combat: bool = True) 
                     dalt      = abs(h_alt - int(m.get("altitude_ft", 0)))
                     d3d       = _dist3d_ft(h, m)
                     breakdown = (f"{horiz:.0f}ft horiz, même altitude" if dalt == 0
-                                 else f"{horiz:.0f}ft horiz + {dalt}ft vertical = {d3d:.0f}ft 3D")
+                                 else f"max({horiz:.0f}ft ↔, {dalt}ft ↕) = {d3d:.0f}ft 3D")
                     lines.append(f"    → {_label(m)} : {breakdown} — {_reach_verdict(h, m)}")
 
     if len(allies) >= 2:
@@ -235,7 +235,7 @@ def get_map_prompt(win_state: dict, for_hero: str = "", in_combat: bool = True) 
                         dalt      = abs(int(hero_token.get("altitude_ft", 0)) - int(ally.get("altitude_ft", 0)))
                         d3d       = _dist3d_ft(hero_token, ally)
                         breakdown = (f"{horiz:.0f}ft" if dalt == 0
-                                     else f"{horiz:.0f}ft horiz + {dalt}ft vertical = {d3d:.0f}ft 3D")
+                                     else f"max({horiz:.0f}ft ↔, {dalt}ft ↕) = {d3d:.0f}ft 3D")
                         lines.append(f"  → {_label(ally)} : {breakdown} — {_reach_verdict(hero_token, ally)}")
         else:
             lines.append("\n🤝 DISTANCES ENTRE ALLIÉS (3D) :")
@@ -245,7 +245,7 @@ def get_map_prompt(win_state: dict, for_hero: str = "", in_combat: bool = True) 
                     dalt      = abs(int(h1.get("altitude_ft", 0)) - int(h2.get("altitude_ft", 0)))
                     d3d       = _dist3d_ft(h1, h2)
                     breakdown = (f"{horiz:.0f}ft" if dalt == 0
-                                 else f"{horiz:.0f}ft horiz + {dalt}ft vertical = {d3d:.0f}ft 3D")
+                                 else f"max({horiz:.0f}ft ↔, {dalt}ft ↕) = {d3d:.0f}ft 3D")
                     lines.append(f"  • {_label(h1)} ↔ {_label(h2)} : {breakdown} — {_reach_verdict(h1, h2)}")
 
     if notes:

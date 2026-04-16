@@ -74,15 +74,24 @@ class CombatTrackerNPCMixin:
 
     # ─── Outils MJ au début du tour PNJ ──────────────────────────────────────
 
+    # ─── Outils MJ au début du tour PNJ ──────────────────────────────────────
+
     def _show_npc_turn_tools(self, combatant):
         """
         À appeler au début du tour d'un combattant PNJ.
-        Si le PNJ a une fiche de monstre (bestiary_name), affiche dans le chat
-        un bloc interactif : attaques cliquables, sélecteur de cible, vitesse,
-        actions bonus, réactions et traits. Ne fait rien si pas de fiche.
+        Affiche dans le chat un bloc interactif (attaques, actions) si une fiche est trouvée.
         """
-        bname = getattr(combatant, "bestiary_name", "") or ""
+        import re
+        
+        # 1. Chercher le nom officiel du bestiaire, sinon se rabattre sur le nom affiché
+        bname = getattr(combatant, "bestiary_name", "")
         if not bname:
+            bname = getattr(combatant, "name", "")
+            
+        # 2. Nettoyer le nom (enlever les numéros à la fin, ex: "Gobelin 2" -> "Gobelin")
+        bname_clean = re.sub(r'\s+\d+$', '', bname).strip()
+
+        if not bname_clean:
             return
 
         try:
@@ -90,14 +99,19 @@ class CombatTrackerNPCMixin:
         except ImportError:
             return
 
-        monster = get_monster(bname)
+        # 3. Chercher le monstre dans la base de données
+        monster = get_monster(bname_clean)
         if not monster:
-            return
+            monster = get_monster(bname) # Fallback au cas où le nom contiendrait vraiment un chiffre
+            if not monster:
+                return
 
-        # Toutes les cibles possibles (les autres combattants encore actifs)
+        # Mettre à jour le bestiary_name pour les prochains tours (répare la sauvegarde)
+        combatant.bestiary_name = monster.get("name", bname_clean)
+
+        # 4. Préparer l'interface pour le MJ
         targets = [c for c in self.combatants if c is not combatant]
 
-        # On cherche d'abord chat_queue (tracker) puis msg_queue (app)
         queue = getattr(self, "chat_queue", None)
         if queue is None and hasattr(self, "app"):
             queue = getattr(self.app, "msg_queue", None)

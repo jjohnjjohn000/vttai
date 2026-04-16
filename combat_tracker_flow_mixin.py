@@ -9,7 +9,7 @@ from tkinter import messagebox
 
 # Imports des dépendances partagées
 try:
-    from combat_tracker_constants import C, TACTICS
+    from combat_tracker_constants import C, TACTICS, CONDITIONS
     from combat_tracker_state import COMBAT_STATE
 except ImportError:
     pass
@@ -196,6 +196,102 @@ class CombatTrackerFlowMixin:
         _activate(new_idx)
         self._update_round_label()
 
+    # ── Helper : retirer la concentration d'un combattant ──────────────────
+    def _remove_concentration(self, c, reason: str = ""):
+        """Retire la concentration du combattant c (condition + métadonnées).
+        Synchronise le tracker UI et la carte de combat."""
+        old_spell = c.conc_spell
+        c.concentration     = False
+        c.conc_spell        = ""
+        c.conc_rounds_left  = 0
+        c.conc_total_rounds = 0
+        c.conditions.pop("Concentré", None)
+
+        # Sync bouton Conc dans le tracker
+        rw = self._row_widgets.get(c.uid)
+        if rw:
+            conc_var = rw.get("conc_var")
+            if conc_var is not None:
+                conc_var.set(False)
+            # Sync badge condition Concentré
+            cond_btns = rw.get("cond_btns", {})
+            btn = cond_btns.get("Concentré")
+            if btn and "Concentré" in CONDITIONS:
+                btn.config(bg=_darken(CONDITIONS["Concentré"]["color"], 0.25), fg="#666677")
+
+        # Sync carte de combat
+        if getattr(self, "app", None) and getattr(self.app, "_combat_map_win", None):
+            for t in self.app._combat_map_win.tokens:
+                if t.get("name") == c.name:
+                    conds = t.setdefault("conditions", [])
+                    if "Concentré" in conds:
+                        conds.remove("Concentré")
+                    self.app._combat_map_win._redraw_one_token(t)
+
+        # Log
+        if reason and self.chat_queue:
+            self.chat_queue.put({
+                "sender": "⚔️ Combat",
+                "text":   f"⏱️ {reason}",
+                "color":  "#e67e22",
+            })
+
+        self._schedule_save()
+
+    # ── Helper : appliquer la concentration sur un combattant ─────────────
+    def _apply_concentration(self, c, spell_name: str, rounds: int):
+        """Applique la concentration sur le combattant c.
+        Si déjà concentré, retire l'ancienne concentration d'abord."""
+        if c.concentration and c.conc_spell:
+            self._remove_concentration(
+                c, f"La concentration de {c.name} sur {c.conc_spell} est interrompue "
+                   f"(nouveau sort : {spell_name})."
+            )
+
+        c.concentration      = True
+        c.conc_spell         = spell_name
+        c.conc_rounds_left   = rounds
+        c.conc_total_rounds  = rounds
+        c.conditions["Concentré"] = True
+
+        # Sync bouton Conc dans le tracker
+        rw = self._row_widgets.get(c.uid)
+        if rw:
+            conc_var = rw.get("conc_var")
+            if conc_var is not None:
+                conc_var.set(True)
+            cond_btns = rw.get("cond_btns", {})
+            btn = cond_btns.get("Concentré")
+            if btn and "Concentré" in CONDITIONS:
+                btn.config(bg=CONDITIONS["Concentré"]["color"], fg="#ffffff")
+
+        # Sync carte de combat
+        if getattr(self, "app", None) and getattr(self.app, "_combat_map_win", None):
+            for t in self.app._combat_map_win.tokens:
+                if t.get("name") == c.name:
+                    conds = t.setdefault("conditions", [])
+                    if "Concentré" not in conds:
+                        conds.append("Concentré")
+                    self.app._combat_map_win._redraw_one_token(t)
+
+        # Log
+        if self.chat_queue:
+            self.chat_queue.put({
+                "sender": "⚔️ Combat",
+                "text":   f"🔮 {c.name} se concentre sur **{spell_name}** ({rounds} tours).",
+                "color":  "#40c4ff",
+            })
+
+        self._schedule_save()
+
+        # Rafraîchir immédiatement les prompts pour que la concentration
+        # soit visible dans le system_message de l'agent
+        if getattr(self, "app", None) and hasattr(self.app, "_update_agent_combat_prompts"):
+            try:
+                self.app._update_agent_combat_prompts()
+            except Exception:
+                pass
+
     def _next_turn(self):
         if not self.combat_active:
             return
@@ -239,6 +335,16 @@ class CombatTrackerFlowMixin:
                         if "Esquive" in t["tactics"]:
                             t["tactics"].remove("Esquive")
                             self.app._combat_map_win._redraw_one_token(t)
+
+        # ── Concentration : décrémenter au début du tour du concentré ─────
+        if active_c and active_c.concentration and active_c.conc_rounds_left > 0:
+            active_c.conc_rounds_left -= 1
+            if active_c.conc_rounds_left <= 0:
+                self._remove_concentration(
+                    active_c,
+                    f"La concentration de {active_c.name} sur "
+                    f"{active_c.conc_spell} a expiré."
+                )
 
         # Mise à jour visuelle chirurgicale — PAS de rebuild complet
         self._update_active_rows(old_idx, self.current_idx)
@@ -285,6 +391,10 @@ class CombatTrackerFlowMixin:
         for c in self.combatants:
             c.reset_turn_resources()
             c.conditions.clear()
+            c.concentration      = False
+            c.conc_spell         = ""
+            c.conc_rounds_left   = 0
+            c.conc_total_rounds  = 0
             if c.is_pc:
                 c.death_saves_success = 0
                 c.death_saves_fail    = 0
@@ -363,7 +473,7 @@ class CombatTrackerFlowMixin:
         
         # 2. Envoyer le beau bandeau dans le chat principal (pour PJ et PNJ)
         if self.chat_queue:
-            hp_info = f"PV {c.hp}/{c.max_hp} | CA {c.ac}"
+            hp_info = f"PV {int((c.hp / max(1, c.max_hp)) * 100)}% | CA {c.ac}"
             round_n = getattr(self, "round_num", "?")
             chat_msg = (
                 f"{'─' * 38}\n"
@@ -415,6 +525,8 @@ class CombatTrackerFlowMixin:
         if not (0 <= self.current_idx < len(self.combatants)):
             return
         c = self.combatants[self.current_idx]
-        if not c.is_pc and not c.is_down:
+        
+        # Affichage de la fiche du PNJ, qu'il soit conscient ou à 0 PV
+        if not c.is_pc:
             if hasattr(self, "_show_npc_turn_tools"):
                 self._show_npc_turn_tools(c)

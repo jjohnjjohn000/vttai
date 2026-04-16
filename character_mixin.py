@@ -1032,6 +1032,21 @@ class CharacterMixin:
             sp_canvas.itemconfig(sp_window, width=e.width)
         sp_canvas.bind("<Configure>", _on_sp_canvas_configure)
 
+        # Mousewheel — onglet Sorts
+        def _sp_mousewheel(e):
+            sp_canvas.yview_scroll(int(-1 * (e.delta or (1 if e.num == 4 else -1)) * 3), "units")
+        sp_canvas.bind("<Button-4>",   _sp_mousewheel)
+        sp_canvas.bind("<Button-5>",   _sp_mousewheel)
+        sp_canvas.bind("<MouseWheel>", _sp_mousewheel)
+
+        def _bind_sp_scroll(widget):
+            """Propage le scroll molette à sp_canvas depuis n'importe quel widget enfant."""
+            widget.bind("<Button-4>",   _sp_mousewheel, add="+")
+            widget.bind("<Button-5>",   _sp_mousewheel, add="+")
+            widget.bind("<MouseWheel>", _sp_mousewheel, add="+")
+            for child in widget.winfo_children():
+                _bind_sp_scroll(child)
+
         # ── Barre de recherche + bouton Ajouter ─────────────────────────────
         search_var = tk.StringVar()
         spell_bar  = tk.Frame(spells_frame, bg="#12121e")
@@ -1099,6 +1114,7 @@ class CharacterMixin:
                 tk.Label(sp_inner, text="Aucun sort.\nCliquez ＋ pour en ajouter.",
                          bg="#1e1e2e", fg="#444455",
                          font=("Consolas", 9, "italic"), justify=tk.CENTER).pack(pady=20)
+                _bind_sp_scroll(sp_inner)
                 return
 
             from collections import defaultdict
@@ -1115,6 +1131,7 @@ class CharacterMixin:
                 tk.Label(sp_inner, text="Aucun sort correspond.",
                          bg="#1e1e2e", fg="#444455",
                          font=("Consolas", 9, "italic")).pack(pady=20)
+                _bind_sp_scroll(sp_inner)
                 return
 
             for lvl in sorted(by_level.keys()):
@@ -1127,6 +1144,8 @@ class CharacterMixin:
                          font=("Consolas", 8)).pack(side=tk.RIGHT, padx=8)
                 for spell_name, sp_data, is_auto in by_level[lvl]:
                     _render_spell_row(spell_name, sp_data, is_auto)
+            # Rebind molette sur tous les widgets fraîchement créés
+            _bind_sp_scroll(sp_inner)
 
         def _render_spell_row(spell_name: str, sp_data, is_auto=False):
             school = sp_data.get("school", "") if sp_data else ""

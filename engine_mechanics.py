@@ -23,6 +23,7 @@ from class_data import get_no_roll_feature, get_feature_details
 CHAR_MECHANICS: dict = {
     "Kaelen": {  # Paladin 11 — STR20 DEX14 CON16 INT10 WIS14 CHA18 — Prof+4
         "atk_melee": +11, "atk_ranged": +7, "atk_spell": +9,
+        "speed": 30,
         "dmg_melee": (2, 6, +8), "n_attacks": 2, "save_dc": 18,
         "skills": {"athlétisme":+10,"religion":+5,"persuasion":+9,
                    "perspicacité":+7,"intimidation":+9,"perception":+7},
@@ -31,6 +32,7 @@ CHAR_MECHANICS: dict = {
     },
     "Elara": {   # Mage 11 — STR8 DEX16 CON14 INT20 WIS14 CHA10 — Prof+4
         "atk_melee": +3, "atk_ranged": +8, "atk_spell": +10,
+        "speed": 30,
         "dmg_melee": (1, 4, -1), "n_attacks": 1, "save_dc": 18,
         "skills": {"arcanes":+15,"histoire":+10,"investigation":+10,
                    "nature":+10,"religion":+10,"perception":+7,"perspicacité":+7},
@@ -39,6 +41,7 @@ CHAR_MECHANICS: dict = {
     },
     "Thorne": {  # Voleur Assassin 11 — STR12 DEX20 CON14 INT16 WIS12 CHA14 — Prof+4
         "atk_melee": +11, "atk_ranged": +11, "atk_spell": None,
+        "speed": 30,
         "dmg_melee": (1, 6, +5), "dmg_sneak": (6, 6, 0),
         "n_attacks": 2, "save_dc": None,
         "skills": {"discrétion":+15,"escamotage":+15,"tromperie":+12,
@@ -49,6 +52,7 @@ CHAR_MECHANICS: dict = {
     },
     "Lyra": {    # Clerc Vie 11 — STR14 DEX12 CON14 INT12 WIS20 CHA16 — Prof+4
         "atk_melee": +7, "atk_ranged": +6, "atk_spell": +10,
+        "speed": 30,
         "dmg_melee": (1, 8, +2), "n_attacks": 1, "save_dc": 18,
         "skills": {"médecine":+15,"perspicacité":+10,"religion":+6,
                    "persuasion":+8,"perception":+10,"histoire":+6},
@@ -62,7 +66,8 @@ CHAR_MECHANICS: dict = {
 
 def split_into_subactions(type_label: str, intention: str,
                           regle: str, cible: str,
-                          char_mechanics: dict | None = None) -> list:
+                          char_mechanics: dict | None = None,
+                          char_name: str = "") -> list:
     """
     Retourne l'action déclarée.
     Plus de duplication automatique d'attaques : chaque bloc [ACTION] 
@@ -105,7 +110,7 @@ def split_into_subactions(type_label: str, intention: str,
         "attaque", "frappe", "coup", "tir", "poignarde", "tranche",
         "assaut", "perfore", "lacère", "abat", "sneak attack", "sournoise",
         "reckless", "téméraire", "deux armes", "dual wield",
-        "corps-à-corps",
+        "corps-à-corps", "extra attack", "seconde attaque", "deuxième attaque",
     )
     _SPELL_DETECT = ("sort", "magie", "incant", "sacred flame", "flamme sacrée", 
                      "divine favor", "faveur divine", "bless", "bénédiction",
@@ -121,15 +126,21 @@ def split_into_subactions(type_label: str, intention: str,
     # "divine smite" n'est pas un sort, c'est une feature ajoutée à une attaque
     _is_divine_smite = any(k in combined for k in ("divine smite", "smite divin", "châtiment divin", "chatiment divin"))
     
+    # Identifier les actions qui sont manifestement des compétences/utilitaires et non des attaques
+    _SKILL_OVERRIDE = ("se cacher", "cacher", "discrétion", "stealth", "aim", "steady aim", "visée", "viser", "jet de compétence", "skill check")
+    _is_skill_action = any(k in combined for k in _SKILL_OVERRIDE)
+    
     # C'est une attaque physique si :
     # 1. Mots-clés d'attaque présents OU "divine smite"
     # 2. ET ce n'est pas un sort d'attaque ou un sort de smite
     # 3. ET il y a une cible valide (un jet d'attaque contre "Aucune/Self" n'a pas de sens)
-    _has_target = cible.lower().strip() not in ("", "none", "-", "n/a", "aucun", "aucune", "soi-même", "self", "personne", "moi-même", "moi meme")
+    # 4. ET ce n'est pas une compétence/action spécifique (comme viser ou se cacher)
+    _has_target = cible.lower().strip() not in ("", "none", "-", "n/a", "aucun", "aucune", "soi-même", "self", "personne", "moi-même", "moi meme", char_name.lower())
     _DODGE_KW = ("esquive", "dodge", "défensive", "defensive")
     _is_dodge = any(k in combined for k in _DODGE_KW)
     _is_dash = any(k in combined for k in ("dash", "foncer", "sprint", "course"))
-    is_physical_attack = (_has_generic_atk or _is_divine_smite) and not _is_spell and not _is_dodge and not _is_dash and _has_target
+    _is_disengage = any(k in combined for k in ("disengage", "désengager", "desengager", "désengagement", "se désengager", "se desengager"))
+    is_physical_attack = (_has_generic_atk or _is_divine_smite) and not _is_spell and not _is_dodge and not _is_dash and not _is_disengage and not _is_skill_action and _has_target
 
     # On nettoie le type_label pour enlever "1/2" ou "Extra Attack" s'il y en a, 
     # pour garder l'UI propre, bien que l'agent ne devrait plus les générer.
@@ -160,7 +171,7 @@ def roll_attack_only(char_name: str, regle: str, intention: str,
     ranged = any(k in r_low or k in i_low
                  for k in ("distance","arc","arbalète","javelot","projectile"))
     _m_atk = _re.search(
-        r'(?:corps[- ]à[- ]corps|mêlée|melee|distance|ranged|attaque)[^,]*?([+-]\d+)',
+        r'(?:corps[- ]à[- ]corps|mêlée|melee|distance|ranged|attaque|extra attack)[^,]*?([+-]\d+)',
         r_low
     )
     if _m_atk:
@@ -184,7 +195,9 @@ def roll_attack_only(char_name: str, regle: str, intention: str,
         dn, df, db = dmg_d
 
     atk_res  = roll_dice(char_name, "1d20", atk_bonus)
-    lines    = [f"⚔️ {char_name} attaque {cible}"]
+    is_extra = any(k in r_low or k in i_low for k in ("extra attack", "seconde attaque", "deuxième attaque"))
+    lbl = " attaque " if not is_extra else " porte une Extra Attack sur "
+    lines    =[f"⚔️ {char_name}{lbl}{cible}"]
     if mj_note:
         lines.append(f"Note MJ : {mj_note}")
     lines.append(f"  [jet d'attaque] {atk_res}")
@@ -224,11 +237,16 @@ def roll_damage_only(char_name: str, cible: str,
                      dn: int, df: int, db: int,
                      is_crit: bool, smite: dict | None,
                      mj_note: str,
-                     char_mechanics: dict) -> tuple:
+                     char_mechanics: dict,
+                     sneak_approved: bool = False) -> tuple:
     """
     Phase 2 d'une attaque : lance les dés de dégâts (+ smite si présent).
     Retourne (feedback_str, total_damage_int) pour l'hyperlien du chat.
     Le total additionne tous les composants (dégâts bruts + smite + sournoise).
+
+    sneak_approved : si True, les dégâts de Sneak Attack sont inclus.
+                     Le flag est positionné par la boîte de confirmation MJ
+                     dans engine_receive.py.
     """
     import re as _re_dmg
 
@@ -265,12 +283,14 @@ def roll_damage_only(char_name: str, cible: str,
         )
         grand_total += _extract_total(sm_res)
 
-    if char_name == "Thorne":
-        sn, sf, sb = char_mechanics.get("Thorne", {}).get("dmg_sneak", (6, 6, 0))
+    # Sneak Attack : seulement si approuvé par le MJ via la boîte de confirmation
+    if sneak_approved:
+        stats = char_mechanics.get(char_name, {})
+        sn, sf, sb = stats.get("dmg_sneak", (6, 6, 0))
         if is_crit:
             sn *= 2
-        snk_res = roll_dice("Thorne", f"{sn}d{sf}", sb)
-        lines.append(f"  [sournoise] {snk_res}  ← si avantage/allié adjacent")
+        snk_res = roll_dice(char_name, f"{sn}d{sf}", sb)
+        lines.append(f"  [🗡️ sournoise] {snk_res}")
         grand_total += _extract_total(snk_res)
 
     lines.append("")
@@ -383,9 +403,17 @@ def execute_action_mechanics(
         return int(m.group(1)) if m else None
 
     def _extract_level(text):
+        levels =[]
         for pat in (r"niv(?:eau)?\.?\s*(\d+)", r"niveau\s*(\d+)", r"\bniv(\d+)"):
-            m = _re.search(pat, text, _re.IGNORECASE)
-            if m: return int(m.group(1))
+            for m in _re.finditer(pat, text, _re.IGNORECASE):
+                levels.append(int(m.group(1)))
+        
+        # Filtre absolu : en D&D 5e, les sorts s'arrêtent au niveau 9.
+        # Cela empêche le système d'attraper le "11" de "Clerc niv 11".
+        valid_levels = [l for l in levels if l <= 9]
+        if valid_levels:
+            # S'il y a plusieurs niveaux (ex: Sort niv 1 upcast niv 3), on prend le dernier
+            return valid_levels[-1] 
         return None
 
     def _skill_bonus(text):
@@ -416,7 +444,8 @@ def execute_action_mechanics(
                 "flamme","sacred","flame","toll the dead","glas des morts",
                 "word of radiance","mot radieux","cantrip")
     ATK_KW   = ("attaque","frappe","coup","tir","tire","charge","poignarde",
-                "tranche","abat","corps-à-corps","distance","assaut","offensive")
+                "tranche","abat","corps-à-corps","distance","assaut","offensive",
+                "extra attack", "seconde attaque", "deuxième attaque")
     SKILL_KW = ("jet","check","compétence","sauvegarde","save","arcanes",
                 "perception","investigation","discrétion","athlétisme",
                 "acrobaties","médecine","histoire","nature","religion",
@@ -429,19 +458,28 @@ def execute_action_mechanics(
                      
     _DIVINE_SMITE = ("divine smite", "smite divin", "châtiment divin", "chatiment divin")
 
-    is_spell = any(k in r_low or k in i_low for k in SPELL_KW) or any(k in r_low or k in i_low for k in _SMITE_SPELLS)
+    is_move_action = "mouvement" in t_low
+    is_spell = (any(k in r_low or k in i_low for k in SPELL_KW) or any(k in r_low or k in i_low for k in _SMITE_SPELLS)) and not is_move_action
     # Garde mouvement : si type_label est explicitement "Mouvement", aucun jet de compétence
     # ne doit être déclenché — le LLM met parfois "analyser / détecter" dans l'intention
     # d'un déplacement, ce qui ferait firer is_skill avant la branche mouvement.
     # Défini AVANT is_atk pour éviter "referenced before assignment".
-    is_move_action = "mouvement" in t_low
-    _has_target = cible.lower().strip() not in ("", "none", "-", "n/a", "aucun", "aucune", "soi-même", "self", "personne", "moi-même", "moi meme")
+
+    _SKILL_OVERRIDE = ("se cacher", "cacher", "discrétion", "stealth", "aim", "steady aim", "visée", "viser", "jet de compétence", "skill check")
+    _is_skill_action = any(k in r_low or k in i_low for k in _SKILL_OVERRIDE)
+    
+    _has_target = cible.lower().strip() not in ("", "none", "-", "n/a", "aucun", "aucune", "soi-même", "self", "personne", "moi-même", "moi meme", char_name.lower())
     _DODGE_KW = ("esquive", "dodge", "défensive", "defensive")
     _is_dodge = any(k in r_low or k in i_low for k in _DODGE_KW)
     _is_dash = any(k in r_low or k in i_low for k in ("dash", "foncer", "sprint", "course"))
-    is_atk   = (any(k in r_low or k in i_low for k in ATK_KW) or any(k in r_low or k in i_low for k in _DIVINE_SMITE)) and not is_spell and not is_move_action and not _is_dodge and not _is_dash and _has_target
+    _DISENGAGE_KW = ("disengage", "désengager", "desengager", "désengagement", "se désengager", "se desengager")
+    _is_disengage = any(k in r_low or k in i_low for k in _DISENGAGE_KW)
+    is_atk   = (any(k in r_low or k in i_low for k in ATK_KW) or any(k in r_low or k in i_low for k in _DIVINE_SMITE)) and not is_spell and not is_move_action and not _is_dodge and not _is_dash and not _is_disengage and not _is_skill_action and _has_target
     is_skill = (any(k in r_low or k in i_low for k in SKILL_KW)
                 and not is_atk and not is_spell and not is_move_action)
+
+    _DASH_KW = ("mouvement", "déplace", "deplace", "dash", "foncer", "sprint",
+                "course", "avance", "recule", "approche", "fonce")
 
     # ── ATTAQUE ──────────────────────────────────────────────────────
     if is_atk:
@@ -513,13 +551,9 @@ def execute_action_mechanics(
                 f"(dégâts {_sm['type']} supplémentaires)"
             )
 
-        # Attaque sournoise Thorne
-        if char_name == "Thorne":
-            sn, sf, sb = stats.get("dmg_sneak", (6, 6, 0))
-            if any_crit:
-                sn *= 2
-            snk_res = roll_dice("Thorne", f"{sn}d{sf}", sb)
-            results.append(f"  [sournoise] {snk_res}  ← si avantage/allié adjacent")
+        # Attaque sournoise — géré par la boîte de confirmation MJ dans
+        # engine_receive.py (flow Phase 1/2/3). Ici (flow legacy non-combat)
+        # on ne roule plus automatiquement la sournoise.
 
         narrative_hint = (
             f"Le système vient d exécuter les jets d attaque. "
@@ -572,7 +606,8 @@ def execute_action_mechanics(
         dc_val    = _extract_dc(regle)
 
         # Vérification liste de sorts préparés
-        _spell_name_candidate = extract_spell_name_fn(intention, char_name) if extract_spell_name_fn else ""
+        _combined_text = f"{intention} {regle}".strip()
+        _spell_name_candidate = extract_spell_name_fn(_combined_text, char_name) if extract_spell_name_fn else ""
         if not is_cantrip and _spell_name_candidate:
             if not is_spell_prepared_fn(char_name, _spell_name_candidate):
                 _avail = get_prepared_spell_names_fn(char_name)
@@ -621,7 +656,7 @@ def execute_action_mechanics(
             if not _all_dice(regle):
                 import json as _json_parser
                 _entries_str = _json_parser.dumps(_sp_data.get("entries", []))
-                _dmg_matches = _re.findall(r"\{@(damage|dice)\s+(\d+d\d+)[^}]*\}", _entries_str)
+                _dmg_matches = _re.findall(r"\{@(damage|dice)\s+([^}]+)\}", _entries_str)
                 if _dmg_matches:
                     _base_dice = _dmg_matches[0][1]
                     _base_lvl = _sp_data.get("level", 0)
@@ -635,10 +670,10 @@ def execute_action_mechanics(
                             if _sm_m:
                                 _ext_dn = int(_sm_m.group(1)) * _diff
                                 _ext_df = _sm_m.group(2)
-                                _base_m = _re.match(r"(\d+)d(\d+)", _base_dice)
+                                _base_m = _re.match(r"(\d+)d(\d+)(.*)", _base_dice)
                                 if _base_m and _base_m.group(2) == _ext_df:
                                     _new_dn = int(_base_m.group(1)) + _ext_dn
-                                    _base_dice = f"{_new_dn}d{_ext_df}"
+                                    _base_dice = f"{_new_dn}d{_ext_df}{_base_m.group(3)}"
                                 else:
                                     regle += f" + {_ext_dn}d{_ext_df}"
                     regle += f" {_base_dice} "
@@ -715,7 +750,8 @@ def execute_action_mechanics(
         # Slot (uniquement pour les sorts NON-smite)
         if not is_cantrip and lvl:
             # ── Bypass rituel : pas de slot consommé ──
-            _spell_for_ritual = extract_spell_name_fn(intention, char_name) if extract_spell_name_fn else ""
+            _combined_text = f"{intention} {regle}".strip()
+            _spell_for_ritual = extract_spell_name_fn(_combined_text, char_name) if extract_spell_name_fn else ""
             if _spell_for_ritual and can_ritual_cast(char_name, _spell_for_ritual):
                 results.append(
                     f"[🕯️ RITUEL] {_spell_for_ritual} lancé en rituel "
@@ -1015,7 +1051,7 @@ def execute_action_mechanics(
         )
 
     # ── MOUVEMENT ────────────────────────────────────────────────────
-    elif "mouvement" in t_low or "mouvement" in i_low or "mouvement" in r_low_orig:
+    elif any(k in t_low or k in i_low or k in r_low_orig for k in _DASH_KW):
         MOVE_KW = ("mouvement", "déplace", "deplace", "repositionne",
                    "avance", "recule", "cours", "marche", "approche",
                    "éloigne", "eloigne", "dash", "sprint", "charge",
@@ -1100,92 +1136,106 @@ def execute_action_mechanics(
                 _new_col = int(_m_abs.group(1)) - 1
                 _new_row = int(_m_abs.group(2)) - 1
             else:
-                # 2. Distance + direction
-                if _m_cases_regle:
-                    _dist = int(_m_cases_regle.group(1))
-                elif _m_met_regle:
-                    _dist = max(1, round(float(_m_met_regle.group(1).replace(",", ".")) / 1.5))
-                else:
-                    # Fallback : chercher dans le message complet
-                    _m_cases = _re.search(r'(\d+)\s*cases?', _combined_mv)
-                    _m_met   = _re.search(
-                        r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\.|\b)', _combined_mv
-                    )
-                    if _m_cases:
-                        _dist = int(_m_cases.group(1))
-                    elif _m_met:
-                        _dist = max(1, round(float(_m_met.group(1).replace(",", ".")) / 1.5))
-                    else:
-                        _dist = 6  # 30 ft par défaut
+                # Extraction de la distance : ajout des "ft"
+                _m_cases = _re.search(r'(\d+)\s*cases?', _combined_mv)
+                _m_ft    = _re.search(r'(\d+)\s*ft', _combined_mv)
+                _m_met   = _re.search(r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\b)', _combined_mv)
+                
+                if _m_cases: _dist = int(_m_cases.group(1))
+                elif _m_ft: _dist = max(1, round(int(_m_ft.group(1)) / 5.0))
+                elif _m_met: _dist = max(1, round(float(_m_met.group(1).replace(",", ".")) / 1.5))
+                else: _dist = 6  # 30 ft par défaut
 
-                # Directions composées (tiret obligatoire) puis cardinales simples
-                _DIR_EXACT = [
-                    ("nord-est",   ( 1, -1)), ("nord-ouest", (-1, -1)),
-                    ("sud-est",    ( 1,  1)), ("sud-ouest",  (-1,  1)),
-                    ("north-east", ( 1, -1)), ("north-west", (-1, -1)),
-                    ("south-east", ( 1,  1)), ("south-west", (-1,  1)),
-                ]
-                _DIR_WORD = [
-                    ("nord",  ( 0, -1)), ("north", ( 0, -1)),
-                    ("sud",   ( 0,  1)), ("south", ( 0,  1)),
-                    ("est",   ( 1,  0)), ("east",  ( 1,  0)),
-                    ("ouest", (-1,  0)), ("west",  (-1,  0)),
-                ]
                 _dcol, _drow = 0, 0
-                _dir_search = i_low + " " + cible.lower() + " " + r_low_orig
-                for _kd, (_dc, _dr) in _DIR_EXACT:
-                    if _kd in _dir_search:
-                        _dcol, _drow = _dc, _dr
-                        break
+
+                # A. Priorité absolue : Cible d'un token (ex: VexSira)
+                try:
+                    _cmap_win2 = getattr(app, "_combat_map_win", None)
+                    _map_tokens = (
+                        getattr(_cmap_win2, "tokens",[]) if _cmap_win2 is not None
+                        else app._win_state.get("combat_map_data", {}).get("tokens",[])
+                    )
+                    for _other in _map_tokens:
+                        _oname = _other.get("name", "").lower()
+                        if (_oname and _oname in _combined_mv and _other.get("name") != char_name):
+                            _oc = int(round(_other.get("col", 0)))
+                            _or = int(round(_other.get("row", 0)))
+                            _raw_dc = _oc - _cur_col
+                            _raw_dr = _or - _cur_row
+                            _mag    = max(abs(_raw_dc), abs(_raw_dr)) or 1
+                            _dcol   = round(_raw_dc / _mag)
+                            _drow   = round(_raw_dr / _mag)
+                            break
+                except Exception:
+                    pass
+
+                # B. Directions composées
                 if _dcol == 0 and _drow == 0:
-                    for _kd, (_dc, _dr) in _DIR_WORD:
-                        if _re.search(r'\b' + _kd + r'\b', _dir_search):
+                    _DIR_EXACT =[
+                        ("nord-est",   ( 1, -1)), ("nord-ouest", (-1, -1)),
+                        ("sud-est",    ( 1,  1)), ("sud-ouest",  (-1,  1)),
+                        ("north-east", ( 1, -1)), ("north-west", (-1, -1)),
+                        ("south-east", ( 1,  1)), ("south-west", (-1,  1)),
+                    ]
+                    for _kd, (_dc, _dr) in _DIR_EXACT:
+                        if _kd in _combined_mv:
                             _dcol, _drow = _dc, _dr
                             break
 
-                # 3. Vers un autre token
+                # C. Directions cardinales simples
                 if _dcol == 0 and _drow == 0:
-                    try:
-                        _cmap_win2 = getattr(app, "_combat_map_win", None)
-                        _map_tokens = (
-                            getattr(_cmap_win2, "tokens", []) if _cmap_win2 is not None
-                            else app._win_state.get("combat_map_data", {}).get("tokens", [])
-                        )
-                        for _other in _map_tokens:
-                            _oname = _other.get("name", "").lower()
-                            if (_oname and _oname in _combined_mv
-                                    and _other.get("name") != char_name):
-                                _oc = int(round(_other.get("col", 0)))
-                                _or = int(round(_other.get("row", 0)))
-                                _raw_dc = _oc - _cur_col
-                                _raw_dr = _or - _cur_row
-                                _mag    = max(abs(_raw_dc), abs(_raw_dr)) or 1
-                                _dcol   = round(_raw_dc / _mag)
-                                _drow   = round(_raw_dr / _mag)
-                                break
-                    except Exception:
-                        pass
-
-                # 4. Destination non résoluble → refus propre
-                if _dcol == 0 and _drow == 0:
-                    narrative_hint = (
-                        f"Destination non déterminée automatiquement pour {char_name}. "
-                        f"MJ : précise la destination avec 'Col X, Lig Y' ou une direction "
-                        f"cardinale (nord/sud/est/ouest) pour déplacer le token manuellement."
-                    )
-                    results.append(f"🏃 {char_name} — {intention}")
-                    results.append(f"  Position actuelle : Col {_cur_col+1}, Lig {_cur_row+1}")
-                    results.append(f"  ⚠ Destination '{cible}' non résoluble — token non déplacé.")
-                    results.append(f"  → Précise : Col X, Lig Y  OU  direction (nord/sud/est/ouest)")
-                    return (
-                        f"[RÉSULTAT SYSTÈME — ACTION CONFIRMÉE PAR MJ — {char_name}]\n"
-                        + "\n".join(results)
-                        + "\n\n[INSTRUCTION NARRATIVE]\n"
-                        + narrative_hint
-                    )
+                    _DIR_WORD =[
+                        ("nord",  ( 0, -1)), ("north", ( 0, -1)),
+                        ("sud",   ( 0,  1)), ("south", ( 0,  1)),
+                        ("est",   ( 1,  0)), ("east",  ( 1,  0)),
+                        ("ouest", (-1,  0)), ("west",  (-1,  0)),
+                    ]
+                    for _kd, (_dc, _dr) in _DIR_WORD:
+                        if _kd == "est" and not _re.search(r"(vers l'|à l'|direction )\b" + _kd + r"\b", _combined_mv):
+                            continue # Ignore le verbe "est" !
+                        if _re.search(r'\b' + _kd + r'\b', _combined_mv):
+                            _dcol, _drow = _dc, _dr
+                            break
 
                 _new_col = _cur_col + _dcol * _dist
                 _new_row = _cur_row + _drow * _dist
+
+                # Compute Chebyshev distance (D&D diagonal movement)
+                _chebyshev = max(abs(_new_col - _cur_col), abs(_new_row - _cur_row))
+                _ft_requested = _chebyshev * 5
+                # Get remaining movement from COMBAT_STATE
+                try:
+                    from combat_tracker_state import COMBAT_STATE as _CS2
+                    _rem_mv = _CS2.get("turn_res", {}).get(char_name, {}).get("movement", stats.get("speed", 30))
+                except Exception:
+                    _rem_mv = stats.get("speed", 30)
+
+                if _ft_requested > _rem_mv:
+                    # Scale back: move only as many cases as we have budget for
+                    _allowed_cases = _rem_mv // 5
+                    if _chebyshev > 0:
+                        _ratio = _allowed_cases / _chebyshev
+                        _new_col = _cur_col + round((_new_col - _cur_col) * _ratio)
+                        _new_row = _cur_row + round((_new_row - _cur_row) * _ratio)
+
+                # ── NEW: stop adjacent to enemy token (don't stack on same square) ────────
+                # If the destination square is occupied by a hostile token, back off 1 case
+                try:
+                    _cmap = getattr(app, "_combat_map_win", None)
+                    _all_toks = getattr(_cmap, "tokens", []) if _cmap else app._win_state.get("combat_map_data", {}).get("tokens", [])
+                    for _ot in _all_toks:
+                        if (int(round(_ot.get("col", 0))) == _new_col
+                                and int(round(_ot.get("row", 0))) == _new_row
+                                and _ot.get("name") != char_name):
+                            # Retreat by 1 case toward origin
+                            _dc = _new_col - _cur_col
+                            _dr = _new_row - _cur_row
+                            _mag = max(abs(_dc), abs(_dr), 1)
+                            _new_col -= round(_dc / _mag)
+                            _new_row -= round(_dr / _mag)
+                            break
+                except Exception:
+                    pass
 
             # Clamp à la grille
             # Priorité : fenêtre live → _win_state → défauts larges
@@ -1204,10 +1254,27 @@ def execute_action_mechanics(
 
             _dist_actual = max(abs(_new_col - _cur_col), abs(_new_row - _cur_row))
             _dist_m = _dist_actual * 1.5
+            _dist_ft = _dist_actual * 5
+
+            # ── Déduction de la vitesse dans l'état de combat ──
+            _rem_mov_str = ""
+            if target_token_name == char_name:  # Ne pas déduire si c'est une arme spirituelle qui bouge
+                try:
+                    from combat_tracker_state import COMBAT_STATE as _CS
+                    if _CS.get("active") and _CS.get("active_combatant") == char_name:
+                        _tr = _CS.setdefault("turn_res", {}).setdefault(char_name, {})
+                        _base_speed = stats.get("speed", 30)
+                        _cur_mov = _tr.get("movement", _base_speed)
+                        _tr["movement"] = max(0, _cur_mov - _dist_ft)
+                        _rem_mov_str = f"\n  Vitesse restante  : {_tr['movement']} ft"
+                except Exception:
+                    pass
+            # ───────────────────────────────────────────────────
+
             results.append(f"🏃 {target_token_name} — {intention}")
             results.append(f"  Position actuelle : Col {_cur_col+1}, Lig {_cur_row+1}")
             results.append(f"  Destination       : Col {_new_col+1}, Lig {_new_row+1}")
-            results.append(f"  Distance          : {_dist_actual} cases ({_dist_m:.1f} m)")
+            results.append(f"  Distance          : {_dist_actual} cases ({_dist_ft} ft / {_dist_m:.1f} m){_rem_mov_str}")
             results.append(f"[MOVE_TOKEN:{target_token_name}:{_new_col}:{_new_row}]")
             narrative_hint = (
                 f"Le système a calculé le déplacement. "

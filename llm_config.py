@@ -112,7 +112,16 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
     m = model_name.strip()
     config_list = []
 
-    router_key = os.getenv("OPENROUTER_API_KEY", "")
+    # ── Collecte de toutes les clés OpenRouter disponibles ───────────────────
+    _openrouter_keys: list = []
+    _openrouter_legacy = os.getenv("OPENROUTER_API_KEY", "")
+    if _openrouter_legacy:
+        _openrouter_keys.append(_openrouter_legacy)
+    for _i in range(1, 10):
+        _k = os.getenv(f"OPENROUTER_API_KEY_{_i}", "")
+        if _k and _k not in _openrouter_keys:
+            _openrouter_keys.append(_k)
+    router_key = _openrouter_keys[0] if _openrouter_keys else ""
 
     # ── Collecte de toutes les clés Gemini disponibles ────────────────────────
     # Supporte GEMINI_API_KEY (legacy), GEMINI_API_KEY_1, GEMINI_API_KEY_2, etc.
@@ -180,10 +189,10 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
             "http_client": _make_no_keepalive_http_client(),
         }
 
-    def _openrouter(model: str) -> dict:
+    def _openrouter(model: str, api_key: str = None) -> dict:
         return {
             "model":       model,
-            "api_key":     router_key,
+            "api_key":     api_key or router_key,
             "base_url":    "https://openrouter.ai/api/v1",
             "api_type":    "openai",
             "default_headers": {
@@ -192,6 +201,12 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
             },
             "http_client": _make_no_keepalive_http_client(),
         }
+
+    def _openrouter_all_keys(model: str) -> list:
+        """Une entrée config_list par clé OpenRouter dispo pour ce modèle."""
+        if not _openrouter_keys:
+            return []
+        return [_openrouter(model, key) for key in _openrouter_keys]
 
     def _ollama(model: str) -> dict:
         """
@@ -232,8 +247,8 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
         config_list.extend(_groq_all_keys(m[len("groq/"):]))
 
     elif m.startswith("openrouter/"):
-        if router_key:
-            config_list.append(_openrouter(m[len("openrouter/"):]))
+        if _openrouter_keys:
+            config_list.extend(_openrouter_all_keys(m[len("openrouter/"):]))
 
     elif m.startswith("deepseek/"):
         deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
@@ -282,6 +297,8 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
             "gemini-2.5-flash",             # stable, très disponible
             "gemini-2.5-pro",               # stable
             "gemini-2.0-flash",             # stable, rapide
+            "gemma-4-31b-it",                # preview — peut ne pas exister
+            "gemma-4-26b-a4b-it",            # preview — peut ne pas exister
             "gemini-3-flash-preview",        # preview — peut ne pas exister
             "gemini-3.1-flash-lite-preview", # preview — peut ne pas exister
         ]
@@ -293,10 +310,10 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
         config_list.extend(_groq_all_keys("meta-llama/llama-4-scout-17b-16e-instruct"))
 
         # Fallbacks OpenRouter en ultime recours
-        if router_key:
-            config_list.append(_openrouter("meta-llama/llama-3.3-70b-instruct:free"))
-            config_list.append(_openrouter("mistralai/mistral-small-3.1-24b-instruct:free"))
-            config_list.append(_openrouter("arcee-ai/trinity-large-preview:free"))
+        if _openrouter_keys:
+            config_list.extend(_openrouter_all_keys("meta-llama/llama-3.3-70b-instruct:free"))
+            config_list.extend(_openrouter_all_keys("mistralai/mistral-small-3.1-24b-instruct:free"))
+            config_list.extend(_openrouter_all_keys("arcee-ai/trinity-large-preview:free"))
 
     # ── Sécurité : au cas où aucune clé n'est configurée ─────────────────────
     if not config_list:

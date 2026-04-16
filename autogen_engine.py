@@ -27,7 +27,8 @@ import copy
 
 from llm_config    import build_llm_config, _default_model, StopLLMRequested
 from app_config    import (get_agent_config, get_chronicler_config,
-                           get_groupchat_config, APP_CONFIG,
+                           get_groupchat_config, get_combat_config,
+                           APP_CONFIG,
                            save_app_config, reload_app_config)
 from state_manager import (
     load_state, save_state, get_npcs, get_active_characters,
@@ -40,7 +41,9 @@ from engine_spell_mj import build_pnj_patterns
 from engine_receive  import EngineContext, build_patched_receive
 
 
-_COMBAT_LLM_MODEL    = "gemini-3.1-flash-lite-preview"
+def _get_combat_llm_model() -> str:
+    """Retourne le modèle LLM combat configuré (app_config.json → combat.model)."""
+    return get_combat_config().get("model", "gemini-3.1-flash-lite-preview")
 _PLAYER_NAMES_COMBAT = ["Kaelen", "Elara", "Thorne", "Lyra"]
 
 
@@ -81,7 +84,8 @@ class AutogenEngineMixin:
                 }
 
             # ── Création de la config combat ──────────────────────────────────
-            combat_cfg = build_llm_config(_COMBAT_LLM_MODEL, temperature=0.7)
+            _combat_model = _get_combat_llm_model()
+            combat_cfg = build_llm_config(_combat_model, temperature=0.7)
 
             for name in _PLAYER_NAMES_COMBAT:
                 agent = agents.get(name)
@@ -108,7 +112,7 @@ class AutogenEngineMixin:
 
             self.msg_queue.put({
                 "sender": "⚙️ Système",
-                "text":   f"⚔️ Mode combat — PJ basculés vers `{_COMBAT_LLM_MODEL}`",
+                "text":   f"⚔️ Mode combat — PJ basculés vers `{_combat_model}`",
                 "color":  "#ff9944",
             })
 
