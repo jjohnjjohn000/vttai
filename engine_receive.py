@@ -197,16 +197,20 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
         if _tr_dict.get("_last_initialized") != char_name:
             _tr_dict["_last_initialized"] = char_name
             _tr_dict[char_name] = {
-                "action":      True,
-                "bonus":       True,
-                "movement_ft": _get_char_speed_ft(char_name),
-                "sneak_used":  False,
+                "action":               True,
+                "bonus":                True,
+                "movement_ft":          _get_char_speed_ft(char_name),
+                "sneak_used":           False,
+                "extra_attack_available": False,
+                "extra_attack_used":    False,
             }
         return _tr_dict.setdefault(char_name, {
-            "action":      True,
-            "bonus":       True,
-            "movement_ft": _get_char_speed_ft(char_name),
-            "sneak_used":  False,
+            "action":               True,
+            "bonus":                True,
+            "movement_ft":          _get_char_speed_ft(char_name),
+            "sneak_used":           False,
+            "extra_attack_available": False,
+            "extra_attack_used":    False,
         })
 
     def _consume_turn_res(char_name: str, type_label: str, movement_ft: int = 0):
@@ -1065,512 +1069,6 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
             _original_receive(self_mgr, message, sender, request_reply, silent)
             return
 
-        # ── INTERCEPTION SORT [SORT:] désactivée — tous les sorts passent par [ACTION] ──
-        if False and (not is_system
-                and name in SPELL_CASTERS
-                and content
-                and SORT_PATTERN.search(str(content))):
-            m = SORT_PATTERN.search(str(content))
-            spell_name  = m.group("nom").strip()
-            spell_level = int(m.group("niveau"))
-            target      = (m.group("cible") or "").strip()
-            clean_content = SORT_PATTERN.sub("", str(content)).strip()
-
-            # ── Garde-fou : [SORT:] + [ACTION] dans le même message ─────────
-            # L'agent ne peut déclarer qu'une seule décision par message.
-            # Si un bloc [ACTION] accompagne le tag [SORT:], on le retire du
-            # contenu affiché et on injecte une correction après résolution.
-            _combo_action_stripped = ACTION_PATTERN.search(clean_content)
-            if _combo_action_stripped:
-                clean_content = ACTION_PATTERN.sub("", clean_content).strip()
-                _app.msg_queue.put({
-                    "sender": "⚠️ Règle",
-                    "text": (
-                        f"[COMBO INTERDIT — {name}]\n"
-                        f"{name} a déclaré un tag [SORT:] ET un bloc [ACTION] dans le même message.\n"
-                        f"RÈGLE : une seule décision par message en combat.\n"
-                        f"Le bloc [ACTION] a été ignoré — il sera redemandé après résolution du sort."
-                    ),
-                    "color": "#e67e22",
-                })
-
-            if not is_spell_prepared(name, spell_name):
-                _avail3 = get_prepared_spell_names(name)
-                _avail3_str = ", ".join(_avail3) if _avail3 else "aucun sort préparé trouvé"
-                _not_prepared_msg = (
-                    f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE — {name}]\n"
-                    f"{spell_name} n'est pas dans la liste de sorts préparés de {name}. "
-                    f"Ce sort ne peut pas être lancé aujourd'hui.\n\n"
-                    f"[SORTS AUTORISÉS POUR {name.upper()}]\n{_avail3_str}\n\n"
-                    f"[INSTRUCTION]\nChoisis UNIQUEMENT parmi les sorts listés ci-dessus. "
-                    f"Ne tente PAS de lancer {spell_name} — déclare une nouvelle action avec[ACTION]."
-                )
-                _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_prepared_msg, "color": "#cc4444"})
-                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
-                _original_receive(
-                    self_mgr,
-                    {"role": "user", "content": _not_prepared_msg, "name": "Alexis_Le_MJ"},
-                    sender, request_reply=request_reply, silent=silent,
-                )
-                return
-
-            # Vérification de la règle des Actions Bonus (D&D 5e)
-            from spell_data import get_spell as _get_sp
-            _sp_data = _get_sp(spell_name)
-            if _sp_data:
-                _valid_ba, _err_ba = validate_bonus_action_rule(
-                    name, spell_name, spell_level, _sp_data.get("cast_time_raw",[]), COMBAT_STATE.get("turn_spells",[])
-                )
-                if not _valid_ba:
-                    _not_ba_msg = (
-                        f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE — {name}]\n"
-                        f"{_err_ba}\n\n"
-                        f"[INSTRUCTION]\nAnnule cette tentative. "
-                        f"Choisis une action valide (attaque, esquive, sort permis) "
-                        f"et déclare tes intentions."
-                    )
-                    _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_ba_msg, "color": "#cc4444"})
-                    _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
-                    _original_receive(
-                        self_mgr,
-                        {"role": "user", "content": _not_ba_msg, "name": "Alexis_Le_MJ"},
-                        sender, request_reply=request_reply, silent=silent,
-                    )
-                    return
-
-            # Vérification du temps d'incantation (combat only)
-            if _sp_data is None:
-                from spell_data import get_spell as _get_sp
-                _sp_data = _get_sp(spell_name)
-            if _sp_data:
-                _valid_ct, _err_ct = validate_cast_time_in_combat(
-                    spell_name, _sp_data.get("cast_time_raw",[])
-                )
-                if not _valid_ct:
-                    _not_ct_msg = (
-                        f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE — {name}]\n"
-                        f"{_err_ct}\n\n"
-                        f"[INSTRUCTION]\nAnnule cette tentative. "
-                        f"Choisis une action valide et déclare-la avec [ACTION]."
-                    )
-                    _app.msg_queue.put({"sender": "⚙️ Système", "text": _not_ct_msg, "color": "#cc4444"})
-                    _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
-                    _original_receive(
-                        self_mgr,
-                        {"role": "user", "content": _not_ct_msg, "name": "Alexis_Le_MJ"},
-                        sender, request_reply=request_reply, silent=silent,
-                    )
-                    return
-
-            if spell_level and spell_level > 0:
-                _state_check = load_state()
-                _slots_avail = (
-                    _state_check.get("characters", {}).get(name, {})
-                    .get("spell_slots", {}).get(str(spell_level), 0)
-                )
-                if _slots_avail <= 0:
-                    # ── Bypass rituel : Wizard/Cleric peuvent caster sans slot ──
-                    if can_ritual_cast(name, spell_name):
-                        _ritual_msg = (
-                            f"🕯️ {name} lance {spell_name} en tant que RITUEL "
-                            f"(+10 min d'incantation, aucun slot consommé)."
-                        )
-                        _app.msg_queue.put({"sender": "⚙️ Système", "text": _ritual_msg, "color": "#8888cc"})
-                    else:
-                        _supers = _slots_superieurs_disponibles(name, spell_level)
-                        if _supers:
-                            _upcast_hint = (
-                                f"\n  ↑ UPCAST DISPONIBLE : tu peux lancer {spell_name} "
-                                f"avec un slot de niveau supérieur.\n"
-                                f"  Niveaux disponibles : {', '.join(str(l) for l in _supers)}\n"
-                                f"  → Fais un nouveau bloc [ACTION] en précisant le niveau voulu dans 'Règle 5e' (ex: {spell_name} niv.{_supers[0]})."
-                            )
-                        else:
-                            _upcast_hint = (
-                                f"\n  Aucun emplacement de niveau supérieur disponible non plus."
-                            )
-                        _no_slot_msg = (
-                            f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE — {name}]\n"
-                            f"{name} n'a plus d'emplacement de sort de niveau {spell_level}. "
-                            f"Le sort {spell_name} ne peut pas être lancé à ce niveau.\n"
-                            f"{_upcast_hint}\n\n"
-                            f"[INSTRUCTION]\n"
-                            f"Choisis parmi : upcast (slot sup. si ✅ ci-dessus), "
-                            f"sort de niveau inférieur, tour de magie, ou attaque physique. "
-                            f"Déclare une nouvelle action avec [ACTION]."
-                        )
-                        _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_slot_msg, "color": "#cc4444"})
-                        _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
-                        _original_receive(
-                            self_mgr,
-                            {"role": "user", "content": _no_slot_msg, "name": "Alexis_Le_MJ"},
-                            sender, request_reply=request_reply, silent=silent,
-                        )
-                        return
-
-            ctx.spell_confirm_event.clear()
-            ctx.spell_confirm_result.clear()
-
-            def _resume_cb(confirmed, actual_level,
-                           _ev=ctx.spell_confirm_event, _res=ctx.spell_confirm_result):
-                _app._unregister_approval_event(_ev)
-                _res["confirmed"]    = confirmed
-                _res["actual_level"] = actual_level
-                _ev.set()
-
-            _app._register_approval_event(ctx.spell_confirm_event)
-            _app.msg_queue.put({
-                "action": "spell_confirm", "char_name": name,
-                "spell_name": spell_name, "spell_level": spell_level,
-                "target": target, "resume_callback": _resume_cb,
-            })
-
-            if clean_content and clean_content != "[SILENCE]":
-                clean_content = _strip_stars(clean_content)
-                _app.msg_queue.put({"sender": name, "text": clean_content,
-                                    "color": _app.CHAR_COLORS.get(name, "#e0e0e0")})
-                log_tts_start(name, clean_content)
-                _enqueue_tts(clean_content, name)
-
-            ctx.spell_confirm_event.wait(timeout=300)
-            _app._unregister_approval_event(ctx.spell_confirm_event)
-
-            _final_level = ctx.spell_confirm_result.get("actual_level", spell_level)
-            if ctx.spell_confirm_result.get("confirmed", False):
-                if _final_level > 0 and not can_ritual_cast(name, spell_name):
-                    # Consume slot
-                    use_spell_slot(name, str(_final_level))
-                    _app._update_agent_combat_prompts()
-
-                # ── Concentration : activer automatiquement ──
-                if _sp_data and _sp_data.get("concentration", False):
-                    try:
-                        from spell_data import get_concentration_rounds as _gcr2
-                        _conc_rounds2 = _gcr2(spell_name)
-                        if _conc_rounds2 > 0:
-                            _trk2 = getattr(_app, "_combat_tracker_win", None)
-                            if _trk2 and hasattr(_trk2, "_apply_concentration"):
-                                for _cb2 in _trk2.combatants:
-                                    if _cb2.name == name:
-                                        _app.root.after(0, lambda c=_cb2, s=spell_name, r=_conc_rounds2: _trk2._apply_concentration(c, s, r))
-                                        break
-                    except Exception as _conc_err2:
-                        print(f"[Concentration] Erreur auto-apply (spell_confirm) : {_conc_err2}")
-
-                if _sp_data:
-                    _unit = _sp_data.get("cast_time_raw", [{}])[0].get("unit", "") if _sp_data.get("cast_time_raw") else ""
-                    COMBAT_STATE.setdefault("turn_spells",[]).append({
-                        "name": spell_name, "level": _final_level, "cast_time_unit": _unit
-                    })
-                
-                # Exécution des mécaniques dynamiques du sort
-                try:
-                    _fb = execute_action_mechanics(
-                        name, "Action — Sort", f"Lancer {spell_name}", "", target or "Ennemi", COMBAT_STATE["characters"], ctx,
-                        lvl=_final_level,
-                        single_attack=False,
-                        type_label="Action — Sort",
-                        char_mechanics=COMBAT_STATE["characters"],
-                        pending_smite=ctx.pending_smite,
-                        pending_skill_narrators=ctx.pending_skill_narrators,
-                        app=_app,
-                        extract_spell_name_fn=extract_spell_name_llm,
-                        is_spell_prepared_fn=is_spell_prepared,
-                        get_prepared_spell_names_fn=get_prepared_spell_names,
-                    )
-
-                    # NOTE : engine_mechanics émet "[RÉSULTAT SYSTÈME — SOIN — {char_name}]"
-                    # Le startswith doit s'arrêter AVANT le "]" final pour matcher
-                    # avec n'importe quel nom de personnage interpolé dans le header.
-                    _is_healing_spell = _fb.startswith("[RÉSULTAT SYSTÈME — SOIN")
-                    _is_save_spell    = _fb.startswith("[RÉSULTAT SYSTÈME — JET DE SAUVEGARDE")
-
-                    if _is_save_spell:
-                        # ── Boîte de confirmation JET DE SAUVEGARDE ───────────
-                        _split_sv = "\n\n[INSTRUCTION NARRATIVE]"
-                        _save_results_part = _fb.split(_split_sv)[0].strip()
-                        # Supprimer le header "[RÉSULTAT SYSTÈME — JET DE SAUVEGARDE — CharName]"
-                        # (le header contient le nom du perso → simple replace ne suffit pas)
-                        _save_results_part = _re.sub(
-                            r"^\[RÉSULTAT SYSTÈME — JET DE SAUVEGARDE[^\]]*\]\n?", "",
-                            _save_results_part
-                        ).strip()
-                        # Extraire le total dégâts annoté par engine_mechanics
-                        _sv_dmg_m = _re.search(r"\[__save_dmg_total__:(\d+)\]", _save_results_part)
-                        _sv_dmg_total = int(_sv_dmg_m.group(1)) if _sv_dmg_m else 0
-                        # Nettoyer l'annotation interne de l'affichage
-                        _save_results_display = _re.sub(r"\[__save_dmg_total__:\d+\]\n?", "", _save_results_part).strip()
-
-                        _sv_ev  = _threading.Event()
-                        _sv_res: dict = {}
-
-                        def _sv_cb(target_saved, mj_note_sv="", _ev=_sv_ev, _res=_sv_res):
-                            _app._unregister_approval_event(_ev)
-                            _res["saved"]  = target_saved
-                            _res["note"]   = mj_note_sv
-                            _ev.set()
-
-                        _app._register_approval_event(_sv_ev)
-                        _app.msg_queue.put({
-                            "action":          "result_confirm",
-                            "char_name":       name,
-                            "type_label":      f"Sort — {spell_name}",
-                            "results_text":    _save_results_display,
-                            "mode":            "save",
-                            "resume_callback": _sv_cb,
-                        })
-                        _sv_ev.wait(timeout=600)
-                        _app._unregister_approval_event(_sv_ev)
-
-                        _target_saved  = _sv_res.get("saved", False)
-                        _sv_mj_note    = _sv_res.get("note", "")
-
-                        def _apply_save_damage(cible_sv, dmg_sv, label_sv):
-                            """Affiche damage_link et applique au PNJ."""
-                            _dl_ev  = _threading.Event()
-                            _dl_res: dict = {}
-                            def _dl_cb(final, target_val=None, mj_note="", _ev=_dl_ev, _res=_dl_res):
-                                _app._unregister_approval_event(_ev)
-                                _res["amount"] = final
-                                _res["target"] = target_val
-                                _res["note"]   = mj_note
-                                _ev.set()
-                            _app._register_approval_event(_dl_ev)
-                            _app.msg_queue.put({
-                                "action":          "damage_link",
-                                "sender":          name,
-                                "char_name":       name,
-                                "cible":           cible_sv,
-                                "dmg_text":        label_sv,
-                                "dmg_total":       dmg_sv,
-                                "is_crit":         False,
-                                "resume_callback": _dl_cb,
-                            })
-                            _dl_ev.wait(timeout=300)
-                            _app._unregister_approval_event(_dl_ev)
-                            _final_d = _dl_res.get("amount", dmg_sv)
-                            _final_tgt = _dl_res.get("target") or cible_sv
-                            try:
-                                if getattr(_app, "_combat_tracker_win", None) is not None:
-                                    _app._combat_tracker_win.apply_damage_to_npc(_final_tgt, _final_d)
-                            except Exception as _dap_err:
-                                print(f"[SaveDamageApply] {_dap_err}")
-                            try:
-                                from combat_tracker_state import add_combat_history
-                                add_combat_history(f"  → {_final_tgt} subit {_final_d} dégâts.")
-                                if hasattr(_app, "_update_agent_combat_prompts"): _app._update_agent_combat_prompts()
-                            except Exception:
-                                pass
-                            return _final_d, _dl_res.get("note", "")
-
-                        try:
-                            from combat_tracker_state import add_combat_history
-                            if _target_saved:
-                                add_combat_history(f"  → {_sub.get('cible', 'La cible')} a réussi sa sauvegarde !")
-                            else:
-                                add_combat_history(f"  → {_sub.get('cible', 'La cible')} a raté sa sauvegarde.")
-                            if hasattr(_app, "_update_agent_combat_prompts"): _app._update_agent_combat_prompts()
-                        except Exception:
-                            pass
-                            
-                        if _target_saved:
-                            # Sauvegarde RÉUSSIE → vérifier si le sort inflige des demi-dégâts
-                            _is_half_on_save = _sp_data.get("half_on_save", False) if _sp_data else False
-                            _half = (_sv_dmg_total // 2) if _is_half_on_save else 0
-                            if _half > 0:
-                                _applied, _dl_note = _apply_save_damage(
-                                    target or "Cible",
-                                    _half,
-                                    f"Sauvegarde réussie — demi-dégâts ({_sv_dmg_total}÷2)",
-                                )
-                                _fb = (
-                                    "[RÉSULTAT SYSTÈME — SAUVEGARDE RÉUSSIE]\n"
-                                    + _save_results_display
-                                    + "\n  → SAUVEGARDE RÉUSSIE ✅ (sort raté)"
-                                    + (f"\n  Note MJ (Sauvegarde) : {_sv_mj_note}" if _sv_mj_note else "")
-                                    + f"\n  Demi-dégâts appliqués : {_applied}"
-                                    + (f"\n  Note MJ (Dégâts) : {_dl_note}" if _dl_note else "")
-                                    + "\n\n[INSTRUCTION NARRATIVE]\n"
-                                    + f"La cible a résisté. Narre en 1-2 phrases comment {target or 'la cible'} "
-                                    + f"résiste partiellement au sort de {name}. Ne mentionne pas les chiffres."
-                                )
-                            else:
-                                _fb = (
-                                    "[RÉSULTAT SYSTÈME — SAUVEGARDE RÉUSSIE]\n"
-                                    + _save_results_display
-                                    + "\n  → SAUVEGARDE RÉUSSIE ✅ (sort raté — aucun effet)"
-                                    + (f"\n  Note MJ : {_sv_mj_note}" if _sv_mj_note else "")
-                                    + "\n\n[INSTRUCTION NARRATIVE]\n"
-                                    + f"La cible a esquivé le sort. Narre en 1-2 phrases comment "
-                                    + f"{target or 'la cible'} résiste ou esquive le sort de {name}."
-                                )
-                        else:
-                            # Sauvegarde RATÉE → sort touché
-                            if _sv_dmg_total > 0:
-                                _applied, _dl_note = _apply_save_damage(
-                                    target or "Cible",
-                                    _sv_dmg_total,
-                                    f"Sauvegarde ratée — dégâts pleins",
-                                )
-                                _fb = (
-                                    "[RÉSULTAT SYSTÈME — SAUVEGARDE RATÉE]\n"
-                                    + _save_results_display
-                                    + "\n  → SAUVEGARDE RATÉE ❌ (sort touché)"
-                                    + (f"\n  Note MJ (Sauvegarde) : {_sv_mj_note}" if _sv_mj_note else "")
-                                    + f"\n  Dégâts appliqués : {_applied}"
-                                    + (f"\n  Note MJ (Dégâts) : {_dl_note}" if _dl_note else "")
-                                    + "\n\n[INSTRUCTION NARRATIVE]\n"
-                                    + f"La cible a raté son jet. Narre en 1-2 phrases l'impact du sort "
-                                    + f"de {name} sur {target or 'la cible'}. Ne mentionne pas les chiffres."
-                                )
-                            else:
-                                _fb = (
-                                    "[RÉSULTAT SYSTÈME — SAUVEGARDE RATÉE]\n"
-                                    + _save_results_display
-                                    + "\n  → SAUVEGARDE RATÉE ❌ (sort touché — effets actifs)"
-                                    + (f"\n  Note MJ : {_sv_mj_note}" if _sv_mj_note else "")
-                                    + "\n\n[INSTRUCTION NARRATIVE]\n"
-                                    + f"La cible a raté son jet. Le sort de {name} fait plein effet sur "
-                                    + f"{target or 'la cible'}. Narre l'effet en 1-2 phrases."
-                                )
-
-                        _original_receive(
-                            self_mgr,
-                            {"role": "user", "content": _fb, "name": "Alexis_Le_MJ"},
-                            sender, request_reply=False, silent=True,
-                        )
-
-                    elif _is_healing_spell:
-                        # ── Boîte de confirmation SOIN (verte) ────────────
-                        _split_mk = "\n\n[INSTRUCTION NARRATIVE]"
-                        _heal_results_part = (
-                            _fb.split(_split_mk)[0]
-                            .replace("[RÉSULTAT SYSTÈME — SOIN]\n", "")
-                            .strip()
-                        )
-
-                        _heal_ev = _threading.Event()
-                        _heal_note: dict = {}
-
-                        def _heal_cb(mj_note_heal="", _ev=_heal_ev, _res=_heal_note):
-                            _app._unregister_approval_event(_ev)
-                            _res["note"] = mj_note_heal
-                            _ev.set()
-
-                        _app._register_approval_event(_heal_ev)
-                        _app.msg_queue.put({
-                            "action": "result_confirm", "char_name": name,
-                            "type_label": f"Sort — {spell_name}",
-                            "results_text": _heal_results_part,
-                            "mode": "healing", "resume_callback": _heal_cb,
-                        })
-                        _heal_ev.wait(timeout=600)
-                        _app._unregister_approval_event(_heal_ev)
-
-                        _heal_mj = _heal_note.get("note", "")
-                        if _heal_mj:
-                            _fb += f"\n[Modification MJ] {_heal_mj}"
-
-                        _original_receive(
-                            self_mgr,
-                            {"role": "user", "content": _fb, "name": "Alexis_Le_MJ"},
-                            sender, request_reply=False, silent=True,
-                        )
-                    else:
-                        _app.msg_queue.put({"sender": "⚙️ Système", "text": _fb, "color": "#a89f91"})
-                        _original_receive(
-                            self_mgr,
-                            {"role": "user", "content": _fb, "name": "Alexis_Le_MJ"},
-                            sender, request_reply=False, silent=True,
-                        )
-                except Exception as _exec_err:
-                    print(f"Erreur exec sort auto: {_exec_err}")
-
-                # Consommer l'Action ou l'Action Bonus
-                if _sp_data:
-                    _unit = _sp_data.get("cast_time_raw", [{}])[0].get("unit", "action") if _sp_data.get("cast_time_raw") else "action"
-                    _consume_turn_res(name, _unit)
-                    _app._update_agent_combat_prompts()
-                else:
-                    _consume_turn_res(name, "action")
-                    _app._update_agent_combat_prompts()
-
-                # ── Narrative publique (visible tous agents) + trigger de tour ──
-                # Le tableau [TOUR EN COURS] (ressources) reste dans le system_message
-                # de l'agent actif (mis à jour par _rebuild_agent_prompts ci-dessus).
-                # Le GroupChat reçoit UNIQUEMENT une narrative lisible + un trigger.
-                if COMBAT_STATE["active"] and name == COMBAT_STATE.get("active_combatant"):
-                    _tec_msg  = _build_tour_en_cours(name)
-                    _tr       = _get_turn_res(name)
-                    _has_res  = _tr["action"] or _tr["bonus"]
-
-                    # [UI MJ] : tableau complet dans l'interface (pas dans le GroupChat)
-                    _app.msg_queue.put({"sender": "⚔️ Combat", "text": _tec_msg, "color": "#5577aa"})
-
-                    #[GroupChat public] : narrative de l'action pour tous les agents
-                    _sort_type = "action bonus" if (_unit and "bonus" in str(_unit).lower()) else "action"
-                    _narr_sort = _build_action_narrative(
-                        name, _sort_type,
-                        f"lancer {spell_name} (niv.{_final_level})",
-                        target, _fb if "_fb" in dir() else "",
-                    )
-                    _original_receive(
-                        self_mgr,
-                        {"role": "user", "content": _narr_sort, "name": "Alexis_Le_MJ"},
-                        sender, request_reply=False, silent=False,
-                    )
-
-                    # [Trigger de continuation] : simple, sans données de ressources
-                    _app._pending_combat_trigger = (
-                        f"Tu as encore des actions disponibles. Continue ton tour, {name}."
-                        if _has_res else
-                        f"{name}, plus d'actions disponibles. Envoie [ACTION] de type 'Fin de tour' ou déclare un mouvement."
-                    )
-                    _gc_trigger_base = (
-                        f"Continue ton tour, {name}."
-                        if _has_res else
-                        f"{name}, plus d'actions disponibles. Envoie [ACTION] de type 'Fin de tour' ou déclare un mouvement."
-                    )
-                    # Si l'agent avait combiné [SORT:] + [ACTION] dans son message,
-                    # rappeler la règle et redemander la décision ignorée séparément.
-                    if _combo_action_stripped:
-                        _gc_trigger = (
-                            _gc_trigger_base
-                            + f"\n\n[RAPPEL RÈGLE] Tu avais inclus un bloc [ACTION] avec ton sort — il a été ignoré."
-                            f"\nDéclare UN SEUL bloc [ACTION] par message. Si tu veux te déplacer, fais-le maintenant en UN seul message dédié."
-                        )
-                    else:
-                        _gc_trigger = _gc_trigger_base
-
-                    _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
-                    _original_receive(
-                        self_mgr,
-                        {"role": "user", "content": _gc_trigger, "name": "Alexis_Le_MJ"},
-                        sender,
-                        request_reply=True,
-                        silent=False,
-                    )
-                    return
-
-                _original_receive(self_mgr, message, sender, request_reply, silent)
-                return
-            else:
-                _app.msg_queue.put({
-                    "sender": "❌ MJ",
-                    "text": f"[SORT] Le sort {spell_name} de {name} a été refusé par le MJ.",
-                    "color": "#ef9a9a"
-                })
-                _original_receive(
-                    self_mgr,
-                    {"role": "user", "content": f"[SORT] Le sort {spell_name} de {name} a été refusé par le MJ.", "name": "Alexis_Le_MJ"},
-                    sender, request_reply=False, silent=True,
-                )
-                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
-                return
-
-            _original_receive(self_mgr, message, sender, request_reply, silent)
-            return
-
         # ── INTERCEPTION ACTIONS[ACTION] ─────────────────────────────────────
         if (not is_system
                 and name in PLAYER_NAMES
@@ -2038,7 +1536,31 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                 _sub_ev  = _threading.Event()
                 _sub_res: dict = {}
 
-                if _pre_is_spell and _pre_lvl and _pre_lvl > 0:
+                # -- Arme spectrale deja invoquee -> bypass total du slot check --
+                # Utiliser l'arme (Bonus Action d'attaque) ne coute aucun slot.
+                _SPECTRAL_TOKENS = {
+                    "spiritual weapon": "Arme",   "arme spirituelle": "Arme",
+                    "marteau spirituel": "Arme",   "flaming sphere":   "Sphere",
+                    "sphere de feu":    "Sphere",  "bigby's hand":     "Main",
+                    "main de bigby":    "Main",    "moonbeam":         "Rayon",
+                    "rayon de lune":    "Rayon",   "cloud of daggers": "Dagues",
+                    "nuage de dagues":  "Dagues",
+                }
+                _pre_intent_regle = (_sub.get("intention", "") + " " + _sub.get("regle", "")).lower()
+                _spectral_on_map = False
+                try:
+                    _cmap_pre = getattr(_app, "_combat_map_win", None)
+                    if _cmap_pre:
+                        for _sp_kw, _sp_tok_name in _SPECTRAL_TOKENS.items():
+                            if _sp_kw in _pre_intent_regle:
+                                _expected_tok = f"{_sp_tok_name} ({name})"
+                                if any(t.get("name") == _expected_tok for t in _cmap_pre.tokens):
+                                    _spectral_on_map = True
+                                break
+                except Exception:
+                    pass
+
+                if _pre_is_spell and _pre_lvl and _pre_lvl > 0 and not _spectral_on_map:
                     try:
                         _pre_state = load_state()
                         _pre_slots = (
@@ -2723,6 +2245,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 _res["note"]  = mj_note_sm
                                 _ev.set()
 
+                            _smcard_slots = {}
                             try:
                                 _smcard_slots = (
                                     load_state().get("characters", {})
@@ -2736,55 +2259,68 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             except Exception:
                                 _slots_avail_str = "(inconnu)"
 
-                            _smite_txt = (
-                                f"{name} a {_sm_candidate['label']} actif.\n"
-                                f"Dés : {_sm_candidate['dice']} dégâts {_sm_candidate['type']}\n"
-                                f"Slots disponibles : {_slots_avail_str}\n"
-                                f"L'attaque a touché — appliquer le smite ?"
-                            )
-                            _app._register_approval_event(_smite_ev)
-                            _app.msg_queue.put({
-                                "action": "result_confirm", "char_name": name,
-                                "type_label": _sm_candidate["label"],
-                                "results_text": _smite_txt,
-                                "mode": "smite", "resume_callback": _smite_cb,
-                            })
-                            _smite_ev.wait(timeout=600)
-                            _app._unregister_approval_event(_smite_ev)
+                            # -- Pas de slots disponibles -> inutile de demander --
+                            _has_any_slot = any(int(v) > 0 for v in _smcard_slots.values())
+                            if not _has_any_slot:
+                                ctx.pending_smite.pop(name, None)
+                                _app.msg_queue.put({
+                                    "sender": "⚙️ Système",
+                                    "text": (
+                                        f"[{_sm_candidate['label']} ignoré] "
+                                        f"{name} n'a plus aucun emplacement de sort disponible."
+                                    ),
+                                    "color": "#cc4444",
+                                })
+                            else:
+                                _smite_txt = (
+                                    f"{name} a {_sm_candidate['label']} actif.\n"
+                                    f"Dés : {_sm_candidate['dice']} dégâts {_sm_candidate['type']}\n"
+                                    f"Slots disponibles : {_slots_avail_str}\n"
+                                    f"L'attaque a touché — appliquer le smite ?"
+                                )
+                                _app._register_approval_event(_smite_ev)
+                                _app.msg_queue.put({
+                                    "action": "result_confirm", "char_name": name,
+                                    "type_label": _sm_candidate["label"],
+                                    "results_text": _smite_txt,
+                                    "mode": "smite", "resume_callback": _smite_cb,
+                                })
+                                _smite_ev.wait(timeout=600)
+                                _app._unregister_approval_event(_smite_ev)
 
-                            if _smite_res.get("apply", False):
-                                _smite_used = ctx.pending_smite.pop(name)
-                                _sm_slot_lvl = _smite_used.get("slot_level", 1)
-                                try:
-                                    from state_manager import use_spell_slot as _uss, load_state as _ls_sm
-                                    _sm_state = _ls_sm()
-                                    _sm_slots = _sm_state.get("characters", {}).get(name, {}).get("spell_slots", {})
-                                    if _sm_slots.get(str(_sm_slot_lvl), 0) <= 0:
-                                        _avail = sorted((int(k) for k, v in _sm_slots.items() if v > 0))
-                                        if _avail:
-                                            _sm_slot_lvl = _avail[0]
-                                            if _smite_used["label"] == "Divine Smite":
-                                                _smite_used["dice"] = f"{_sm_slot_lvl + 1}d8"
-                                        else:
+                                if _smite_res.get("apply", False):
+                                    _smite_used = ctx.pending_smite.pop(name)
+                                    _sm_slot_lvl = _smite_used.get("slot_level", 1)
+                                    try:
+                                        from state_manager import use_spell_slot as _uss, load_state as _ls_sm
+                                        _sm_state = _ls_sm()
+                                        _sm_slots = _sm_state.get("characters", {}).get(name, {}).get("spell_slots", {})
+                                        if _sm_slots.get(str(_sm_slot_lvl), 0) <= 0:
+                                            _avail = sorted((int(k) for k, v in _sm_slots.items() if v > 0))
+                                            if _avail:
+                                                _sm_slot_lvl = _avail[0]
+                                                if _smite_used["label"] == "Divine Smite":
+                                                    _smite_used["dice"] = f"{_sm_slot_lvl + 1}d8"
+                                            else:
+                                                _app.msg_queue.put({
+                                                    "sender": "⚙️ Système",
+                                                    "text": (
+                                                        f"[Divine Smite annulé] {name} n'a plus "
+                                                        f"aucun emplacement de sort disponible."
+                                                    ),
+                                                    "color": "#cc4444",
+                                                })
+                                                _smite_used = None
+                                        if _smite_used:
+                                            _slot_result = _uss(name, str(_sm_slot_lvl))
                                             _app.msg_queue.put({
                                                 "sender": "⚙️ Système",
-                                                "text": (
-                                                    f"[Divine Smite annulé] {name} n'a plus "
-                                                    f"aucun emplacement de sort disponible."
-                                                ),
-                                                "color": "#cc4444",
+                                                "text": f"[Slot niv.{_sm_slot_lvl}] {_slot_result}",
+                                                "color": "#8888cc",
                                             })
-                                            _smite_used = None
-                                    if _smite_used:
-                                        _slot_result = _uss(name, str(_sm_slot_lvl))
-                                        _app.msg_queue.put({
-                                            "sender": "⚙️ Système",
-                                            "text": f"[Slot niv.{_sm_slot_lvl}] {_slot_result}",
-                                            "color": "#8888cc",
-                                        })
-                                        _app._update_agent_combat_prompts()
-                                except Exception as _sse:
-                                    print(f"[Smite slot] Erreur : {_sse}")
+                                            _app._update_agent_combat_prompts()
+                                    except Exception as _sse:
+                                        print(f"[Smite slot] Erreur : {_sse}")
 
                         # ── SNEAK ATTACK CONFIRMATION ────────────────────────
                         _sneak_approved = False
@@ -2952,6 +2488,26 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             {"role": "user", "content": feedback, "name": "Alexis_Le_MJ"},
                             sender, request_reply=False, silent=True,
                         )
+
+                        # ── Extra Attack : activer si c'est la 1re attaque
+                        # d'action (pas une Extra Attack elle-même) et que
+                        # le perso a la capacité Extra Attack.
+                        _ea_combined = (_sub.get("intention","") + " " + _sub.get("regle","")).lower()
+                        _is_extra_atk = any(k in _ea_combined for k in (
+                            "extra attack", "seconde attaque", "deuxième attaque",
+                            "2e attaque", "2ème attaque",
+                        ))
+                        _has_extra_attack = _CM.get(name, {}).get("extra_attack", False)
+                        if _has_extra_attack and not _is_extra_atk:
+                            _tr_ea = _get_turn_res(name)
+                            if not _tr_ea.get("extra_attack_available", False):
+                                _tr_ea["extra_attack_available"] = True
+                                if hasattr(_app, "_update_agent_combat_prompts"):
+                                    _app._update_agent_combat_prompts()
+                        elif _is_extra_atk:
+                            _get_turn_res(name)["extra_attack_available"] = False
+                            _get_turn_res(name)["extra_attack_used"] = True
+                        # ────────────────────────────────────────────────────
 
                     else:
                         # ── FLOW NON-ATTAQUE ──────────────────────────────────
@@ -3231,7 +2787,10 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         # NOTE : engine_mechanics émet "[RÉSULTAT SYSTÈME — TYPE — {char_name}]"
                         # → le startswith doit s'arrêter AVANT le "]" final pour matcher
                         # avec n'importe quel nom de personnage interpolé dans le header.
-                        _is_spell_attack    = feedback.startswith("[RÉSULTAT SYSTÈME — ATTAQUE DE SORT")
+                        _is_spell_attack    = (
+                            feedback.startswith("[RÉSULTAT SYSTÈME — ATTAQUE DE SORT")
+                            or feedback.startswith("[RÉSULTAT SYSTÈME — ATTAQUE ARME SPECTRALE")
+                        )
                         _is_healing_action  = feedback.startswith("[RÉSULTAT SYSTÈME — SOIN")
                         _is_save_action     = feedback.startswith("[RÉSULTAT SYSTÈME — JET DE SAUVEGARDE")
 
@@ -3413,7 +2972,73 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             _app._unregister_approval_event(_result_ev)
 
                         else:
-                            _result_note: dict = {}
+                            # ── Sort auto-hit (Projectile Magique, etc.) ──────
+                            # Le sort touche automatiquement mais le MJ doit
+                            # confirmer/modifier les dégâts avant application.
+                            _ah_total_m = _re.search(
+                                r"→\s*Total dégâts \w+\s*:\s*(\d+)", _results_part
+                            )
+                            _is_auto_hit_spell = _ah_total_m is not None and \
+                                "touche(nt) automatiquement" in _results_part
+
+                            if _is_auto_hit_spell:
+                                _ah_total  = int(_ah_total_m.group(1))
+                                _ah_cible  = _sub.get("cible", "Cible")
+                                _ah_dmg_ev  = _threading.Event()
+                                _ah_dmg_res: dict = {}
+
+                                def _ah_dmg_cb(amount, target_val=None, mj_note="",
+                                               _ev=_ah_dmg_ev, _res=_ah_dmg_res):
+                                    _app._unregister_approval_event(_ev)
+                                    _res["amount"] = amount
+                                    _res["target"] = target_val
+                                    _res["note"]   = mj_note
+                                    _ev.set()
+
+                                _app._register_approval_event(_ah_dmg_ev)
+                                _app.msg_queue.put({
+                                    "action":          "damage_link",
+                                    "sender":          name,
+                                    "char_name":       name,
+                                    "cible":           _ah_cible,
+                                    "dmg_text":        "Degats - sort a touche automatique",
+                                    "dmg_total":       _ah_total,
+                                    "is_crit":         False,
+                                    "resume_callback": _ah_dmg_cb,
+                                })
+                                _ah_dmg_ev.wait(timeout=300)
+                                _app._unregister_approval_event(_ah_dmg_ev)
+
+                                _fd_ah   = _ah_dmg_res.get("amount", _ah_total)
+                                _ftgt_ah = _ah_dmg_res.get("target") or _ah_cible
+                                _ah_note = _ah_dmg_res.get("note", "")
+
+                                try:
+                                    if getattr(_app, "_combat_tracker_win", None) is not None:
+                                        _app._combat_tracker_win.apply_damage_to_npc(_ftgt_ah, _fd_ah)
+                                except Exception as _e_ah:
+                                    print(f"[AutoHitDmgApply] {_e_ah}")
+                                try:
+                                    from combat_tracker_state import add_combat_history
+                                    add_combat_history(f"  -> {_ftgt_ah} subit {_fd_ah} degats.")
+                                    if hasattr(_app, "_update_agent_combat_prompts"):
+                                        _app._update_agent_combat_prompts()
+                                except Exception:
+                                    pass
+
+                                _modif_ah = (
+                                    f" (roule : {_ah_total}, modifie par MJ)"
+                                    if _fd_ah != _ah_total else ""
+                                )
+                                feedback = (
+                                    "[RESULTAT SYSTEME - SORT AUTOMATIQUE RESOLU]\n"
+                                    + _results_part
+                                    + f"\n  Degats appliques : {_fd_ah}{_modif_ah}"
+                                    + (f"\n  Note MJ : {_ah_note}" if _ah_note else "")
+                                )
+                                _result_note = {}
+                            else:
+                                _result_note: dict = {}
 
                         _res_mj_note = _result_note.get("note", "")
 

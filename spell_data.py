@@ -488,7 +488,7 @@ _PROJ_NOUN_RE = re.compile(
 )
 
 # Expression de dés : 2d6, 1d4+1, 8d6 …
-_DICE_EXPR_RE = re.compile(r'(\d+)d(\d+)(?:[+\-](\d+))?', re.IGNORECASE)
+_DICE_EXPR_RE = re.compile(r'(\d+)d(\d+)(?:\s*[+\-]\s*(\d+))?', re.IGNORECASE)
 
 # Ordinals anglais courants → int
 _ORDINAL_RE = re.compile(r'(\d+)(?:st|nd|rd|th)', re.IGNORECASE)

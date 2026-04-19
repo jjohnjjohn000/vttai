@@ -1589,14 +1589,34 @@ class ChatMixin:
         _type_is_generic = type_low in ("", "action", "action bonus", "réaction", "reaction")
         _intent_has_move = any(k in intention.lower() for k in _MOVE_KEYWORDS)
         is_move = _type_is_move or (_type_is_generic and _intent_has_move)
-        
+
+        # ── Détection token spectral (Spiritual Weapon, Flaming Sphere…) ──
+        # Si le mouvement concerne une invocation, le token à déplacer
+        # n'est pas char_name mais "Arme (Lyra)", "Sphère (Lyra)", etc.
+        _SPECTRAL_PREFIXES = {
+            "spiritual weapon": "Arme",   "arme spirituelle": "Arme",
+            "marteau spirituel": "Arme",  "flaming sphere": "Sphère",
+            "sphère de feu": "Sphère",    "bigby": "Main",
+            "main de bigby": "Main",      "moonbeam": "Rayon",
+            "rayon de lune": "Rayon",     "cloud of daggers": "Dagues",
+            "nuage de dagues": "Dagues",
+        }
+        _combined_ir = (intention + " " + regle).lower()
+        _spectral_token_name = None
+        for _kw, _pfx in _SPECTRAL_PREFIXES.items():
+            if _kw in _combined_ir:
+                _spectral_token_name = f"{_pfx} ({char_name})"
+                break
+        # Le token à utiliser comme point de départ et pour le preview
+        _preview_token = _spectral_token_name if _spectral_token_name else char_name
+
         if is_move and hasattr(self, "_combat_map_win") and getattr(self, "_combat_map_win", None):
             def _calc_coords():
                 import re
                 _cur_col, _cur_row = 0, 0
                 try:
                     for _tok in getattr(self._combat_map_win, "tokens",[]):
-                        if _tok.get("name") == char_name:
+                        if _tok.get("name") == _preview_token:
                             _cur_col = int(round(_tok.get("col", 0)))
                             _cur_row = int(round(_tok.get("row", 0)))
                             break
@@ -1607,31 +1627,46 @@ class ChatMixin:
                 i_low = intention.lower()
                 c_low = cible.lower()
                 _combined = r_low + " " + i_low + " " + c_low
-                
+
+                # ── Distance max déclarée (en cases) ────────────────────
+                _dist = 6  # défaut 30ft
+                _m_ft    = re.search(r'(\d+)\s*ft', _combined)
+                _m_cases = re.search(r'(\d+)\s*cases?', _combined)
+                _m_met   = re.search(r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\b)', _combined)
+                if _m_ft:    _dist = max(1, round(int(_m_ft.group(1)) / 5.0))
+                elif _m_cases: _dist = int(_m_cases.group(1))
+                elif _m_met: _dist = max(1, round(float(_m_met.group(1).replace(",", ".")) / 1.5))
+
+                def _cap_to_dist(dest_col, dest_row):
+                    """Plafonne la destination à _dist cases (Chebyshev) depuis la position actuelle."""
+                    _dc = dest_col - _cur_col
+                    _dr = dest_row - _cur_row
+                    _cheb = max(abs(_dc), abs(_dr))
+                    if _cheb <= _dist or _cheb == 0:
+                        return dest_col, dest_row
+                    _ratio = _dist / _cheb
+                    return (
+                        _cur_col + round(_dc * _ratio),
+                        _cur_row + round(_dr * _ratio),
+                    )
+
                 _m_exact_cible = re.match(r'^col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)$', c_low.strip(), re.IGNORECASE)
                 _m_abs_r = re.search(r'col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)', r_low, re.IGNORECASE)
                 _m_abs_c = re.search(r'col(?:onne)?\s*(\d+)[,\s]+(?:lig(?:ne)?|rang(?:ée?)?)\s*(\d+)', _combined, re.IGNORECASE)
 
-                if _m_exact_cible: return int(_m_exact_cible.group(1)) - 1, int(_m_exact_cible.group(2)) - 1
-                if _m_abs_r: return int(_m_abs_r.group(1)) - 1, int(_m_abs_r.group(2)) - 1
-                
-                _dist = 6 # Défaut 30ft (6 cases)
-                _m_ft = re.search(r'(\d+)\s*ft', _combined)
-                _m_cases = re.search(r'(\d+)\s*cases?', _combined)
-                _m_met = re.search(r'(\d+(?:[.,]\d+)?)\s*m(?:ètres?|etres?|\b)', _combined)
-                
-                if _m_ft: _dist = max(1, round(int(_m_ft.group(1)) / 5.0))
-                elif _m_cases: _dist = int(_m_cases.group(1))
-                elif _m_met: _dist = max(1, round(float(_m_met.group(1).replace(",", ".")) / 1.5))
+                if _m_exact_cible:
+                    return _cap_to_dist(int(_m_exact_cible.group(1)) - 1, int(_m_exact_cible.group(2)) - 1)
+                if _m_abs_r:
+                    return _cap_to_dist(int(_m_abs_r.group(1)) - 1, int(_m_abs_r.group(2)) - 1)
 
                 if not _m_ft and not _m_cases and not _m_met and _m_abs_c:
-                    return int(_m_abs_c.group(1)) - 1, int(_m_abs_c.group(2)) - 1
+                    return _cap_to_dist(int(_m_abs_c.group(1)) - 1, int(_m_abs_c.group(2)) - 1)
 
                 # 1. Recherche par cible (ex: VexSira) en priorité absolue
                 try:
                     for _other in getattr(self._combat_map_win, "tokens",[]):
                         _oname = _other.get("name", "").lower()
-                        if _oname and _oname in _combined and _other.get("name") != char_name:
+                        if _oname and _oname in _combined and _other.get("name") != _preview_token:
                             _oc = int(round(_other.get("col", 0)))
                             _or = int(round(_other.get("row", 0)))
                             _raw_dc = _oc - _cur_col
@@ -1652,7 +1687,7 @@ class ChatMixin:
                     if _kd in _combined: return _cur_col + _dc * _dist, _cur_row + _dr * _dist
                 for _kd, (_dc, _dr) in _DIR_WORD:
                     if _kd == "est" and not re.search(r"(vers l'|à l'|direction )\b" + _kd + r"\b", _combined):
-                        continue # Ignore "est" si ce n'est pas précédé d'un indicateur de direction
+                        continue
                     if re.search(r'\b' + _kd + r'\b', _combined):
                         return _cur_col + _dc * _dist, _cur_row + _dr * _dist
                         
@@ -1662,8 +1697,13 @@ class ChatMixin:
             if coords:
                 preview_col, preview_row = coords
                 try:
-                    self._combat_map_win.request_movement_preview(char_name, preview_col, preview_row)
-                    tk.Label(frame, text="💡 Un carré de prévisualisation est sur la carte. Vous pouvez le déplacer.",
+                    self._combat_map_win.request_movement_preview(_preview_token, preview_col, preview_row)
+                    _preview_lbl = (
+                        f"💡 Prévisualisation : {_spectral_token_name} → Col {preview_col+1}, Lig {preview_row+1}. Vous pouvez le déplacer."
+                        if _spectral_token_name else
+                        "💡 Un carré de prévisualisation est sur la carte. Vous pouvez le déplacer."
+                    )
+                    tk.Label(frame, text=_preview_lbl,
                              bg="#12181a", fg="#4fc3f7", font=("Consolas", 8, "italic")).pack(fill=tk.X, pady=(2,0))
                 except Exception as e:
                     print(f"Erreur trace preview : {e}")
@@ -1686,8 +1726,8 @@ class ChatMixin:
             note = note_entry.get().strip()
             extra = None
             if is_move and hasattr(self, "_combat_map_win") and self._combat_map_win:
-                extra = self._combat_map_win.get_movement_preview(char_name)
-                self._combat_map_win.clear_movement_preview(char_name)
+                extra = self._combat_map_win.get_movement_preview(_preview_token)
+                self._combat_map_win.clear_movement_preview(_preview_token)
             
             frame.destroy()
             _cleanup_header()
@@ -1697,12 +1737,24 @@ class ChatMixin:
                 f"[{type_label}]{suffix} autorisé : {intention}" + (f"  — {note}" if note else ""),
                 "#44aa44",
             )
+            # ── Note MJ → historique combat ──────────────────────────────
+            if note:
+                try:
+                    from combat_tracker_state import add_combat_history
+                    add_combat_history(
+                        f"  → 📝 Note MJ [{type_label}] {char_name} : {note}"
+                    )
+                    if hasattr(self, "_update_agent_combat_prompts"):
+                        self._update_agent_combat_prompts()
+                except Exception as _e:
+                    print(f"[action_confirm] Note MJ history : {_e}")
+            # ─────────────────────────────────────────────────────────────
             resume_callback(True, note, extra_data=extra)
 
         def _deny(event=None):
             note = note_entry.get().strip()
             if is_move and hasattr(self, "_combat_map_win") and self._combat_map_win:
-                self._combat_map_win.clear_movement_preview(char_name)
+                self._combat_map_win.clear_movement_preview(_preview_token)
             
             frame.destroy()
             _cleanup_header()
@@ -1712,6 +1764,18 @@ class ChatMixin:
                 f"[{type_label}]{suffix} refusé : {intention}" + (f"  — {note}" if note else ""),
                 "#aa4444",
             )
+            # ── Note MJ → historique combat ──────────────────────────────
+            if note:
+                try:
+                    from combat_tracker_state import add_combat_history
+                    add_combat_history(
+                        f"  → 📝 Note MJ [{type_label}] {char_name} : {note}"
+                    )
+                    if hasattr(self, "_update_agent_combat_prompts"):
+                        self._update_agent_combat_prompts()
+                except Exception as _e:
+                    print(f"[action_confirm] Note MJ history : {_e}")
+            # ─────────────────────────────────────────────────────────────
             # ── Abandon de chaîne ────────────────────────────────────────────
             # On appelle chain_abort_callback AVANT resume_callback pour que
             # les cartes restantes soient détruites avant que le thread de jeu

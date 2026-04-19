@@ -25,6 +25,7 @@ CHAR_MECHANICS: dict = {
         "atk_melee": +11, "atk_ranged": +7, "atk_spell": +9,
         "speed": 30,
         "dmg_melee": (2, 6, +8), "n_attacks": 2, "save_dc": 18,
+        "extra_attack": True,
         "skills": {"athlétisme":+10,"religion":+5,"persuasion":+9,
                    "perspicacité":+7,"intimidation":+9,"perception":+7},
         "saves":  {"force":+10,"dextérité":+7,"constitution":+8,
@@ -34,6 +35,7 @@ CHAR_MECHANICS: dict = {
         "atk_melee": +3, "atk_ranged": +8, "atk_spell": +10,
         "speed": 30,
         "dmg_melee": (1, 4, -1), "n_attacks": 1, "save_dc": 18,
+        "extra_attack": False,
         "skills": {"arcanes":+15,"histoire":+10,"investigation":+10,
                    "nature":+10,"religion":+10,"perception":+7,"perspicacité":+7},
         "saves":  {"force":-1,"dextérité":+8,"constitution":+7,
@@ -44,6 +46,7 @@ CHAR_MECHANICS: dict = {
         "speed": 30,
         "dmg_melee": (1, 6, +5), "dmg_sneak": (6, 6, 0),
         "n_attacks": 2, "save_dc": None,
+        "extra_attack": False,
         "skills": {"discrétion":+15,"escamotage":+15,"tromperie":+12,
                    "perception":+11,"perspicacité":+6,"acrobaties":+10,
                    "investigation":+8,"athlétisme":+6,"intimidation":+7},
@@ -54,6 +57,7 @@ CHAR_MECHANICS: dict = {
         "atk_melee": +7, "atk_ranged": +6, "atk_spell": +10,
         "speed": 30,
         "dmg_melee": (1, 8, +2), "n_attacks": 1, "save_dc": 18,
+        "extra_attack": False,
         "skills": {"médecine":+15,"perspicacité":+10,"religion":+6,
                    "persuasion":+8,"perception":+10,"histoire":+6},
         "saves":  {"force":+7,"dextérité":+6,"constitution":+7,
@@ -633,6 +637,27 @@ def execute_action_mechanics(
             except Exception:
                 pass
 
+        # Fallback : si le nom FR retourné par le LLM n'est pas dans la DB (anglaise),
+        # chercher via les mots-clés de l intention/règle dans le catalogue de sorts.
+        if _sp_data is None and is_spell:
+            try:
+                from spell_data import search_spells as _ss_fb, get_spell as _get_spell
+                _i_r_fb = (intention + " " + regle).lower()
+                _STOP_FB = {"lance", "lancer", "utilise", "sorts", "avec", "pour",
+                            "dans", "contre", "vers", "cible", "niveau", "niveaux",
+                            "sort", "magie", "spell", "cast", "magic", "bonus"}
+                for _w in _re.split(r"[\s\-,;:!?]+", _i_r_fb):
+                    if len(_w) >= 5 and _w not in _STOP_FB:
+                        _hits = _ss_fb(_w, max_results=1)
+                        if _hits:
+                            _fb_sp = _get_spell(_hits[0])
+                            if _fb_sp:
+                                _spell_name_candidate = _hits[0]
+                                _sp_data = _fb_sp
+                                break
+            except Exception:
+                pass
+
         if _sp_data:
             # Jet d'attaque ? — jamais pour un sort de soin.
             if _sp_data.get("spell_attack") and not is_atk_roll and not is_heal:
@@ -746,6 +771,88 @@ def execute_action_mechanics(
 
         if _cmap_win and _match:
             _spectral_exists = any(t.get("name") == _sum_name for t in _cmap_win.tokens)
+
+        # ── Court-circuit : arme spectrale déjà présente = Action Bonus gratuite ──
+        # Le slot est consommé UNIQUEMENT à l'invocation initiale.
+        # Les tours suivants, l'arme attaque via une Action Bonus sans aucun slot.
+        #
+        # FIX : distinguer "déplacement de l'arme" vs "attaque avec l'arme".
+        # En D&D 5e, le déplacement et l'attaque de l'arme spirituelle sont deux
+        # actions séparées — le déplacement ne doit PAS déclencher une attaque auto.
+        # Si l'action contient des mots de mouvement (avec ou sans mots d'attaque),
+        # on valide uniquement le déplacement et on instruit l'agent d'attaquer séparément.
+        _SW_MOVE_KW = ("déplace", "deplace", "move", "repositionne",
+                       "rapproche", "avance", "recule", "bouge", "mouvement")
+        _SW_ATK_KW  = ("attaque", "attack", "frappe", "frapper", "assaut")
+        _sw_has_move = (
+            is_move_action  # type_label explicitement "Mouvement"
+            or any(k in i_low or k in r_low for k in _SW_MOVE_KW)
+        )
+        _sw_has_atk = any(k in i_low or k in r_low for k in _SW_ATK_KW)
+
+        # Cas 1 : déplacement de l'arme (avec ou sans attaque dans le même bloc)
+        # → valider le déplacement uniquement, pas d'attaque automatique
+        if _spectral_exists and _match and _sw_has_move:
+            _extra_note = (
+                "\n  ⚠ Attaque détectée dans la même action — déplacement et attaque"
+                " doivent être des actions séparées (règle D&D 5e).\n"
+                "  → Déclare l'attaque dans un NOUVEAU bloc [ACTION] Type: Action Bonus"
+                " une fois l'arme déplacée."
+            ) if _sw_has_atk else ""
+            results.append(
+                f"  [✨ {_sum_name}] Déplacée vers {cible}.{_extra_note}"
+            )
+            results.append(
+                "  → Aucune attaque résolue pour cette action. "
+                "Pour attaquer, déclare un nouveau [ACTION] Type: Action Bonus "
+                "/ Intention: Attaquer avec l'arme spirituelle / Cible: <ennemi>."
+            )
+            narrative_hint = (
+                f"L'arme spectrale de {char_name} se déplace vers {cible}. "
+                f"Narre en 1 phrase uniquement le déplacement de l'arme, sans attaque. "
+                f"L'attaque sera déclarée séparément par {char_name}."
+            )
+            return (
+                f"[RÉSULTAT SYSTÈME — DÉPLACEMENT ARME SPECTRALE — {char_name}]\n"
+                f"✅ Déplacement confirmé. AUCUNE attaque automatique.\n"
+                + "\n".join(results)
+                + "\n\n[INSTRUCTION NARRATIVE]\n"
+                + narrative_hint
+            )
+
+        # Cas 2 : attaque pure avec l'arme spectrale (aucun mot de mouvement détecté)
+        # → comportement original : résoudre l'attaque immédiatement
+        elif _spectral_exists and _match:
+            _atk_spell  = stats.get("atk_spell", +5)
+            _atk_res    = roll_dice(char_name, "1d20", _atk_spell)
+            # Dégâts : extraire depuis la règle si présent, sinon 1d8 + mod de sort
+            _sw_all_d   = _all_dice(regle)
+            if _sw_all_d:
+                _sw_dn, _sw_df, _sw_db = _sw_all_d[0]
+            else:
+                # Spiritual Weapon : 1d8 + mod de sort (atk_spell - prof niv.11 = +4)
+                _sw_dn, _sw_df, _sw_db = 1, 8, max(0, _atk_spell - 4)
+            _dmg_res = roll_dice(char_name, f"{_sw_dn}d{_sw_df}", _sw_db)
+            results.append(
+                f"  [✨ {_sum_name}] Active sur la carte — "
+                f"Action Bonus d'attaque (AUCUN SLOT REQUIS)"
+            )
+            results.append(f"  [jet d'attaque de sort] {_atk_res}")
+            results.append(f"  [dégâts si touche] {_dmg_res}  (force)")
+            results.append(f"  → MJ : confirmer Touché ou Raté")
+            narrative_hint = (
+                f"L'arme spectrale de {char_name} est déjà présente sur le champ de bataille. "
+                f"Narre en 1 phrase l'attaque de l'arme sur {cible}. "
+                f"Ne mentionne pas les chiffres."
+            )
+            return (
+                f"[RÉSULTAT SYSTÈME — ATTAQUE ARME SPECTRALE — {char_name}]\n"
+                f"⚠ AUCUN SLOT D'EMPLACEMENT REQUIS — L'ARME EST DÉJÀ INVOQUÉE.\n"
+                f"Cette action est une Action Bonus d'attaque, pas un nouveau lancer de sort.\n"
+                + "\n".join(results)
+                + "\n\n[INSTRUCTION NARRATIVE]\n"
+                + narrative_hint
+            )
 
         # Slot (uniquement pour les sorts NON-smite)
         if not is_cantrip and lvl:
@@ -895,6 +1002,8 @@ def execute_action_mechanics(
             and not dc_val
         )
         if _is_auto_hit:
+            # La DB fait autorité : pas de jet d attaque pour ce sort.
+            is_atk_roll = False
             from spell_data import (
                 get_spell_damage_expr as _gde,
                 get_spell_projectile_count as _gpc,

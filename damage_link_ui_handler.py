@@ -313,9 +313,24 @@ def _open_damage_popup(self,
             final = total
         _sel_target = _cible_var.get()
         _mj_note = _comment_var.get().strip()
-        
+
         popup.destroy()
-        
+
+        # ── Note MJ → chat visible + historique combat ──────────────────────
+        if _mj_note:
+            try:
+                self.append_message("✏️ Note MJ — Dégâts", _mj_note, "#aaaacc")
+            except Exception as _e:
+                print(f"[damage_link] Note MJ chat : {_e}")
+            try:
+                from combat_tracker_state import add_combat_history
+                add_combat_history(f"  → 📝 Note MJ : {_mj_note}")
+                if hasattr(self, "_update_agent_combat_prompts"):
+                    self._update_agent_combat_prompts()
+            except Exception as _e:
+                print(f"[damage_link] Note MJ history : {_e}")
+        # ────────────────────────────────────────────────────────────────────
+
         # Appel avec (final, selected_target, mj_note) — fallback 2 ou 1 arg
         try:
             resume_callback(final, _sel_target, _mj_note)
