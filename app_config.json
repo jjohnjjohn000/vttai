@@ -63,5 +63,18 @@
   "combat": {
     "model": "gemini-3.1-flash-lite-preview"
   },
+  "fallback_chain": [
+    "gemini-3.1-flash-lite-preview",
+    "gemma-4-26b-a4b-it",
+    "gemini-3-flash-preview",
+    "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+    "gemma-4-31b-it",
+    "groq/meta-llama/llama-4-scout-17b-16e-instruct",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash",
+    "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
+    "openrouter/arcee-ai/trinity-large-preview:free"
+  ],
   "campaign_name": "campagne"
 }

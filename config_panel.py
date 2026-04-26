@@ -166,6 +166,105 @@ def _tab_agents(nb, cfg, vars_):
 
     vars_["combat"] = {"model": combat_model_var}
 
+    # ── Chaîne de fallback ────────────────────────────────────────────────────
+    _section(scroll_frame, "⛓  Chaîne de Fallback — Agents Joueurs", PURPLE)
+
+    tk.Label(scroll_frame,
+             text=("  Ordre de tentative quand le modèle principal est épuisé (quota 429).\n"
+                   "  S'applique aux modèles Gemini. Groq/OpenRouter/Ollama primaires n'ont pas de fallback."),
+             bg=BG, fg=FG_DIM, font=("Consolas", 8), justify=tk.LEFT,
+             ).pack(anchor="w", padx=20, pady=(0, 6))
+
+    fb_frame = tk.Frame(scroll_frame, bg=BG)
+    fb_frame.pack(fill=tk.X, padx=20, pady=(0, 8))
+
+    # ── Listbox + scrollbar ──────────────────────────────────────────────────
+    lb_frame = tk.Frame(fb_frame, bg=BG2)
+    lb_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    fb_sb = tk.Scrollbar(lb_frame, orient=tk.VERTICAL)
+    fb_listbox = tk.Listbox(
+        lb_frame, bg=BG2, fg=FG, selectbackground=BG3, selectforeground=ACCENT,
+        font=("Consolas", 9), height=12, relief="flat", highlightthickness=0,
+        activestyle="none", yscrollcommand=fb_sb.set,
+    )
+    fb_sb.config(command=fb_listbox.yview)
+    fb_sb.pack(side=tk.RIGHT, fill=tk.Y)
+    fb_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    # Charger la chaîne depuis la config
+    _fb_chain = cfg.get("fallback_chain", DEFAULTS.get("fallback_chain", []))
+    for _item in _fb_chain:
+        fb_listbox.insert(tk.END, _item)
+
+    # ── Boutons à droite ─────────────────────────────────────────────────────
+    btn_frame = tk.Frame(fb_frame, bg=BG)
+    btn_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(8, 0))
+
+    def _fb_move(delta):
+        sel = fb_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        new_idx = idx + delta
+        if new_idx < 0 or new_idx >= fb_listbox.size():
+            return
+        val = fb_listbox.get(idx)
+        fb_listbox.delete(idx)
+        fb_listbox.insert(new_idx, val)
+        fb_listbox.selection_set(new_idx)
+        fb_listbox.see(new_idx)
+
+    def _fb_remove():
+        sel = fb_listbox.curselection()
+        if sel:
+            fb_listbox.delete(sel[0])
+
+    tk.Button(btn_frame, text="⬆", bg=BG2, fg=ACCENT, font=("Arial", 11, "bold"),
+              relief="flat", width=3, command=lambda: _fb_move(-1),
+              ).pack(pady=(0, 2))
+    tk.Button(btn_frame, text="⬇", bg=BG2, fg=ACCENT, font=("Arial", 11, "bold"),
+              relief="flat", width=3, command=lambda: _fb_move(1),
+              ).pack(pady=(0, 6))
+    tk.Button(btn_frame, text="✕", bg=BG2, fg=RED, font=("Arial", 11, "bold"),
+              relief="flat", width=3, command=_fb_remove,
+              ).pack(pady=(0, 2))
+
+    # ── Ajouter un modèle ────────────────────────────────────────────────────
+    add_frame = tk.Frame(scroll_frame, bg=BG)
+    add_frame.pack(fill=tk.X, padx=20, pady=(0, 12))
+
+    _fb_add_var = tk.StringVar(value="")
+
+    tk.Label(add_frame, text="Ajouter :", bg=BG, fg=FG_DIM,
+             font=FONT_LBL, anchor="w").pack(side=tk.LEFT)
+
+    add_menu = tk.OptionMenu(add_frame, _fb_add_var, *KNOWN_MODELS)
+    add_menu.config(bg=BG2, fg=FG, activebackground=BG3, activeforeground=ACCENT,
+                    highlightthickness=0, relief="flat", font=("Consolas", 8), width=30)
+    add_menu["menu"].config(bg=BG2, fg=FG, activebackground=BG3,
+                            activeforeground=ACCENT, font=("Consolas", 8))
+    add_menu.pack(side=tk.LEFT, padx=(6, 0))
+
+    add_entry = tk.Entry(add_frame, textvariable=_fb_add_var, bg=BG2, fg=ACCENT,
+                         font=("Consolas", 9), insertbackground=ACCENT, relief="flat",
+                         width=36)
+    add_entry.pack(side=tk.LEFT, padx=(6, 0), ipady=3)
+
+    def _fb_add():
+        model = _fb_add_var.get().strip()
+        if model:
+            fb_listbox.insert(tk.END, model)
+            fb_listbox.see(tk.END)
+            _fb_add_var.set("")
+
+    tk.Button(add_frame, text="➕ Ajouter", bg=BG2, fg=GREEN, font=("Arial", 9, "bold"),
+              relief="flat", padx=8, command=_fb_add,
+              ).pack(side=tk.LEFT, padx=(8, 0))
+
+    # Store the listbox reference for _save() to read
+    vars_["fallback_chain"] = {"listbox": fb_listbox}
+
     return tab
 
 
@@ -1127,7 +1226,7 @@ def _tab_llm_resources(nb, cfg):
         # ══════════════════════════════════════════════════════════════════════
         # SECTION 3 — Chaîne de fallback
         # ══════════════════════════════════════════════════════════════════════
-        _section(inner, "⛓ CHAÎNE DE FALLBACK GEMINI (ordre de tentative)", PURPLE)
+        _section(inner, "⛓ CHAÎNE DE FALLBACK (ordre de tentative)", PURPLE)
 
         fb_card = _card(inner, pady=(4, 12))
 
@@ -1135,27 +1234,31 @@ def _tab_llm_resources(nb, cfg):
         hdr_fb = tk.Frame(fb_card, bg=BG3)
         hdr_fb.pack(fill=tk.X, padx=8, pady=(6, 2))
         for txt, w, anch in [("#", 4, "e"), ("Modèle", 34, "w"),
-                               ("Fournisseur", 14, "w"), ("Clés dispo", 10, "w"), ("Note", 0, "w")]:
+                               ("Fournisseur", 14, "w"), ("Clés dispo", 10, "w")]:
             tk.Label(hdr_fb, text=txt, bg=BG3, fg=FG_DIM,
                      font=("Arial", 8, "bold"),
                      width=w, anchor=anch).pack(side=tk.LEFT, padx=4)
 
-        FALLBACK_ROWS = [
-            # (modèle affiché, fournisseur, nb_clés_fn, note, warning?)
-            ("gemini-2.5-flash",               "Gemini",      len(gemini_keys), "stable · recommandé",         False),
-            ("gemini-2.5-pro",                 "Gemini",      len(gemini_keys), "stable · recommandé",         False),
-            ("gemini-2.0-flash",               "Gemini",      len(gemini_keys), "stable",                      False),
-            ("gemma-4-31b-it",                 "Gemini",      len(gemini_keys), "preview — 404 possible",      True),
-            ("gemma-4-26b-a4b-it",             "Gemini",      len(gemini_keys), "preview — 404 possible",      True),
-            ("gemini-3-flash-preview",         "Gemini",      len(gemini_keys), "preview — 404 possible",      True),
-            ("gemini-3.1-flash-lite-preview",  "Gemini",      len(gemini_keys), "preview — 404 possible",      True),
-            ("groq/llama-4-scout-17b-16e-…",   "Groq",        len(groq_keys),   "cross-provider",              False),
-            ("openrouter/llama-3.3-70b:free",  "OpenRouter",  len(or_keys), "dernier recours",           False),
-            ("openrouter/mistral-small:free",  "OpenRouter",  len(or_keys), "dernier recours",           False),
-            ("openrouter/arcee-trinity:free",  "OpenRouter",  len(or_keys), "dernier recours",           False),
-        ]
+        # Lire la chaîne depuis la config
+        _fb_list = cfg.get("fallback_chain", DEFAULTS.get("fallback_chain", []))
 
-        for i, (model, provider, n_keys, note, warn) in enumerate(FALLBACK_ROWS, 1):
+        for i, model in enumerate(_fb_list, 1):
+            model = model.strip()
+            if not model:
+                continue
+
+            # Déterminer fournisseur et nb de clés
+            if model.startswith("groq/"):
+                provider, n_keys = "Groq", len(groq_keys)
+            elif model.startswith("openrouter/"):
+                provider, n_keys = "OpenRouter", len(or_keys)
+            elif model.startswith("deepseek/"):
+                provider, n_keys = "DeepSeek", 1 if ds_key else 0
+            elif model.startswith("ollama/"):
+                provider, n_keys = "Ollama", -1  # pas de clé requise
+            else:
+                provider, n_keys = "Gemini", len(gemini_keys)
+
             row = tk.Frame(fb_card, bg=BG2 if i % 2 == 0 else BG)
             row.pack(fill=tk.X, padx=8, pady=1)
 
@@ -1163,18 +1266,24 @@ def _tab_llm_resources(nb, cfg):
                      font=("Consolas", 9), width=4, anchor="e").pack(side=tk.LEFT, padx=4)
             tk.Label(row, text=model, bg=row["bg"], fg=FG,
                      font=("Consolas", 9), width=34, anchor="w").pack(side=tk.LEFT, padx=4)
-            p_colors = {"Gemini": GOLD, "Groq": PURPLE, "OpenRouter": "#80cbc4"}
+            p_colors = {"Gemini": GOLD, "Groq": PURPLE, "OpenRouter": "#80cbc4",
+                        "DeepSeek": "#64b5f6", "Ollama": GREEN}
             tk.Label(row, text=provider, bg=row["bg"],
                      fg=p_colors.get(provider, FG),
                      font=("Consolas", 8), width=14, anchor="w").pack(side=tk.LEFT, padx=4)
 
-            clé_color = (GREEN if n_keys > 0 else RED)
-            clé_txt = (f"{n_keys} clé(s)" if n_keys > 0 else "✗ manquante")
+            if n_keys == -1:
+                clé_txt, clé_color = "local", GREEN
+            elif n_keys > 0:
+                clé_txt, clé_color = f"{n_keys} clé(s)", GREEN
+            else:
+                clé_txt, clé_color = "✗ manquante", RED
             tk.Label(row, text=clé_txt, bg=row["bg"], fg=clé_color,
                      font=("Consolas", 8), width=10, anchor="w").pack(side=tk.LEFT, padx=4)
-            note_color = GOLD if warn else FG_DIM
-            tk.Label(row, text=note, bg=row["bg"], fg=note_color,
-                     font=("Consolas", 7)).pack(side=tk.LEFT, padx=4)
+
+        if not _fb_list:
+            tk.Label(fb_card, text="  (aucun modèle de fallback configuré)",
+                     bg=BG2, fg=FG_DIM, font=("Consolas", 8)).pack(anchor="w", padx=16, pady=4)
 
         tk.Label(fb_card,
                  text=(
@@ -1243,7 +1352,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
     vars_: dict = {
         "agents": {}, "chronicler": {}, "groupchat": {},
         "memories": {}, "voice": {}, "ui": {}, "piper": {}, "ptt": {},
-        "combat": {},
+        "combat": {}, "fallback_chain": {},
     }
 
     # Créer les 6 onglets
@@ -1356,6 +1465,11 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
         new_cfg["combat"].update({
             "model": combat_v.get("model", tk.StringVar(value="gemini-3.1-flash-lite-preview")).get(),
         })
+
+        fb_v = vars_.get("fallback_chain", {})
+        fb_lb = fb_v.get("listbox")
+        if fb_lb:
+            new_cfg["fallback_chain"] = [fb_lb.get(i) for i in range(fb_lb.size())]
 
         save_app_config(new_cfg)
         reload_app_config()

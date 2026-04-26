@@ -106,6 +106,7 @@ from state_manager import (
     get_active_characters,
     get_spells_prompt,
     get_inventory_prompt,
+    get_health_prompt,
     get_campaign_log_toc_prompt, get_campaign_log_prompt,
 )
 _dbg("import voice_interface...")
@@ -466,6 +467,7 @@ class DnDApp(
                     + sessions_block + toc_block + log_block
                     + get_spells_prompt(name)
                     + get_inventory_prompt()
+                    + get_health_prompt(name)
                     + ctx_block + combat_block + map_block
                 )
 

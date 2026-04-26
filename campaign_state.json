@@ -1,5 +1,5 @@
 {
-    "session_summary": "### Chroniques de la Barovie : Le Crépuscule de l'Érinye\n\n**La Chute de Vex'sira**\nLe Gué de la Tser, théâtre d'une déchirure planaire menaçante, a été le lieu d'une confrontation brutale. Le groupe, épuisé et physiquement meurtri par les traits empoisonnés, a dû faire face à la dernière résistance de la commandante **Vex'sira**. Après avoir repoussé la meute de chiens de l'enfer — appuyés par l'efficacité tactique de **Rudolph van Richten** et la férocité d'**Ezmerelda d'Avenir** — les compagnons ont réussi à contraindre l'Érinye à descendre de son perchoir aérien. Malgré la détresse physique de **Kaelen**, un temps tombé sous le feu nourri de l'ennemie, et la fatigue accumulée d'**Elara**, le groupe a maintenu un verrou tactique inébranlable. **Vex'sira** a finalement été abattue au sol, mettant un terme temporaire à l'invasion planaire immédiate.\n\n**État de la Situation**\nLa menace de Vex'sira est éliminée, mais le groupe est exsangue. **Elara** a procédé à la dissipation des barrières de force, permettant de sécuriser la zone, tandis que **Lyra** et **Kaelen** demeurent en état d'alerte, conscients que cette victoire n'est qu'un répit dans la lutte contre la corruption entropique qui ronge la Barovie. Le Temple d'Ambre, source de la brèche, reste l'objectif ultime et inévitable pour sceller définitivement le tissu de la réalité.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Affrontement au Gué de la Tser** : **Accompli.** Vex'sira et ses serviteurs ont été neutralisés.\n*   🗺️ **[Principale] Stopper la brèche planaire** : **En cours.** L'incursion au Temple d'Ambre demeure la priorité absolue pour éradiquer la source du mal.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : **En attente.** Les travaux de fortification sont suspendus à la résolution de la crise planaire.\n*   🗺️ **[Spirituelle] Retrouver les restes d'Argynvost** : **En attente.** La quête reste cruciale pour restaurer la pleine puissance du Fanal.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Toujours en possession du groupe).\n*   *Lettre cachetée* (Inchangée).\n\n*Note du Chroniqueur : Le sang versé au Gué de la Tser marque le prix de la survie. Si la menace de Vex'sira est écartée, le groupe comprend désormais que le véritable ennemi est l'instabilité même du monde qui s'effrite. L'ascension vers le Temple d'Ambre sera le prochain, et peut-être le plus périlleux, des chapitres de cette agonie barovienne.*",
+    "session_summary": "### Chroniques de la Barovie : Le Crépuscule de l'Érinye\n\n**La Fuite de Vex'sira**\nLe Gué de la Tser, théâtre d'une déchirure planaire menaçante, a été le lieu d'une confrontation brutale. Le groupe, épuisé et physiquement meurtri par les traits empoisonnés, a dû faire face à la dernière résistance de la commandante **Vex'sira**. Après avoir repoussé la meute de chiens de l'enfer — appuyés par l'efficacité tactique de **Rudolph van Richten** et la férocité d'**Ezmerelda d'Avenir** — les compagnons ont réussi à contraindre l'Érinye à descendre de son perchoir aérien. Malgré la détresse physique de **Kaelen**, un temps tombé sous le feu nourri de l'ennemie, et la fatigue accumulée d'**Elara**, le groupe a maintenu un verrou tactique inébranlable. **Vex'sira** s'est finalement enfuit vers le nord-ouest, mettant un terme à la menace immédiate.\n\n**État de la Situation**\nLa menace de Vex'sira est écartée, mais le groupe est exsangue. **Elara** a procédé à la dissipation des barrières de force, permettant de sécuriser la zone, tandis que **Lyra** et **Kaelen** demeurent en état d'alerte, conscients que cette victoire n'est qu'un répit dans la lutte contre la corruption entropique qui ronge la Barovie. Le Temple d'Ambre, source de la brèche, reste l'objectif ultime et inévitable pour sceller définitivement le tissu de la réalité.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Affrontement au Gué de la Tser** : **Accompli.** Vex'sira et ses serviteurs ont été neutralisés.\n*   🗺️ **[Principale] Stopper la brèche planaire** : **En cours.** L'incursion au Temple d'Ambre demeure la priorité absolue pour éradiquer la source du mal.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : **En attente.** Les travaux de fortification sont suspendus à la résolution de la crise planaire.\n*   🗺️ **[Spirituelle] Retrouver les restes d'Argynvost** : **En attente.** La quête reste cruciale pour restaurer la pleine puissance du Fanal.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Toujours en possession du groupe).\n*   *Lettre cachetée* (Inchangée).\n\n*Note du Chroniqueur : Le sang versé au Gué de la Tser marque le prix de la survie. Si la menace de Vex'sira est écartée, le groupe comprend désormais que le véritable ennemi est l'instabilité même du monde qui s'effrite. L'ascension vers le Temple d'Ambre sera le prochain, et peut-être le plus périlleux, des chapitres de cette agonie barovienne.*",
     "defense_argynvostholt": 10,
     "characters": {
         "Kaelen": {
@@ -8,7 +8,7 @@
                 "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
             ],
             "llm": "gemini-3.1-flash-lite-preview",
-            "hp": 73,
+            "hp": 51,
             "max_hp": 104,
             "spell_slots": {
                 "1": 0,
@@ -81,7 +81,7 @@
             "subclass": "Devotion",
             "level": 11,
             "con_mod": 3,
-            "ac": 20,
+            "ac": 22,
             "llm_session_override": "",
             "race": "Human",
             "subrace": "Variant"
@@ -89,14 +89,14 @@
         "Elara": {
             "alt_context_too_large": "openrouter/google/gemini-3.1-pro-preview",
             "llm": "gemini-3.1-flash-lite-preview",
-            "hp": 71,
+            "hp": 16,
             "max_hp": 71,
             "spell_slots": {
-                "1": 4,
-                "2": 3,
-                "3": 3,
-                "4": 3,
-                "5": 2,
+                "1": 0,
+                "2": 2,
+                "3": 0,
+                "4": 1,
+                "5": 0,
                 "6": 0
             },
             "hit_dice_used": 0,
@@ -266,19 +266,20 @@
         },
         "Lyra": {
             "llm": "gemini-3.1-flash-lite-preview",
-            "hp": 37,
+            "hp": 27,
             "max_hp": 82,
             "spell_slots": {
                 "1": 0,
                 "2": 0,
-                "3": 3,
-                "4": 3,
-                "5": 2,
+                "3": 0,
+                "4": 2,
+                "5": 0,
                 "6": 0
             },
             "hit_dice_used": 0,
             "active": true,
             "spells_prepared": [
+                "Light",
                 "Resistance",
                 "Cure Wounds",
                 "Bless",
@@ -292,8 +293,7 @@
                 "Heal",
                 "Sacred Flame",
                 "Guidance",
-                "Toll the Dead",
-                "Light"
+                "Toll the Dead"
             ],
             "spells": [
                 {
@@ -709,7 +709,7 @@
         {
             "id": "q_338acc",
             "title": "Stopper la brèche planaire",
-            "status": "active",
+            "status": "completed",
             "category": "Principale",
             "description": "Une colonne d'obscurité est apparue au Gué de la Tser après une déchirure du tissu de la réalité. Elle menace d'engloutir la Barovie et fragilise le phare d'Argynvostholt.",
             "objectives": [
@@ -761,7 +761,7 @@
         {
             "id": "q_3d720d",
             "title": "Affrontement au Gué de la Tser",
-            "status": "active",
+            "status": "completed",
             "category": "Secondaire",
             "description": "Repousser Vex'sira et ses chiens de l'enfer qui tentent d'établir une tête de pont pour le Général Haruman.",
             "objectives": [
@@ -770,11 +770,59 @@
                     "done": false
                 },
                 {
+                    "text": "Repousser Vex'sira",
+                    "done": true
+                },
+                {
                     "text": "Éliminer les chiens de l'enfer",
+                    "done": true
+                }
+            ],
+            "notes": "Combat terminé. Vex'sira s'est enfuit en volant vers le nord-ouest."
+        },
+        {
+            "id": "q_dd47b8",
+            "title": "La Traque de Vex'sira",
+            "status": "active",
+            "category": "Secondaire",
+            "description": "Se mettre à la poursuite de Vex'sira afin de localiser sa position et de l'intercepter.",
+            "objectives": [
+                {
+                    "text": "Collecter des informations ou des indices sur la fuite de Vex'sira",
+                    "done": false
+                },
+                {
+                    "text": "Localiser le repaire ou la position actuelle de la cible",
+                    "done": false
+                },
+                {
+                    "text": "Confronter Vex'sira",
                     "done": false
                 }
             ],
-            "notes": "Combat en cours."
+            "notes": "L'objectif principal est la localisation et la neutralisation de cet individu spécifique."
+        },
+        {
+            "id": "q_3130fa",
+            "title": "La Brèche Planaire : Le Sanctuaire d'Ambre",
+            "status": "active",
+            "category": "Principale",
+            "description": "Le déclencheur de la menace dimensionnelle qu'est le Mur Noir semble s'être manifesté au cœur du Temple d'Ambre.",
+            "objectives": [
+                {
+                    "text": "Localiser l'épicentre au sein du Temple d'Ambre",
+                    "done": false
+                },
+                {
+                    "text": "Identifier la force alimentant cette instabilité",
+                    "done": false
+                },
+                {
+                    "text": "Trouver comment sceller définitivement la faille planaire",
+                    "done": false
+                }
+            ],
+            "notes": "Cette quête est la suite directe des aventures aux gué de la tser près du Mur Noir ; le Temple d'Ambre est un lieu extrêmement dangereux lié aux Puissances Sombres."
         }
     ],
     "scene_context": {
@@ -1105,34 +1153,6 @@
             "importance": 3,
             "session_ajout": 0,
             "visible": true
-        },
-        {
-            "id": "mem_786eb504",
-            "categorie": "menace",
-            "titre": "Diable",
-            "contenu": "Les créatures diaboliques sont pour la plupart immunisés au feu.",
-            "tags": [
-                "feu",
-                "diable"
-            ],
-            "importance": 2,
-            "session_ajout": 14,
-            "visible": true
-        },
-        {
-            "id": "mem_66ed0b35",
-            "categorie": "menace",
-            "titre": "Diables (Légions Infernales)",
-            "contenu": "Armée infernale organisée sous les ordres du Général Haruman, cherchant à transformer la Barovie en forteresse. Ces entités, incluant des diables à épines, des diables à chaînes et des érinyes, sont immunisées au feu et peuvent drainer la chaleur vitale des vivants. Leur invasion provient d'une faille planaire au Gué de la Tser, provoquée par la rupture d'un verrou antique au Temple d'Ambre.",
-            "tags": [
-                "Invasion",
-                "Immunité Feu",
-                "Haruman",
-                "Vex'sira"
-            ],
-            "importance": 3,
-            "session_ajout": 0,
-            "visible": true
         }
     ],
     "calendar": {
@@ -1166,68 +1186,16 @@
         {
             "session": 14,
             "date": "2026-04-12 22:24",
-            "resume": "### Chroniques de la Barovie : Le Crépuscule de l'Érinye\n\n**La Chute de Vex'sira**\nLe Gué de la Tser, théâtre d'une déchirure planaire menaçante, a été le lieu d'une confrontation brutale. Le groupe, épuisé et physiquement meurtri par les traits empoisonnés, a dû faire face à la dernière résistance de la commandante **Vex'sira**. Après avoir repoussé la meute de chiens de l'enfer — appuyés par l'efficacité tactique de **Rudolph van Richten** et la férocité d'**Ezmerelda d'Avenir** — les compagnons ont réussi à contraindre l'Érinye à descendre de son perchoir aérien. Malgré la détresse physique de **Kaelen**, un temps tombé sous le feu nourri de l'ennemie, et la fatigue accumulée d'**Elara**, le groupe a maintenu un verrou tactique inébranlable. **Vex'sira** a finalement été abattue au sol, mettant un terme temporaire à l'invasion planaire immédiate.\n\n**État de la Situation**\nLa menace de Vex'sira est éliminée, mais le groupe est exsangue. **Elara** a procédé à la dissipation des barrières de force, permettant de sécuriser la zone, tandis que **Lyra** et **Kaelen** demeurent en état d'alerte, conscients que cette victoire n'est qu'un répit dans la lutte contre la corruption entropique qui ronge la Barovie. Le Temple d'Ambre, source de la brèche, reste l'objectif ultime et inévitable pour sceller définitivement le tissu de la réalité.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Affrontement au Gué de la Tser** : **Accompli.** Vex'sira et ses serviteurs ont été neutralisés.\n*   🗺️ **[Principale] Stopper la brèche planaire** : **En cours.** L'incursion au Temple d'Ambre demeure la priorité absolue pour éradiquer la source du mal.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : **En attente.** Les travaux de fortification sont suspendus à la résolution de la crise planaire.\n*   🗺️ **[Spirituelle] Retrouver les restes d'Argynvost** : **En attente.** La quête reste cruciale pour restaurer la pleine puissance du Fanal.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Toujours en possession du groupe).\n*   *Lettre cachetée* (Inchangée).\n\n*Note du Chroniqueur : Le sang versé au Gué de la Tser marque le prix de la survie. Si la menace de Vex'sira est écartée, le groupe comprend désormais que le véritable ennemi est l'instabilité même du monde qui s'effrite. L'ascension vers le Temple d'Ambre sera le prochain, et peut-être le plus périlleux, des chapitres de cette agonie barovienne.*"
+            "resume": "### Chroniques de la Barovie : Le Crépuscule de l'Érinye\n\n**La Chute de Vex'sira**\nLe Gué de la Tser, théâtre d'une déchirure planaire menaçante, a été le lieu d'une confrontation brutale. Le groupe, épuisé et physiquement meurtri par les traits empoisonnés, a dû faire face à la dernière résistance de la commandante **Vex'sira**. Après avoir repoussé la meute de chiens de l'enfer — appuyés par l'efficacité tactique de **Rudolph van Richten** et la férocité d'**Ezmerelda d'Avenir** — les compagnons ont réussi à contraindre l'Érinye à descendre de son perchoir aérien. Malgré la détresse physique de **Kaelen**, un temps tombé sous le feu nourri de l'ennemie, et la fatigue accumulée d'**Elara**, le groupe a maintenu un verrou tactique inébranlable. **Vex'sira** s'est finalement enfuit vers le nord-ouest, mettant un terme au combat.\n\n**État de la Situation**\nLa menace immédiate des chiens de l'enfer est éliminée, Vex'sira s'est enfuit et le groupe est exsangue. **Elara** a procédé à la dissipation des barrières de force, permettant de sécuriser la zone, tandis que **Lyra** et **Kaelen** demeurent en état d'alerte, conscients que cette victoire n'est qu'un répit dans la lutte contre la corruption entropique qui ronge la Barovie. Le Temple d'Ambre, source de la brèche, reste l'objectif ultime et inévitable pour sceller définitivement le tissu de la réalité.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Affrontement au Gué de la Tser** : **Accompli.** Vex'sira et ses serviteurs ont été neutralisés.\n*   🗺️ **[Principale] Stopper la brèche planaire** : **En cours.** L'incursion au Temple d'Ambre demeure la priorité absolue pour éradiquer la source du mal.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : **En attente.** Les travaux de fortification sont suspendus à la résolution de la crise planaire.\n*   🗺️ **[Spirituelle] Retrouver les restes d'Argynvost** : **En attente.** La quête reste cruciale pour restaurer la pleine puissance du Fanal.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Toujours en possession du groupe).\n*   *Lettre cachetée* (Inchangée).\n\n*Note du Chroniqueur : Le sang versé au Gué de la Tser marque le prix de la survie. Si la menace de Vex'sira est écartée, le groupe comprend désormais que le véritable ennemi est l'instabilité même du monde qui s'effrite. L'ascension vers le Temple d'Ambre sera le prochain, et peut-être le plus périlleux, des chapitres de cette agonie barovienne.*"
         }
     ],
     "combat_tracker": {
-        "active": true,
-        "round_num": 17,
-        "current_idx": 1,
+        "active": false,
+        "round_num": 0,
+        "current_idx": -1,
         "reactions_used": [],
         "speech_used": [],
         "combatants": [
-            {
-                "name": "Thorne",
-                "is_pc": true,
-                "max_hp": 83,
-                "hp": 83,
-                "temp_hp": 0,
-                "ac": 16,
-                "initiative": 13,
-                "dex_bonus": 6,
-                "color": "#ff9999",
-                "concentration": false,
-                "conc_spell": "",
-                "conc_rounds_left": 0,
-                "conc_total_rounds": 0,
-                "bestiary_name": "",
-                "portrait": "",
-                "alignment": "ally",
-                "conditions": [],
-                "tactics": [],
-                "notes": "",
-                "death_saves_success": 0,
-                "death_saves_fail": 0,
-                "action_used": false,
-                "bonus_used": false,
-                "reaction_used": false
-            },
-            {
-                "name": "Elara",
-                "is_pc": true,
-                "max_hp": 71,
-                "hp": 71,
-                "temp_hp": 0,
-                "ac": 16,
-                "initiative": 13,
-                "dex_bonus": 3,
-                "color": "#c8b8ff",
-                "concentration": false,
-                "conc_spell": "",
-                "conc_rounds_left": 0,
-                "conc_total_rounds": 0,
-                "bestiary_name": "",
-                "portrait": "",
-                "alignment": "ally",
-                "conditions": [],
-                "tactics": [],
-                "notes": "",
-                "death_saves_success": 0,
-                "death_saves_fail": 0,
-                "action_used": false,
-                "bonus_used": false,
-                "reaction_used": false
-            },
             {
                 "name": "Ezmerelda d'Av",
                 "is_pc": false,
@@ -1235,7 +1203,7 @@
                 "hp": 30,
                 "temp_hp": 0,
                 "ac": 17,
-                "initiative": 12,
+                "initiative": 21,
                 "dex_bonus": 4,
                 "color": "#ff99bb",
                 "concentration": false,
@@ -1255,15 +1223,15 @@
                 "reaction_used": false
             },
             {
-                "name": "Lyra",
+                "name": "Elara",
                 "is_pc": true,
-                "max_hp": 82,
-                "hp": 37,
+                "max_hp": 71,
+                "hp": 16,
                 "temp_hp": 0,
                 "ac": 16,
-                "initiative": 12,
-                "dex_bonus": 1,
-                "color": "#a8f0a8",
+                "initiative": 21,
+                "dex_bonus": 3,
+                "color": "#c8b8ff",
                 "concentration": false,
                 "conc_spell": "",
                 "conc_rounds_left": 0,
@@ -1284,10 +1252,10 @@
                 "name": "VexSira",
                 "is_pc": false,
                 "max_hp": 153,
-                "hp": 5,
+                "hp": 64,
                 "temp_hp": 0,
                 "ac": 18,
-                "initiative": 9,
+                "initiative": 18,
                 "dex_bonus": 3,
                 "color": "#ddbbff",
                 "concentration": false,
@@ -1307,13 +1275,39 @@
                 "reaction_used": false
             },
             {
+                "name": "Thorne",
+                "is_pc": true,
+                "max_hp": 83,
+                "hp": 83,
+                "temp_hp": 0,
+                "ac": 16,
+                "initiative": 14,
+                "dex_bonus": 6,
+                "color": "#ff9999",
+                "concentration": false,
+                "conc_spell": "",
+                "conc_rounds_left": 0,
+                "conc_total_rounds": 0,
+                "bestiary_name": "",
+                "portrait": "",
+                "alignment": "ally",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
                 "name": "Van Richten",
                 "is_pc": false,
                 "max_hp": 77,
                 "hp": 77,
                 "temp_hp": 0,
                 "ac": 12,
-                "initiative": 5,
+                "initiative": 7,
                 "dex_bonus": 1,
                 "color": "#ddbbff",
                 "concentration": false,
@@ -1336,12 +1330,38 @@
                 "name": "Kaelen",
                 "is_pc": true,
                 "max_hp": 104,
-                "hp": 73,
+                "hp": 51,
                 "temp_hp": 0,
                 "ac": 16,
                 "initiative": 3,
                 "dex_bonus": 2,
                 "color": "#a0c4ff",
+                "concentration": false,
+                "conc_spell": "",
+                "conc_rounds_left": 0,
+                "conc_total_rounds": 0,
+                "bestiary_name": "",
+                "portrait": "",
+                "alignment": "ally",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Lyra",
+                "is_pc": true,
+                "max_hp": 82,
+                "hp": 27,
+                "temp_hp": 0,
+                "ac": 16,
+                "initiative": 2,
+                "dex_bonus": 1,
+                "color": "#a8f0a8",
                 "concentration": false,
                 "conc_spell": "",
                 "conc_rounds_left": 0,

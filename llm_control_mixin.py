@@ -226,6 +226,31 @@ class LLMControlMixin:
             self._cmd_round()
             return
 
+        # ── Commande /quest <description de la quête> ─────────────────────────
+        _pq = _re_msg.match(r'^/quest\s+(.+)$', text, _re_msg.IGNORECASE | _re_msg.DOTALL)
+        if _pq:
+            quest_desc = _pq.group(1).strip()
+            self.msg_queue.put({
+                "sender": "📜 Chroniqueur",
+                "text":   f"Analyse de la nouvelle quête en cours…\n« {quest_desc} »",
+                "color":  "#c8b8ff",
+            })
+            threading.Thread(
+                target=self.add_quest_via_llm,
+                args=(quest_desc,),
+                daemon=True,
+                name="quest-add",
+            ).start()
+            return
+        if _re_msg.match(r'^/quest\s*$', text, _re_msg.IGNORECASE):
+            self.msg_queue.put({
+                "sender": "⚠️ Système",
+                "text":   "Usage : /quest <description de la nouvelle quête>\n"
+                          "Exemple : /quest Escorter le marchand Vistani jusqu'à Vallaki",
+                "color":  "#FF9800",
+            })
+            return
+
         # ── Enter vide → parole spontanée ────────────────────────────────
         # [PAROLE_SPONTANEE] est un marqueur reconnu par le sélecteur de
         # speaker dans autogen_engine : il déclenche directement la rotation
@@ -405,12 +430,15 @@ class LLMControlMixin:
             "color":  "#ffcc00"
         })
 
-        # Interroge chaque agent en parallèle
+        # Interroge chaque agent en parallèle (avec fallback config_list)
         def _ask_agent(name):
             agent = self._agents.get(name)
             if not agent:
-                return name, None, ""
-            system_msg = agent.system_message or ""
+                return name, None, "(agent introuvable)"
+            try:
+                system_msg = agent.system_message or ""
+            except Exception:
+                return name, None, "(erreur: system_message inaccessible)"
             prompt = (
                 f"[DÉCISION DU GROUPE — VOTE DU MJ]\n"
                 f"Le groupe doit choisir immédiatement sa prochaine action parmi ces options :\n"
@@ -422,69 +450,138 @@ class LLMControlMixin:
                 f"   RAISON: <une phrase courte en roleplay expliquant ton choix>\n\n"
                 f"Ne dévie pas du format. Choisis selon la personnalité de {name}."
             )
-            try:
-                import httpx as _httpx
-                import openai as _openai
-                cfg0 = agent.llm_config["config_list"][0]
+            import httpx as _httpx
+            import openai as _openai
+
+            config_list = agent.llm_config.get("config_list", [])
+            temperature = agent.llm_config.get("temperature", 0.7)
+            last_error  = None
+
+            log_llm_start(name, prompt, context="vote")
+            for cfg in config_list:
                 http_client = _httpx.Client()
-                oa_client = _openai.OpenAI(
-                    api_key     = cfg0["api_key"],
-                    base_url    = str(cfg0.get("base_url", "https://api.openai.com/v1")),
-                    http_client = http_client,
-                )
-                log_llm_start(name, prompt, context="vote")
-                with _DIRECT_LLM_LOCK:
-                    resp = oa_client.chat.completions.create(
-                        model    = cfg0["model"],
-                        messages = [
-                            {"role": "system", "content": system_msg},
-                            {"role": "user",   "content": prompt},
-                        ],
-                        max_tokens  = 150,
-                        temperature = agent.llm_config.get("temperature", 0.7),
+                try:
+                    oa_client = _openai.OpenAI(
+                        api_key     = cfg["api_key"],
+                        base_url    = str(cfg.get("base_url", "https://api.openai.com/v1")),
+                        http_client = http_client,
+                        default_headers = cfg.get("default_headers", {}),
                     )
-                raw = (resp.choices[0].message.content or "").strip()
-                log_llm_end(name, response_preview=raw)
-                http_client.close()
-                # Parse VOTE: et RAISON:
-                vote_m   = _re_v.search(r'VOTE\s*:\s*(.+)', raw, _re_v.IGNORECASE)
-                raison_m = _re_v.search(r'RAISON\s*:\s*(.+)', raw, _re_v.IGNORECASE)
-                vote_txt   = vote_m.group(1).strip()   if vote_m   else raw.splitlines()[0]
-                raison_txt = raison_m.group(1).strip() if raison_m else ""
-                # Normalise le vote vers le choix le plus proche
-                best = min(choices, key=lambda c: (
-                    0 if c.lower() == vote_txt.lower()
-                    else (1 if c.lower() in vote_txt.lower() or vote_txt.lower() in c.lower()
-                          else 2)
-                ))
-                return name, best, raison_txt
-            except Exception as e:
-                log_llm_end(name, error=str(e))
-                return name, None, f"(erreur: {e})"
+                    with _DIRECT_LLM_LOCK:
+                        resp = oa_client.chat.completions.create(
+                            model    = cfg["model"],
+                            messages = [
+                                {"role": "system", "content": system_msg},
+                                {"role": "user",   "content": prompt},
+                            ],
+                            max_tokens  = 150,
+                            temperature = temperature,
+                        )
+                    raw = (resp.choices[0].message.content or "").strip()
+                    log_llm_end(name, response_preview=raw)
+                    last_error = None
+                    break  # succès → on sort de la boucle config_list
+                except Exception as e:
+                    last_error = e
+                    print(f"[vote] {name} — modèle {cfg.get('model','?')} échoué : {e}, essai suivant…")
+                finally:
+                    http_client.close()
+
+            if last_error is not None:
+                log_llm_end(name, error=str(last_error))
+                return name, None, f"(erreur: {last_error})"
+
+            # Parse VOTE: et RAISON:
+            vote_m   = _re_v.search(r'VOTE\s*:\s*(.+)', raw, _re_v.IGNORECASE)
+            raison_m = _re_v.search(r'RAISON\s*:\s*(.+)', raw, _re_v.IGNORECASE)
+            vote_txt   = vote_m.group(1).strip()   if vote_m   else raw.splitlines()[0]
+            raison_txt = raison_m.group(1).strip() if raison_m else ""
+            # Normalise le vote vers le choix le plus proche
+            best = min(choices, key=lambda c: (
+                0 if c.lower() == vote_txt.lower()
+                else (1 if c.lower() in vote_txt.lower() or vote_txt.lower() in c.lower()
+                      else 2)
+            ))
+            return name, best, raison_txt
+
+        def _display_vote(name, choice, raison):
+            """Affiche le vote d'un agent dans le chat + TTS."""
+            color = CHAR_COLORS.get(name, "#aaaaaa")
+            self.msg_queue.put({
+                "sender": f"🗳️ {name}",
+                "text":   f"→ **{choice}**" + (f"  —  {raison}" if raison else ""),
+                "color":  color
+            })
+            tts_text = strip_mechanical_blocks(raison or choice)
+            if tts_text:
+                log_tts_start(name, tts_text)
+                self.audio_queue.put((tts_text, name))
+
+        results = {}   # name -> (choice, raison)
 
         with _cf.ThreadPoolExecutor(max_workers=4) as ex:
             futures = {ex.submit(_ask_agent, n): n for n in PLAYER_NAMES}
-            results = {}   # name -> (choice, raison)
-            for f in _cf.as_completed(futures):
-                name, choice, raison = f.result()
-                results[name] = (choice, raison)
-                if choice:
-                    color = CHAR_COLORS.get(name, "#aaaaaa")
-                    self.msg_queue.put({
-                        "sender": f"🗳️ {name}",
-                        "text":   f"→ **{choice}**" + (f"  —  {raison}" if raison else ""),
-                        "color":  color
-                    })
-                    tts_text = strip_mechanical_blocks(raison or choice)
-                    if tts_text:
-                        log_tts_start(name, tts_text)
-                        self.audio_queue.put((tts_text, name))
+            try:
+                for f in _cf.as_completed(futures, timeout=90):
+                    name, choice, raison = f.result()
+                    results[name] = (choice, raison)
+                    if choice:
+                        _display_vote(name, choice, raison)
+                    else:
+                        self.msg_queue.put({
+                            "sender": "⚠️ Vote",
+                            "text":   f"{name} n'a pas pu voter : {raison}",
+                            "color":  "#FF9800"
+                        })
+            except _cf.TimeoutError:
+                # Collecter les agents qui n'ont pas répondu à temps
+                for ft, n in futures.items():
+                    if n not in results:
+                        results[n] = (None, "(timeout)")
+                        self.msg_queue.put({
+                            "sender": "⚠️ Vote",
+                            "text":   f"{n} — délai dépassé (timeout 90s)",
+                            "color":  "#FF9800"
+                        })
+
+            # ── Retry : relancer les agents en échec (1 tentative) ────────────
+            failed = [n for n, (c, _) in results.items() if c is None]
+            if failed:
+                self.msg_queue.put({
+                    "sender": "🗳️ Vote",
+                    "text":   f"Nouvelle tentative pour : {', '.join(failed)}…",
+                    "color":  "#ffcc00"
+                })
+                retry_futures = {ex.submit(_ask_agent, n): n for n in failed}
+                try:
+                    for f in _cf.as_completed(retry_futures, timeout=90):
+                        name, choice, raison = f.result()
+                        if choice:
+                            results[name] = (choice, raison)
+                            _display_vote(name, choice, raison)
+                        else:
+                            self.msg_queue.put({
+                                "sender": "⚠️ Vote",
+                                "text":   f"{name} — échec définitif : {raison}",
+                                "color":  "#FF9800"
+                            })
+                except _cf.TimeoutError:
+                    for ft, n in retry_futures.items():
+                        if results.get(n, (None,))[0] is None:
+                            self.msg_queue.put({
+                                "sender": "⚠️ Vote",
+                                "text":   f"{n} — timeout au retry, vote ignoré",
+                                "color":  "#FF9800"
+                            })
 
         # Décompte
         tally: dict[str, list[str]] = {c: [] for c in choices}
         for name, (choice, _) in results.items():
             if choice and choice in tally:
                 tally[choice].append(name)
+
+        # Nombre de votes valides
+        valid_votes = sum(1 for _, (c, _) in results.items() if c is not None)
 
         # Résumé visuel
         max_votes  = max((len(v) for v in tally.values()), default=0)
@@ -496,19 +593,23 @@ class LLMControlMixin:
             marker = " ◀ MAJORITÉ" if c in winners else ""
             tally_lines.append(f"  {bar} {c} ({len(voters)}/{len(PLAYER_NAMES)}){marker}")
 
-        summary = "─── Résultats ───\n" + "\n".join(tally_lines)
+        summary = f"─── Résultats ({valid_votes}/{len(PLAYER_NAMES)} votes reçus) ───\n" + "\n".join(tally_lines)
         if len(winners) == 1:
             summary += f"\n\n✅ Décision : {winners[0]}"
-        else:
+        elif winners:
             summary += f"\n\n⚖️ Égalité entre : {' / '.join(winners)} — au MJ de trancher."
+        else:
+            summary += "\n\n❌ Aucun vote valide reçu — au MJ de décider."
 
         self.msg_queue.put({"sender": "🗳️ Vote terminé", "text": summary, "color": "#ffcc00"})
 
         # Injecte la décision dans le groupchat pour que les agents en soient informés
         if len(winners) == 1:
             inject = f"[RÉSULTAT DU VOTE] Le groupe a décidé : {winners[0]}."
-        else:
+        elif winners:
             inject = f"[RÉSULTAT DU VOTE] Égalité entre {' et '.join(winners)} — le MJ tranchera."
+        else:
+            inject = "[RÉSULTAT DU VOTE] Aucun vote valide — le MJ décide."
         self.user_input = inject
         self.input_event.set()
 

@@ -842,7 +842,130 @@ def get_inventory_prompt() -> str:
     return "\n".join(lines)
 
 
-# ── Tools LLM ──────────────────────────────────────────────────────────────────
+def get_health_prompt(char_name: str = "") -> str:
+    """
+    Génère un bloc compact de l'état de santé de tous les PJ et PNJ alliés
+    pour injection dans les system prompts hors combat.
+    Si char_name est fourni, ajoute des directives personnalisées :
+      - auto-priorité si le PJ est critique
+      - priorité soins si le PJ est soigneur et qu'un allié est critique
+    """
+    state = load_state()
+    chars = state.get("characters", {})
+    group_npcs = state.get("group_npcs", [])
+
+    # Aucune donnée → bloc vide
+    if not chars and not group_npcs:
+        return ""
+
+    lines = ["\n\n--- ÉTAT DE SANTÉ DU GROUPE ---"]
+
+    # ── Collecte des PV de chaque PJ ────────────────────────────────────────
+    active_chars = get_active_characters()
+    pc_health: dict[str, int] = {}  # name -> pct
+
+    for name in active_chars:
+        c = chars.get(name)
+        if not c:
+            continue
+        hp      = c.get("hp", 0)
+        max_hp  = c.get("max_hp", 1)
+        temp_hp = c.get("temp_hp", 0)
+        pct     = int((hp / max(1, max_hp)) * 100)
+        pc_health[name] = pct
+        # Indicateur visuel concis
+        if pct >= 75:
+            status = "🟢"
+        elif pct >= 40:
+            status = "🟡"
+        elif pct > 0:
+            status = "🔴"
+        else:
+            status = "💀"
+        temp_str = f" (+{temp_hp} tmp)" if temp_hp > 0 else ""
+        lines.append(f"  {status} {name} : {pct}% PV{temp_str}")
+
+    # ── PNJ alliés (groupe) ─────────────────────────────────────────────────
+    if group_npcs:
+        for npc in group_npcs:
+            npc_name = npc.get("name", "?")
+            hp_cur   = npc.get("hp_current")
+            if hp_cur is not None:
+                hp_max = npc.get("hp_max") or npc.get("max_hp")
+                if hp_max:
+                    pct = int((hp_cur / max(1, hp_max)) * 100)
+                    if pct >= 75:
+                        icon = "🟢"
+                    elif pct >= 40:
+                        icon = "🟡"
+                    elif pct > 0:
+                        icon = "🔴"
+                    else:
+                        icon = "💀"
+                    lines.append(f"  {icon} {npc_name} (allié) : {pct}% PV")
+                else:
+                    lines.append(f"  🔵 {npc_name} (allié) : {hp_cur} PV")
+            else:
+                lines.append(f"  🔵 {npc_name} (allié) : état inconnu")
+
+    # ── Directives personnalisées ───────────────────────────────────────────
+    CRITICAL_THRESHOLD = 40   # ≤ 40% = état critique
+
+    # Alliés critiques (autres que char_name)
+    critical_allies = [n for n, p in pc_health.items()
+                       if p <= CRITICAL_THRESHOLD and n != char_name]
+
+    own_pct = pc_health.get(char_name)
+
+    if own_pct is not None and own_pct <= CRITICAL_THRESHOLD:
+        # Le PJ lui-même est critique
+        lines.append(
+            f"\n⚠️ PRIORITÉ — {char_name}, tu es à {own_pct}% PV. "
+            f"Ta survie est en jeu ! Mentionne ton état physique dans ton roleplay. "
+            f"Cherche activement un moyen de te soigner (potion, repos, demander "
+            f"de l'aide à un soigneur du groupe) AVANT toute autre action."
+        )
+
+    # Vérifier si ce PJ est un soigneur (a des sorts de soin préparés)
+    _HEAL_KEYWORDS = {"soin", "soins", "guérison", "curative", "revigorer",
+                      "restauration", "sanctification"}
+    char_data = chars.get(char_name, {})
+    spells = char_data.get("spells", [])
+    has_healing = any(
+        s.get("prepared", False)
+        and any(kw in s.get("name", "").lower() for kw in _HEAL_KEYWORDS)
+        for s in spells
+    )
+
+    if has_healing and critical_allies:
+        names_str = ", ".join(critical_allies)
+        lines.append(
+            f"\n⚠️ PRIORITÉ SOINS — {char_name}, tu possèdes des sorts de guérison "
+            f"et {names_str} {'est' if len(critical_allies) == 1 else 'sont'} "
+            f"en état critique. Propose activement de soigner "
+            f"{'cet allié' if len(critical_allies) == 1 else 'ces alliés'} "
+            f"dans ton prochain dialogue ou action. La vie de tes compagnons passe "
+            f"avant l'exploration."
+        )
+    elif critical_allies:
+        # Pas soigneur, mais des alliés sont critiques → conscience situationnelle
+        names_str = ", ".join(critical_allies)
+        lines.append(
+            f"\n⚠️ ATTENTION — {names_str} "
+            f"{'est gravement blessé' if len(critical_allies) == 1 else 'sont gravement blessés'}. "
+            f"Mentionne ton inquiétude en roleplay et adapte ton comportement "
+            f"(protection, prudence, suggestion de repos)."
+        )
+
+    if not critical_allies and (own_pct is None or own_pct > CRITICAL_THRESHOLD):
+        lines.append(
+            "Adapte ton roleplay à l'état de santé visible : "
+            "un allié blessé mérite attention, un compagnon en pleine forme rassure."
+        )
+
+    return "\n".join(lines)
+
+
 
 def add_item_to_inventory(name: str, quantity: int = 1, category: str = "divers",
                            rarity: str = "commun", description: str = "",
@@ -1462,7 +1585,8 @@ def get_full_campaign_history_prompt() -> str:
 def get_spells_prompt(char_name: str) -> str:
     """
     Retourne la description des sorts préparés par le personnage.
-    Ne gère PLUS l'économie d'action (déplacée dans get_combat_prompt).
+    En combat : filtre par slots disponibles ET économie d'action (tour actif).
+    Hors combat : filtre par slots disponibles, affiche le résumé des emplacements.
     """
     try:
         from spell_data import load_spells, get_spell
@@ -1495,7 +1619,8 @@ def get_spells_prompt(char_name: str) -> str:
     has_action = True
     has_bonus = True
     reaction_used = False
-    avail_levels =[]
+    avail_levels = []
+    slots = char.get("spell_slots", {})
 
     try:
         from combat_tracker_state import COMBAT_STATE as _CS
@@ -1505,28 +1630,40 @@ def get_spells_prompt(char_name: str) -> str:
         has_action = turn_res.get("action", True)
         has_bonus = turn_res.get("bonus", True)
         reaction_used = char_name in _CS.get("reactions_used", set())
-        slots = char.get("spell_slots", {})
-        avail_levels =[int(lvl) for lvl, count in slots.items() if int(count) > 0]
     except Exception:
         pass
 
-    lines =[
+    avail_levels = [int(lvl) for lvl, count in slots.items() if int(count) > 0]
+
+    lines = [
         f"\n\n--- GRIMOIRE DE SORTS ({char_name.upper()}) ---",
-        "Rappel des effets de tes sorts connus :"
     ]
-    
+
+    # ── Résumé des emplacements de sort ──────────────────────────────────
+    slot_parts = []
+    for lvl in sorted(slots.keys(), key=lambda x: int(x)):
+        cnt = int(slots[lvl])
+        if cnt > 0:
+            slot_parts.append(f"Niv.{lvl}: {cnt}")
+        else:
+            slot_parts.append(f"Niv.{lvl}: ❌")
+    if slot_parts:
+        lines.append(f"Emplacements disponibles : {' | '.join(slot_parts)}")
+
+    lines.append("Sorts utilisables :")
+
     count_visible = 0
 
     for name in spell_names:
         sp = get_spell(name)
         if sp:
+            s_lvl = int(sp.get("level", 0))
+            # Vérifie si un emplacement est dispo (ou cantrip)
+            is_castable = (s_lvl == 0) or any(l >= s_lvl for l in avail_levels)
+            if not is_castable:
+                continue
+
             if in_combat:
-                s_lvl = int(sp.get("level", 0))
-                # Vérifie si un emplacement est dispo (ou cantrip)
-                is_castable = (s_lvl == 0) or any(l >= s_lvl for l in avail_levels)
-                if not is_castable:
-                    continue
-                
                 # Vérifie l'économie d'action
                 time_raw = sp.get("cast_time_raw",[])
                 unit = str(time_raw[0].get("unit", "")).lower() if time_raw else "action"
@@ -1542,6 +1679,7 @@ def get_spells_prompt(char_name: str) -> str:
                         continue
                     if reaction_used:
                         continue
+
             desc = sp.get("description", "")
                 
             # Ajout d'un petit indicateur visuel
@@ -1552,8 +1690,9 @@ def get_spells_prompt(char_name: str) -> str:
                 elif "reaction" in _raw: _u_tag = " [Réaction]"
                 elif "minute" in _raw or "hour" in _raw: _u_tag = " [Rituel]"
                 else: _u_tag = " [Action]"
-                
-            lines.append(f"• {name}{_u_tag} : {desc}")
+
+            lvl_tag = f" (niv.{s_lvl})" if s_lvl > 0 else " (tour de magie)"
+            lines.append(f"• {name}{lvl_tag}{_u_tag} : {desc}")
             count_visible += 1
         else:
             lines.append(f"• {name}")

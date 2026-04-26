@@ -340,7 +340,8 @@ class ChatMixin:
             or "Tentative de récupération" in text
             or "PARAMÈTRE INVALIDE" in text
             or "DIRECTIVE SYSTÈME" in text
-            or "VIOLATION PNJ" in text):
+            or "VIOLATION PNJ" in text
+            or "VIOLATION SYSTÈME" in text):
             parts = text.strip().split("\n", 1)
             header_txt = parts[0].strip()
             body_txt   = "\n" + parts[1] if len(parts) > 1 else ""

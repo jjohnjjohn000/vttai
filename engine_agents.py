@@ -29,7 +29,7 @@ from state_manager import (
     load_state, get_active_characters, roll_dice as _roll_dice_orig,
 )
 from combat_tracker import COMBAT_STATE, _is_fully_silenced
-from agent_logger   import log_llm_model_used, set_agent_configured_model
+from agent_logger   import log_llm_model_used, set_agent_configured_model, log_agent_prompt, log_agent_response
 
 
 # ─── SSL hardening global (anti-segfault OpenSSL multithreading) ──────────────
@@ -206,7 +206,10 @@ def _build_regle_hors_combat() -> str:
         "\n⛔ INTERDIT : jets de Perception / Investigation / Arcanes « au cas où », par prudence"
         "\n    ou pour « surveiller les alentours ». Le MJ gère ça passivement.\n"
         "\n▶ ACTIONS MÉCANIQUES"
-        "\nUNIQUEMENT si le MJ te demande explicitement un jet ou une action mécanique, termine ton message par :\n\n"
+        "\nTu peux librement déclarer un bloc [ACTION] pour toute action non offensive :"
+        "\n  • Fouiller, crocheter, escalader, soigner, lancer un sort utilitaire, se déplacer…"
+        "\n  • ⛔ INTERDIT sans l'accord du MJ : attaques, sorts offensifs, actions hostiles."
+        "\nTermine ton message par :\n\n"
         + _ACTION_FORMAT_HORS_COMBAT
         + "\n▶ MOUVEMENT SUR LA CARTE — HORS COMBAT"
         "\nLe bloc [ACTION] Type: Mouvement est réservé aux déplacements de 6 cases (9 m / 30 ft) ou plus."
@@ -527,9 +530,21 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                     _actual_messages = messages if messages is not None else self_agent.chat_messages.get(sender, [])
                     _msgs_for_llm = _filter_turn_private_messages(_actual_messages, name)
 
+                    # Console log du prompt (hors combat uniquement)
+                    try:
+                        log_agent_prompt(name, getattr(self_agent, 'system_message', ''), _msgs_for_llm)
+                    except Exception:
+                        pass
+
                     result[0] = _orig_gr(
                         self_agent, messages=_msgs_for_llm, sender=sender, **_safe_kwargs
                     )
+
+                    # Console log de la réponse (hors combat uniquement)
+                    try:
+                        log_agent_response(name, result[0])
+                    except Exception:
+                        pass
                     # Guard: None = pas de réponse (convention AutoGen : (False, None))
                     if result[0] is None:
                         result[0] = (False, None)

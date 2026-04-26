@@ -143,6 +143,21 @@ DEFAULTS: dict = {
     "combat": {
         "model": "gemini-3.1-flash-lite-preview",   # LLM utilisé par TOUS les PJ en mode combat
     },
+    "fallback_chain": [
+        # Ordre de tentative quand le modèle principal (Gemini) est épuisé.
+        # Modifiable depuis l'onglet Agents du panneau de configuration.
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-2.0-flash",
+        "gemma-4-31b-it",
+        "gemma-4-26b-a4b-it",
+        "gemini-3-flash-preview",
+        "gemini-3.1-flash-lite-preview",
+        "groq/meta-llama/llama-4-scout-17b-16e-instruct",
+        "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+        "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
+        "openrouter/arcee-ai/trinity-large-preview:free",
+    ],
     "campaign_name": "campagne",   # Nom du dossier de sauvegarde (campagne/<nom>/)
 }
 
@@ -217,6 +232,11 @@ def get_piper_pitch(char_name: str) -> float:
 
 def get_ptt_config() -> dict:
     return APP_CONFIG.get("ptt", DEFAULTS["ptt"])
+
+
+def get_fallback_chain() -> list[str]:
+    """Retourne la chaîne de fallback LLM configurée (liste ordonnée de noms de modèles)."""
+    return list(APP_CONFIG.get("fallback_chain", DEFAULTS["fallback_chain"]))
 
 
 def get_campaign_name() -> str:

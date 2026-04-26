@@ -790,31 +790,54 @@ def execute_action_mechanics(
         )
         _sw_has_atk = any(k in i_low or k in r_low for k in _SW_ATK_KW)
 
-        # Cas 1 : déplacement de l'arme (avec ou sans attaque dans le même bloc)
-        # → valider le déplacement uniquement, pas d'attaque automatique
-        if _spectral_exists and _match and _sw_has_move:
-            _extra_note = (
-                "\n  ⚠ Attaque détectée dans la même action — déplacement et attaque"
-                " doivent être des actions séparées (règle D&D 5e).\n"
-                "  → Déclare l'attaque dans un NOUVEAU bloc [ACTION] Type: Action Bonus"
-                " une fois l'arme déplacée."
-            ) if _sw_has_atk else ""
+        # Cas 1a : déplacement de l'arme SANS attaque
+        # → Action Gratuite (ne consomme PAS l'Action Bonus)
+        if _spectral_exists and _match and _sw_has_move and not _sw_has_atk:
+            results.append(f"  [✨ {_sum_name}] Déplacée vers {cible}.")
             results.append(
-                f"  [✨ {_sum_name}] Déplacée vers {cible}.{_extra_note}"
-            )
-            results.append(
-                "  → Aucune attaque résolue pour cette action. "
-                "Pour attaquer, déclare un nouveau [ACTION] Type: Action Bonus "
+                "  → Déplacement libre (Action Gratuite) — Action Bonus non consommée.\n"
+                "  Pour attaquer, déclare un [ACTION] Type: Action Bonus "
                 "/ Intention: Attaquer avec l'arme spirituelle / Cible: <ennemi>."
             )
             narrative_hint = (
                 f"L'arme spectrale de {char_name} se déplace vers {cible}. "
-                f"Narre en 1 phrase uniquement le déplacement de l'arme, sans attaque. "
-                f"L'attaque sera déclarée séparément par {char_name}."
+                f"Narre en 1 phrase uniquement le déplacement de l'arme. "
+                f"{char_name} peut encore utiliser son Action Bonus pour attaquer."
             )
             return (
-                f"[RÉSULTAT SYSTÈME — DÉPLACEMENT ARME SPECTRALE — {char_name}]\n"
-                f"✅ Déplacement confirmé. AUCUNE attaque automatique.\n"
+                f"[RÉSULTAT SYSTÈME — DÉPLACEMENT LIBRE ARME SPECTRALE — {char_name}]\n"
+                f"✅ Déplacement confirmé. Action Gratuite — Action Bonus NON consommée.\n"
+                + "\n".join(results)
+                + "\n\n[INSTRUCTION NARRATIVE]\n"
+                + narrative_hint
+            )
+
+        # Cas 1b : déplacement + attaque dans le même bloc
+        # → Déplacement : Action Gratuite / Attaque : Action Bonus (une seule consommation)
+        elif _spectral_exists and _match and _sw_has_move and _sw_has_atk:
+            results.append(
+                f"  [✨ {_sum_name}] Déplacement vers {cible} (Action Gratuite) + Attaque (Action Bonus)."
+            )
+            _atk_spell  = stats.get("atk_spell", +5)
+            _atk_res    = roll_dice(char_name, "1d20", _atk_spell)
+            _sw_all_d   = _all_dice(regle)
+            if _sw_all_d:
+                _sw_dn, _sw_df, _sw_db = _sw_all_d[0]
+            else:
+                _sw_dn, _sw_df, _sw_db = 1, 8, max(0, _atk_spell - 4)
+            _dmg_res = roll_dice(char_name, f"{_sw_dn}d{_sw_df}", _sw_db)
+            results.append(f"  [jet d'attaque de sort] {_atk_res}")
+            results.append(f"  [dégâts si touche] {_dmg_res}  (force)")
+            results.append(f"  → MJ : confirmer Touché ou Raté")
+            narrative_hint = (
+                f"L'arme spectrale de {char_name} fonce vers {cible} et frappe. "
+                f"Narre en 1-2 phrases le déplacement et l'attaque de l'arme. "
+                f"Ne mentionne pas les chiffres."
+            )
+            return (
+                f"[RÉSULTAT SYSTÈME — ATTAQUE ARME SPECTRALE — {char_name}]\n"
+                f"⚠ AUCUN SLOT D'EMPLACEMENT REQUIS — L'ARME EST DÉJÀ INVOQUÉE.\n"
+                f"Déplacement : Action Gratuite. Attaque : Action Bonus (1 seule consommation).\n"
                 + "\n".join(results)
                 + "\n\n[INSTRUCTION NARRATIVE]\n"
                 + narrative_hint
@@ -1385,10 +1408,67 @@ def execute_action_mechanics(
             results.append(f"  Destination       : Col {_new_col+1}, Lig {_new_row+1}")
             results.append(f"  Distance          : {_dist_actual} cases ({_dist_ft} ft / {_dist_m:.1f} m){_rem_mov_str}")
             results.append(f"[MOVE_TOKEN:{target_token_name}:{_new_col}:{_new_row}]")
+
+            # ── POST-MOUVEMENT : Rappel portée mêlée ──────────────────────────
+            # Calcule la distance Chebyshev entre la nouvelle position et chaque
+            # token ennemi (non-PJ, non-allié) pour prévenir l'agent de façon
+            # explicite s'il est — ou non — à portée d'attaque au corps-à-corps.
+            _melee_reminder = ""
+            try:
+                _cmap_post = getattr(app, "_combat_map_win", None)
+                _all_toks_post = (
+                    getattr(_cmap_post, "tokens", []) if _cmap_post is not None
+                    else app._win_state.get("combat_map_data", {}).get("tokens", [])
+                )
+                _pc_names = set(char_mechanics.keys())
+                _in_melee = []
+                _nearest_name = None
+                _nearest_dist = 9999
+                for _pt in _all_toks_post:
+                    _pn = _pt.get("name", "")
+                    if not _pn or _pn == target_token_name:
+                        continue
+                    # Ignore allied / PC tokens
+                    if _pn in _pc_names or _pt.get("alignment") == "ally":
+                        continue
+                    _pc2 = int(round(_pt.get("col", 0)))
+                    _pr2 = int(round(_pt.get("row", 0)))
+                    _cheb = max(abs(_pc2 - _new_col), abs(_pr2 - _new_row))
+                    if _cheb <= 1:
+                        _in_melee.append(_pn)
+                    elif _cheb < _nearest_dist:
+                        _nearest_dist = _cheb
+                        _nearest_name = _pn
+                if _in_melee:
+                    _names_str = ", ".join(_in_melee)
+                    _melee_reminder = (
+                        f"\n⚔️ PORTÉE MÊLÉE : {target_token_name} EST à portée de mêlée de "
+                        f"{_names_str} — une attaque corps-à-corps est possible ce tour."
+                    )
+                elif _nearest_name:
+                    _dist_ft_near = _nearest_dist * 5
+                    _melee_reminder = (
+                        f"\n⚠️ PORTÉE MÊLÉE : {target_token_name} N'EST PAS encore à portée de mêlée. "
+                        f"Ennemi le plus proche : {_nearest_name} "
+                        f"({_nearest_dist} case{'s' if _nearest_dist > 1 else ''} / {_dist_ft_near} ft). "
+                        f"Une attaque corps-à-corps n'est PAS possible depuis cette position."
+                    )
+                else:
+                    _melee_reminder = (
+                        f"\n⚠️ PORTÉE MÊLÉE : Aucun ennemi détecté à portée de mêlée."
+                    )
+            except Exception:
+                pass
+            if _melee_reminder:
+                results.append(_melee_reminder)
+            # ──────────────────────────────────────────────────────────────────
+
             narrative_hint = (
                 f"Le système a calculé le déplacement. "
                 f"Narre en 1 phrase le mouvement de {target_token_name} : {intention}. "
-                f"Décris la façon dont il se déplace, son attitude, pas les coordonnées."
+                f"Décris la façon dont il se déplace, son attitude, pas les coordonnées. "
+                f"Vérifie le rappel PORTÉE MÊLÉE ci-dessus avant de proposer ou décrire "
+                f"toute attaque au corps-à-corps."
             )
         else:
             results.append(f"⚙️ {char_name} — {intention}")

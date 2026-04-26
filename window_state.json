@@ -25,7 +25,7 @@
   },
   "char_Lyra": {
     "w": 300,
-    "h": 575,
+    "h": 576,
     "x": 3540,
     "y": 1540
   },
@@ -85,9 +85,9 @@
   },
   "modal_config": {
     "w": 893,
-    "h": 972,
-    "x": 2581,
-    "y": 1137
+    "h": 1016,
+    "x": 2502,
+    "y": 993
   },
   "combat_tracker": {
     "w": 1920,
@@ -104,9 +104,9 @@
   "active_map_name": "Tser Falls",
   "campaign_log_viewer": {
     "w": 1016,
-    "h": 920,
-    "x": 2236,
-    "y": 1137
+    "h": 898,
+    "x": 2277,
+    "y": 1099
   },
   "inventory": {
     "w": 900,
@@ -142,5 +142,6 @@
     "x": 2111,
     "y": 0
   },
-  "_open_combat_map": true
+  "_open_combat_map": true,
+  "_open_combat_tracker": true
 }

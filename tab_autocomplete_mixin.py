@@ -39,6 +39,7 @@ SLASH_COMMANDS: list[str] = [
     "/msg",
     "/vote",
     "/round",
+    "/quest",
 ]
 
 # Pour chaque commande : index d'argument (0-based) → type de complétion
@@ -52,6 +53,7 @@ _COMPLETION_MAP: dict[str, dict[int, str]] = {
     "/msg":   {0: "agent"},
     "/vote":  {},        # choix libres — pas de complétion
     "/round": {},        # sans argument
+    "/quest": {},        # texte libre — pas de complétion
 }
 
 # Types de dégâts (même liste que dans damage_link_ui_handler)

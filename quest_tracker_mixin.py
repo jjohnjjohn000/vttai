@@ -82,6 +82,34 @@ FORMAT DE RÉPONSE (JSON strict) :
 Statuts valides : "active", "completed", "failed".
 """
 
+# ─── Prompt système du Chroniqueur pour l'ajout d'une quête ───────────────────
+
+_QUEST_ADD_SYSTEM_PROMPT = """\
+Tu es le Chroniqueur IA d'une campagne D&D 5e. Le MJ te donne une description \
+libre d'une nouvelle quête. Tu dois l'analyser et retourner un JSON structuré.
+
+RÈGLES :
+1. Déduis un titre concis et évocateur.
+2. Choisis une catégorie parmi : "Principale", "Secondaire", "Personnelle", "Exploration".
+3. Rédige une description courte (1-2 phrases).
+4. Décompose la quête en objectifs clairs et vérifiables (2 à 5 objectifs).
+5. Ajoute des notes si la description du MJ contient des indices ou détails utiles.
+6. Réponds UNIQUEMENT avec du JSON valide, sans texte avant ni après, \
+   sans balises markdown, sans commentaires.
+
+FORMAT DE RÉPONSE (JSON strict) :
+{
+  "title": "Titre de la quête",
+  "category": "Secondaire",
+  "description": "Description courte.",
+  "objectives": [
+    {"text": "Premier objectif", "done": false},
+    {"text": "Deuxième objectif", "done": false}
+  ],
+  "notes": ""
+}
+"""
+
 
 def _build_quest_user_prompt(quests: list, chat_history: str,
                               old_summary: str, sessions_prompt: str) -> str:
@@ -158,6 +186,100 @@ class QuestTrackerMixin:
         ).start()
 
     # ─── Worker (thread daemon) ───────────────────────────────────────────────
+
+    def add_quest_via_llm(self, raw_description: str):
+        """Envoie une description libre au Chroniqueur pour créer une quête structurée."""
+        try:
+            import uuid as _uuid
+            import autogen as _ag
+
+            # ── 1. Contexte : quêtes existantes (pour éviter les doublons) ────
+            quests = get_quests()
+            existing = "\n".join(
+                f"  - [{q.get('status','?')}] {q['title']}"
+                for q in quests
+            ) or "Aucune quête existante."
+
+            user_prompt = (
+                f"=== QUÊTES EXISTANTES (pour éviter les doublons) ===\n"
+                f"{existing}\n\n"
+                f"=== DESCRIPTION DE LA NOUVELLE QUÊTE (par le MJ) ===\n"
+                f"{raw_description}\n\n"
+                f"Analyse cette description et retourne le JSON structuré de la quête."
+            )
+
+            # ── 2. Appel LLM ─────────────────────────────────────────────────
+            chron_cfg = get_chronicler_config()
+            llm_cfg   = build_llm_config(
+                chron_cfg.get("model", _default_model),
+                temperature=chron_cfg.get("temperature", 0.2),
+            )
+            client   = _ag.OpenAIWrapper(config_list=llm_cfg["config_list"])
+            response = client.create(messages=[
+                {"role": "system", "content": _QUEST_ADD_SYSTEM_PROMPT},
+                {"role": "user",   "content": user_prompt},
+            ])
+
+            raw_text = (response.choices[0].message.content or "").strip()
+            clean    = _strip_json_fences(raw_text)
+
+            # ── 3. Parser le JSON ────────────────────────────────────────────
+            try:
+                data = json.loads(clean)
+            except json.JSONDecodeError as e:
+                self.msg_queue.put({
+                    "sender": "⚠️ Chroniqueur",
+                    "text":   f"Réponse JSON invalide du Chroniqueur : {e}\n\n"
+                              f"Réponse brute :\n{raw_text[:500]}",
+                    "color":  "#F44336",
+                })
+                return
+
+            # ── 4. Créer l'entrée de quête ───────────────────────────────────
+            title = data.get("title", raw_description[:60]).strip()
+            new_id = f"q_{_uuid.uuid4().hex[:6]}"
+            entry = {
+                "id":          new_id,
+                "title":       title,
+                "status":      "active",
+                "category":    data.get("category", "Secondaire"),
+                "description": data.get("description", ""),
+                "objectives":  data.get("objectives", []),
+                "notes":       data.get("notes", ""),
+            }
+            quests.append(entry)
+            save_quests(quests)
+
+            # ── 5. Rapport dans le chat ──────────────────────────────────────
+            obj_lines = "\n".join(
+                f"  ○ {o.get('text', '?')}" for o in entry["objectives"]
+            )
+            self.msg_queue.put({
+                "sender": "📜 Chroniqueur",
+                "text":   (
+                    f"✅ Nouvelle quête ajoutée !\n\n"
+                    f"🗺️ [{entry['category']}] {title}\n"
+                    f"   {entry['description']}\n"
+                    f"   Objectifs :\n{obj_lines}"
+                    + (f"\n   📝 Notes : {entry['notes']}" if entry["notes"] else "")
+                ),
+                "color":  "#c8b8ff",
+            })
+
+            # ── 6. Rafraîchir le journal de quêtes s'il est ouvert ──────────
+            self.root.after(0, self._maybe_refresh_quest_journal)
+
+            # ── 7. MAJ prompts agents pour refléter la nouvelle quête ────────
+            if getattr(self, '_agents', None):
+                self.root.after(100, self._rebuild_agent_prompts)
+
+        except Exception as e:
+            import traceback
+            self.msg_queue.put({
+                "sender": "⚠️ Chroniqueur",
+                "text":   f"Erreur ajout quête : {e}\n{traceback.format_exc()[-300:]}",
+                "color":  "#F44336",
+            })
 
     def _run_quest_analysis(self):
         """Appelle le LLM, applique les mises à jour, rafraîchit l'UI."""

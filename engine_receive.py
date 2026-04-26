@@ -240,9 +240,47 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
         _react  = char_name not in COMBAT_STATE.get("reactions_used", set())
         _speed  = _get_char_speed_ft(char_name)
 
+        # --- Détection des ennemis à portée (mêlée / distance) ---
+        _melee_enemy_in_range = False
+        _ranged_enemy_exists  = False
+        try:
+            _cmap_atk  = getattr(_app, "_combat_map_win", None)
+            _toks_atk  = (
+                getattr(_cmap_atk, "tokens", []) if _cmap_atk is not None
+                else _app._win_state.get("combat_map_data", {}).get("tokens", [])
+            )
+            _hero_atk = next(
+                (t for t in _toks_atk if t.get("name", "").lower() == char_name.lower()), None
+            )
+            if _hero_atk:
+                _hc_atk = int(round(_hero_atk.get("col", 0)))
+                _hr_atk = int(round(_hero_atk.get("row", 0)))
+                for _t_atk in _toks_atk:
+                    if _t_atk.get("type") == "monster":
+                        _ec = int(round(_t_atk.get("col", 0)))
+                        _er = int(round(_t_atk.get("row", 0)))
+                        _cheb_atk = max(abs(_ec - _hc_atk), abs(_er - _hr_atk))
+                        _ranged_enemy_exists = True
+                        if _cheb_atk <= 1:
+                            _melee_enemy_in_range = True
+            else:
+                # Token du personnage introuvable → montrer les deux par défaut
+                _melee_enemy_in_range = True
+                _ranged_enemy_exists  = True
+        except Exception:
+            _melee_enemy_in_range = True
+            _ranged_enemy_exists  = True
+
         # --- Détermination des options suggérées dynamiques ---
-        _action_options =["Attaque physique (Mêlée ou Distance)"]
-        _bonus_options =[]
+        if _melee_enemy_in_range and _ranged_enemy_exists:
+            _action_options = ["Attaque physique (Mêlée ou Distance)"]
+        elif _melee_enemy_in_range:
+            _action_options = ["Attaque physique (Mêlée)"]
+        elif _ranged_enemy_exists:
+            _action_options = ["Attaque à distance"]
+        else:
+            _action_options = []
+        _bonus_options = []
         
         # Capacités spécifiques (Action Masking)
         if char_name == "Thorne":
@@ -312,6 +350,11 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
 
         _any_left = _tr["action"] or _tr["bonus"] or _mv_rem > 0
         _any_action_left = _tr["action"] or _tr["bonus"]
+
+        # Court-circuit : rien ne reste → prompt minimal, pas de bloc détaillé
+        if not _any_left:
+            return "Tu n'as plus d'action, fait une [ACTION] type: Fin de tour."
+
         next_instr = (
             "Déclare ta prochaine action avec UN seul bloc [ACTION], ET UNE SEULE CHOSE À LA FOIS (ex: 1 mouvement OU 1 attaque)."
             if _any_action_left else
@@ -1393,8 +1436,22 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         _mv_cases  = int(_mv_dist_m.group(1)) if _mv_dist_m else 999
                         if _mv_cases < 6:
                             continue
-                    # Attaque ou sort hors combat → bloquer et corriger l'agent
-                    if _is_physical_attack or _pre_is_spell:
+
+                    # ── Détection sort utilitaire/soin (autorisé hors combat) ────
+                    _HEAL_UTILITY_KEYWORDS = (
+                        "soin", "soigne", "heal", "cure", "guéri", "restaure",
+                        "revigorer", "parole curative", "soins de groupe",
+                        "bénédic", "sanctif", "protection", "résistance",
+                        "bouclier de la foi", "restauration", "guérison",
+                        "lumière", "détection", "dissipation", "purifi",
+                        "repos", "stabilise", "aide",
+                    )
+                    _oc_combined = (_sub.get("intention", "") + " " + _sub.get("regle", "")).lower()
+                    _is_heal_or_utility = any(kw in _oc_combined for kw in _HEAL_UTILITY_KEYWORDS)
+
+                    # Attaque ou sort OFFENSIF hors combat → bloquer
+                    # Les sorts de soin/utilitaire passent librement
+                    if _is_physical_attack or (_pre_is_spell and not _is_heal_or_utility):
                         _oc_block_msg = (
                             f"[DIRECTIVE SYSTÈME — ACTION IMPOSSIBLE HORS COMBAT]\n"
                             f"{name} : le combat est TERMINÉ. Tu ne peux PAS déclarer d'attaque "
@@ -1413,128 +1470,135 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             sender, request_reply=True, silent=False,
                         )
                         return
-                    # Pas d'attaque/sort → auto-approuver (interactions sociales, perception...)
-                    _sub_ev  = _threading.Event()
-                    _sub_res = {"confirmed": True, "mj_note": ""}
-                    # Skip toutes les validations de combat, aller directement au flow post-confirmation
-                    _confirmed = True
-                    _mj_note   = ""
-                    # ── Détection jet de compétence hors combat ──────────────────
-                    _SKILL_CHECK_KEYS_OC = (
-                        "test de", "jet de", "check",
-                        "investigation", "perception", "arcane",
-                        "athlétisme", "discrétion", "perspicacité",
-                        "acrobaties", "histoire", "intimidation",
-                        "médecine", "nature", "religion", "survie",
-                        "persuasion", "tromperie", "représentation",
-                        "escamotage", "dressage",
-                        "sauvegarde", "aide", "assistance",
-                        "cacher", "faufiler", "stealth",
-                    )
-                    _sk_combined_oc = (
-                        (_sub.get("intention", "") + " " + _sub.get("regle", ""))
-                        .lower()
-                    )
-                    _is_skill_chk_oc = any(k in _sk_combined_oc for k in _SKILL_CHECK_KEYS_OC)
-                    if _is_skill_chk_oc:
-                        # Ouvrir la boîte de jet de compétence hors combat
-                        _SKILL_MAP_OC = {
-                            "arcane":         ("Arcane",          "INT"),
-                            "investigation":  ("Investigation",   "INT"),
-                            "histoire":       ("Histoire",        "INT"),
-                            "nature":         ("Nature",          "INT"),
-                            "religion":       ("Religion",        "INT"),
-                            "perception":     ("Perception",      "SAG"),
-                            "perspicacité":   ("Perspicacité",    "SAG"),
-                            "médecine":       ("Médecine",        "SAG"),
-                            "survie":         ("Survie",          "SAG"),
-                            "dressage":       ("Dressage",        "SAG"),
-                            "athlétisme":     ("Athlétisme",      "FOR"),
-                            "acrobaties":     ("Acrobaties",      "DEX"),
-                            "discrétion":     ("Discrétion",      "DEX"),
-                            "cacher":         ("Discrétion",      "DEX"),
-                            "faufiler":       ("Discrétion",      "DEX"),
-                            "stealth":        ("Discrétion",      "DEX"),
-                            "escamotage":     ("Escamotage",      "DEX"),
-                            "persuasion":     ("Persuasion",      "CHA"),
-                            "tromperie":      ("Tromperie",       "CHA"),
-                            "intimidation":   ("Intimidation",    "CHA"),
-                            "représentation": ("Représentation",  "CHA"),
-                            "sauvegarde":     ("Sauvegarde",      ""),
-                            "aide":           ("Aide",            "INT"),
-                            "assistance":     ("Assistance",      ""),
-                        }
-                        _sk_label_oc = "Compétence"
-                        _sk_stat_oc  = ""
-                        _sk_bonus_oc = 0
-                        for _kw_oc, (_lbl_oc, _stat_oc) in _SKILL_MAP_OC.items():
-                            if _kw_oc in _sk_combined_oc:
-                                _sk_label_oc = _lbl_oc
-                                _sk_stat_oc  = _stat_oc
-                                _char_mc_oc  = _CM.get(name, {})
-                                _sk_bonus_oc = (
-                                    _char_mc_oc.get("skills", {}).get(_kw_oc, 0)
-                                    or _char_mc_oc.get("saves", {}).get(_stat_oc.lower(), 0)
-                                    or 0
+                    # ── Sort soin/utilitaire hors combat → laisser passer vers
+                    # le flow MJ confirmation + execute_action_mechanics pour que
+                    # les mécaniques (slot, dés, HP) soient exécutées.
+                    if _is_heal_or_utility and _pre_is_spell:
+                        pass  # fall through → slot check, MJ confirm, mechanics
+                    else:
+                        # Pas d'attaque/sort → auto-approuver (interactions sociales, perception...)
+                        _sub_ev  = _threading.Event()
+                        _sub_res = {"confirmed": True, "mj_note": ""}
+                        # Skip toutes les validations de combat, aller directement au flow post-confirmation
+                        _confirmed = True
+                        _mj_note   = ""
+                        # ── Détection jet de compétence hors combat ──────────────────
+                        _SKILL_CHECK_KEYS_OC = (
+                            "test de", "jet de", "check",
+                            "investigation", "perception", "arcane",
+                            "athlétisme", "discrétion", "perspicacité",
+                            "acrobaties", "histoire", "intimidation",
+                            "médecine", "nature", "religion", "survie",
+                            "persuasion", "tromperie", "représentation",
+                            "escamotage", "dressage",
+                            "sauvegarde", "aide", "assistance",
+                            "cacher", "faufiler", "stealth",
+                        )
+                        _sk_combined_oc = (
+                            (_sub.get("intention", "") + " " + _sub.get("regle", ""))
+                            .lower()
+                        )
+                        _is_skill_chk_oc = any(k in _sk_combined_oc for k in _SKILL_CHECK_KEYS_OC)
+                        if _is_skill_chk_oc:
+                            # Ouvrir la boîte de jet de compétence hors combat
+                            _SKILL_MAP_OC = {
+                                "arcane":         ("Arcane",          "INT"),
+                                "investigation":  ("Investigation",   "INT"),
+                                "histoire":       ("Histoire",        "INT"),
+                                "nature":         ("Nature",          "INT"),
+                                "religion":       ("Religion",        "INT"),
+                                "perception":     ("Perception",      "SAG"),
+                                "perspicacité":   ("Perspicacité",    "SAG"),
+                                "médecine":       ("Médecine",        "SAG"),
+                                "survie":         ("Survie",          "SAG"),
+                                "dressage":       ("Dressage",        "SAG"),
+                                "athlétisme":     ("Athlétisme",      "FOR"),
+                                "acrobaties":     ("Acrobaties",      "DEX"),
+                                "discrétion":     ("Discrétion",      "DEX"),
+                                "cacher":         ("Discrétion",      "DEX"),
+                                "faufiler":       ("Discrétion",      "DEX"),
+                                "stealth":        ("Discrétion",      "DEX"),
+                                "escamotage":     ("Escamotage",      "DEX"),
+                                "persuasion":     ("Persuasion",      "CHA"),
+                                "tromperie":      ("Tromperie",       "CHA"),
+                                "intimidation":   ("Intimidation",    "CHA"),
+                                "représentation": ("Représentation",  "CHA"),
+                                "sauvegarde":     ("Sauvegarde",      ""),
+                                "aide":           ("Aide",            "INT"),
+                                "assistance":     ("Assistance",      ""),
+                            }
+                            _sk_label_oc = "Compétence"
+                            _sk_stat_oc  = ""
+                            _sk_bonus_oc = 0
+                            for _kw_oc, (_lbl_oc, _stat_oc) in _SKILL_MAP_OC.items():
+                                if _kw_oc in _sk_combined_oc:
+                                    _sk_label_oc = _lbl_oc
+                                    _sk_stat_oc  = _stat_oc
+                                    _char_mc_oc  = _CM.get(name, {})
+                                    _sk_bonus_oc = (
+                                        _char_mc_oc.get("skills", {}).get(_kw_oc, 0)
+                                        or _char_mc_oc.get("saves", {}).get(_stat_oc.lower(), 0)
+                                        or 0
+                                    )
+                                    break
+                            _dc_m_oc = _re.search(
+                                r'(?:DC|DD)\s*(\d+)',
+                                _sub.get("regle", "") + " " + _sub.get("intention", ""),
+                                _re.IGNORECASE,
+                            )
+                            _sk_dc_oc = _dc_m_oc.group(1) if _dc_m_oc else None
+                            _sk_adv_oc = any(k in _sk_combined_oc for k in ("avantage", "advantage", "aide"))
+                            _sk_dis_oc = any(k in _sk_combined_oc for k in ("désavantage", "disadvantage"))
+                            _sk_ev_oc  = _threading.Event()
+                            _sk_res_oc: dict = {}
+                            def _sk_cb_oc(confirmed, total=0, mj_note="",
+                                           _ev=_sk_ev_oc, _res=_sk_res_oc):
+                                _app._unregister_approval_event(_ev)
+                                _res["confirmed"] = confirmed
+                                _res["total"]     = total
+                                _res["mj_note"]   = mj_note
+                                _ev.set()
+                            _app._register_approval_event(_sk_ev_oc)
+                            _app.msg_queue.put({
+                                "action":           "skill_check_confirm",
+                                "char_name":        name,
+                                "skill_label":      _sk_label_oc,
+                                "stat_label":       _sk_stat_oc,
+                                "bonus":            _sk_bonus_oc,
+                                "dc":               _sk_dc_oc,
+                                "has_advantage":    _sk_adv_oc,
+                                "has_disadvantage": _sk_dis_oc,
+                                "resume_callback":  _sk_cb_oc,
+                            })
+                            _sk_ev_oc.wait(timeout=600)
+                            _app._unregister_approval_event(_sk_ev_oc)
+                            _sk_confirmed_oc = _sk_res_oc.get("confirmed", False)
+                            _sk_total_oc     = _sk_res_oc.get("total", 0)
+                            _sk_note_oc      = _sk_res_oc.get("mj_note", "")
+                            if _sk_confirmed_oc:
+                                feedback_oc = (
+                                    f"[RÉSULTAT SYSTÈME — JET DE COMPÉTENCE]\n"
+                                    f"🎲 {name} — {_sk_label_oc} : résultat {_sk_total_oc}"
+                                    + (f"  — Note MJ : {_sk_note_oc}" if _sk_note_oc else "")
                                 )
-                                break
-                        _dc_m_oc = _re.search(
-                            r'(?:DC|DD)\s*(\d+)',
-                            _sub.get("regle", "") + " " + _sub.get("intention", ""),
-                            _re.IGNORECASE,
-                        )
-                        _sk_dc_oc = _dc_m_oc.group(1) if _dc_m_oc else None
-                        _sk_adv_oc = any(k in _sk_combined_oc for k in ("avantage", "advantage", "aide"))
-                        _sk_dis_oc = any(k in _sk_combined_oc for k in ("désavantage", "disadvantage"))
-                        _sk_ev_oc  = _threading.Event()
-                        _sk_res_oc: dict = {}
-                        def _sk_cb_oc(confirmed, total=0, mj_note="",
-                                       _ev=_sk_ev_oc, _res=_sk_res_oc):
-                            _app._unregister_approval_event(_ev)
-                            _res["confirmed"] = confirmed
-                            _res["total"]     = total
-                            _res["mj_note"]   = mj_note
-                            _ev.set()
-                        _app._register_approval_event(_sk_ev_oc)
-                        _app.msg_queue.put({
-                            "action":           "skill_check_confirm",
-                            "char_name":        name,
-                            "skill_label":      _sk_label_oc,
-                            "stat_label":       _sk_stat_oc,
-                            "bonus":            _sk_bonus_oc,
-                            "dc":               _sk_dc_oc,
-                            "has_advantage":    _sk_adv_oc,
-                            "has_disadvantage": _sk_dis_oc,
-                            "resume_callback":  _sk_cb_oc,
-                        })
-                        _sk_ev_oc.wait(timeout=600)
-                        _app._unregister_approval_event(_sk_ev_oc)
-                        _sk_confirmed_oc = _sk_res_oc.get("confirmed", False)
-                        _sk_total_oc     = _sk_res_oc.get("total", 0)
-                        _sk_note_oc      = _sk_res_oc.get("mj_note", "")
-                        if _sk_confirmed_oc:
-                            feedback_oc = (
-                                f"[RÉSULTAT SYSTÈME — JET DE COMPÉTENCE]\n"
-                                f"🎲 {name} — {_sk_label_oc} : résultat {_sk_total_oc}"
-                                + (f"  — Note MJ : {_sk_note_oc}" if _sk_note_oc else "")
+                            else:
+                                feedback_oc = (
+                                    f"[RÉSULTAT SYSTÈME — JET REFUSÉ]\n"
+                                    f"❌ MJ a refusé le jet de {_sk_label_oc} de {name}."
+                                )
+                            _app.msg_queue.put({"sender": "⚙️ Système", "text": feedback_oc, "color": "#4fc3f7"})
+                            _original_receive(
+                                self_mgr,
+                                {"role": "user", "content": feedback_oc, "name": "Alexis_Le_MJ"},
+                                sender, request_reply=False, silent=True,
                             )
-                        else:
-                            feedback_oc = (
-                                f"[RÉSULTAT SYSTÈME — JET REFUSÉ]\n"
-                                f"❌ MJ a refusé le jet de {_sk_label_oc} de {name}."
-                            )
-                        _app.msg_queue.put({"sender": "⚙️ Système", "text": feedback_oc, "color": "#4fc3f7"})
-                        _original_receive(
-                            self_mgr,
-                            {"role": "user", "content": feedback_oc, "name": "Alexis_Le_MJ"},
-                            sender, request_reply=False, silent=True,
-                        )
-                    # Enregistrer le message original dans le GroupChat
-                    _original_receive(self_mgr, message, sender, request_reply, silent)
-                    return
+                        # Enregistrer le message original dans le GroupChat
+                        _original_receive(self_mgr, message, sender, request_reply, silent)
+                        return
 
                 _sub_ev  = _threading.Event()
                 _sub_res: dict = {}
+                _is_free_sw_move = False  # Sera True si déplacement libre arme spectrale
 
                 # -- Arme spectrale deja invoquee -> bypass total du slot check --
                 # Utiliser l'arme (Bonus Action d'attaque) ne coute aucun slot.
@@ -2052,8 +2116,10 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                     except Exception as _coord_fix_err:
                         print(f"[CoordFix] {_coord_fix_err}")
 
-                # ── Confirmation MJ en combat ─────────────────────────────────
-                # (Hors combat, le flow a déjà fait un early exit plus haut)
+                # ── Confirmation MJ ────────────────────────────────────────────
+                # Combat : toujours affiché.
+                # Hors combat : affiché pour les sorts soin/utilitaire (les autres
+                # actions non-offensives ont déjà fait un early exit plus haut).
                 _app._register_approval_event(_sub_ev)
                 _app.msg_queue.put({
                     "action": "action_confirm", "char_name": name,
@@ -2793,6 +2859,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         )
                         _is_healing_action  = feedback.startswith("[RÉSULTAT SYSTÈME — SOIN")
                         _is_save_action     = feedback.startswith("[RÉSULTAT SYSTÈME — JET DE SAUVEGARDE")
+                        _is_free_sw_move    = feedback.startswith("[RÉSULTAT SYSTÈME — DÉPLACEMENT LIBRE ARME SPECTRALE")
 
                         if _is_spell_attack:
                             _result_ev   = _threading.Event()
@@ -2984,6 +3051,43 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             if _is_auto_hit_spell:
                                 _ah_total  = int(_ah_total_m.group(1))
                                 _ah_cible  = _sub.get("cible", "Cible")
+
+                                # ── Parse par fléchette depuis _results_part ──
+                                _proj_dmgs = [
+                                    int(m.group(1))
+                                    for m in _re.finditer(
+                                        r'\[instance \d+\].*?Total\s*=\s*(\d+)',
+                                        _results_part
+                                    )
+                                ]
+                                _proj_count = len(_proj_dmgs)
+
+                                # Nom du sort et type de dégâts
+                                _ah_spell_m = _re.search(
+                                    r'\[([^\]]+?)\s*—\s*niv\.\d+\]', _results_part
+                                )
+                                _ah_spell_nm = _ah_spell_m.group(1).strip() if _ah_spell_m else "Sort"
+                                _ah_dtype_m  = _re.search(
+                                    r'Total dégâts (\w+)', _results_part
+                                )
+                                _ah_dtype = _ah_dtype_m.group(1) if _ah_dtype_m else "force"
+
+                                # Texte affiché dans la boîte : nom + décomposition par fléchette
+                                if _proj_count > 1:
+                                    _proj_str   = " + ".join(str(d) for d in _proj_dmgs)
+                                    _ah_dmg_text = (
+                                        f"{_ah_spell_nm} — {_proj_count} fléchettes\n"
+                                        f"{_proj_str} = {_ah_total} {_ah_dtype}"
+                                    )
+                                elif _proj_count == 1:
+                                    _ah_dmg_text = (
+                                        f"{_ah_spell_nm} — 1 fléchette\n"
+                                        f"{_proj_dmgs[0]} {_ah_dtype}"
+                                    )
+                                else:
+                                    # Fallback si pas d'instances parsables
+                                    _ah_dmg_text = f"{_ah_spell_nm} — {_ah_total} {_ah_dtype}"
+
                                 _ah_dmg_ev  = _threading.Event()
                                 _ah_dmg_res: dict = {}
 
@@ -3001,8 +3105,10 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                     "sender":          name,
                                     "char_name":       name,
                                     "cible":           _ah_cible,
-                                    "dmg_text":        "Degats - sort a touche automatique",
+                                    "dmg_text":        _ah_dmg_text,
                                     "dmg_total":       _ah_total,
+                                    "projectiles":     _proj_dmgs,
+                                    "proj_count":      _proj_count,
                                     "is_crit":         False,
                                     "resume_callback": _ah_dmg_cb,
                                 })
@@ -3273,8 +3379,10 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         _tr_check["movement_ft"] = max(0, _tr_check["movement_ft"] - _mv_ft_used)
                         
                 # Consommer le type de base de l'action
+                # Exception : déplacement libre de l'arme spectrale → pas de consommation
                 try:
-                    _consume_turn_res(name, _type_lbl, movement_ft=_mv_ft_used)
+                    if not _is_free_sw_move:
+                        _consume_turn_res(name, _type_lbl, movement_ft=_mv_ft_used)
                     _app._update_agent_combat_prompts()
                 except Exception as _e_upd:
                     print(f"[engine_receive] Erreur update prompts : {_e_upd}")
@@ -3286,6 +3394,8 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                 _tec_msg  = _build_tour_en_cours(name)
                 _tr       = _get_turn_res(name)
                 _has_res  = _tr["action"] or _tr["bonus"]
+                _mv_rem   = _tr.get("movement_ft", 0)
+                _nothing_left = not _has_res and _mv_rem == 0
 
                 # [UI MJ] : tableau complet dans l'interface (pas dans le GroupChat)
                 _app.msg_queue.put({
@@ -3312,19 +3422,21 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                 _is_out_of_turn = (name != _active_comb)
 
                 if _is_out_of_turn:
-                    # Si c'était une réaction hors-tour, on rend la parole au VRAI personnage actif
                     _app._pending_combat_trigger = f"La réaction de {name} est résolue. Reprends ton tour, {_active_comb}."
                     _gc_trigger = f"La réaction de {name} est résolue. Reprends ton tour, {_active_comb}."
+                elif _nothing_left:
+                    _app._pending_combat_trigger = "Tu n'as plus d'action, fait une [ACTION] type: Fin de tour."
+                    _gc_trigger                  = "Tu n'as plus d'action, fait une [ACTION] type: Fin de tour."
                 else:
                     _app._pending_combat_trigger = (
                         f"Tu as encore des actions disponibles. Continue ton tour, {name}."
                         if _has_res else
-                        f"{name}, plus d'actions disponibles. Envoie [ACTION] de type 'Fin de tour' ou déclare un mouvement."
+                        f"Il te reste {_mv_rem} ft de déplacement. Déclare un [ACTION] Type: Mouvement ou Fin de tour."
                     )
                     _gc_trigger = (
                         f"Continue ton tour, {name}."
                         if _has_res else
-                        f"{name}, plus d'actions disponibles. Envoie [ACTION] de type 'Fin de tour' ou déclare un mouvement."
+                        f"Il te reste {_mv_rem} ft de déplacement. Déclare un [ACTION] Type: Mouvement ou Fin de tour."
                     )
 
                 _original_receive(self_mgr, message, sender, request_reply=False, silent=True)

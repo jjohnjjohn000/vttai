@@ -209,6 +209,90 @@ def log_tts_start(name: str, text_preview: str = ""):
 def log_tts_end(name: str, success: bool = True):
     """Nettoyage du timer TTS — log supprimé (appelé N fois par phrase, cause 0ms)."""
     _tts_starts.pop(name, None)
+
+
+# ─── Logs détaillés des prompts (HORS COMBAT uniquement) ─────────────────────
+
+def _is_combat_active() -> bool:
+    """Vérifie si le combat est actif sans importer au niveau module."""
+    try:
+        from combat_tracker import COMBAT_STATE
+        return bool(COMBAT_STATE.get("active"))
+    except Exception:
+        return False
+
+
+def log_agent_prompt(name: str, system_msg: str, messages: list):
+    """
+    Affiche dans le terminal le prompt complet envoyé à un agent joueur.
+
+    Affiché UNIQUEMENT hors combat pour éviter le spam pendant les tours.
+    Contenu :
+      - System message (tronqué à 300 chars)
+      - Les 3 derniers messages du chat history (rôle + contenu tronqué)
+    """
+    if _is_combat_active():
+        return
+
+    cc = _char_color(name)
+    sep = f"{_DIM}{'─' * 60}{_RESET}"
+    lines = [
+        sep,
+        f"{_COL_TIME}{_now()}{_RESET}  "
+        f"{cc}📤 {_BOLD}PROMPT → {name}{_RESET}",
+    ]
+
+    # System message (tronqué)
+    if system_msg:
+        preview = system_msg[:300].replace('\n', ' ↵ ')
+        lines.append(f"  {_DIM}[system]{_RESET} {preview}{'…' if len(system_msg) > 300 else ''}")
+
+    # Derniers messages du chat history
+    tail = messages[-3:] if messages else []
+    if tail:
+        lines.append(f"  {_DIM}── derniers messages ({len(messages)} au total) ──{_RESET}")
+        for m in tail:
+            role = m.get("name", m.get("role", "?"))
+            content = str(m.get("content", ""))[:200].replace('\n', ' ↵ ')
+            lines.append(f"  {_DIM}[{role}]{_RESET} {content}{'…' if len(str(m.get('content', ''))) > 200 else ''}")
+
+    lines.append(sep)
+    _print("\n".join(lines))
+
+
+def log_agent_response(name: str, response):
+    """
+    Affiche dans le terminal la réponse reçue d'un agent joueur.
+
+    Affiché UNIQUEMENT hors combat.
+    response peut être une str ou un tuple (bool, str) renvoyé par AutoGen.
+    """
+    if _is_combat_active():
+        return
+
+    # Extraire le texte de la réponse
+    text = ""
+    if isinstance(response, str):
+        text = response
+    elif isinstance(response, tuple) and len(response) >= 2:
+        text = str(response[1]) if response[1] is not None else "(None)"
+    elif response is not None:
+        text = str(response)
+    else:
+        text = "(None — pas de réponse)"
+
+    cc = _char_color(name)
+    sep = f"{_DIM}{'─' * 60}{_RESET}"
+    lines = [
+        sep,
+        f"{_COL_TIME}{_now()}{_RESET}  "
+        f"{cc}📥 {_BOLD}RÉPONSE ← {name}{_RESET}",
+        f"  {text}",
+        sep,
+    ]
+    _print("\n".join(lines))
+
+
 # ─── OpenRouter : affichage du solde après chaque réponse ────────────────────
 
 _COL_CREDITS = "\033[96m"   # cyan — infos crédits

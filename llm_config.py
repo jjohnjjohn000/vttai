@@ -286,34 +286,26 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
         pass  # pas de fallback DeepSeek
 
     else:
-        # Modèle Gemini : chaîne de fallback complète avec rotation multi-comptes.
-        # Ordre : gemini-3-flash-preview → gemini-3.1-flash-lite-preview →
-        #         gemini-2.5-pro → gemini-2.5-flash → Groq → OpenRouter
-        # ORDRE CRITIQUE : mettre les modèles confirmés disponibles en premier.
-        # Si un modèle "preview" n'existe pas sur l'API (404), AutoGen le traite
-        # comme un échec et passe au suivant — la rotation de clés est court-circuitée.
-        # Vérifiez que chaque nom ici correspond exactement à un modèle Gemini actif.
-        _GEMINI_FALLBACK_ORDER = [
-            "gemini-2.5-flash",             # stable, très disponible
-            "gemini-2.5-pro",               # stable
-            "gemini-2.0-flash",             # stable, rapide
-            "gemma-4-31b-it",                # preview — peut ne pas exister
-            "gemma-4-26b-a4b-it",            # preview — peut ne pas exister
-            "gemini-3-flash-preview",        # preview — peut ne pas exister
-            "gemini-3.1-flash-lite-preview", # preview — peut ne pas exister
-        ]
-        for fb in _GEMINI_FALLBACK_ORDER:
-            if m != fb:
+        # Modèle Gemini : chaîne de fallback configurable avec rotation multi-comptes.
+        # L'ordre est défini dans app_config.json → fallback_chain.
+        # Chaque modèle est dispatché vers le bon fournisseur selon son préfixe.
+        from app_config import get_fallback_chain
+        for fb in get_fallback_chain():
+            fb = fb.strip()
+            if not fb or fb == m:
+                continue
+            if fb.startswith("ollama/"):
+                config_list.append(_ollama(fb[len("ollama/"):]))
+            elif fb.startswith("groq/"):
+                config_list.extend(_groq_all_keys(fb[len("groq/"):]))
+            elif fb.startswith("openrouter/"):
+                config_list.extend(_openrouter_all_keys(fb[len("openrouter/"):]))
+            elif fb.startswith("deepseek/"):
+                ds_key = os.getenv("DEEPSEEK_API_KEY", "")
+                if ds_key:
+                    config_list.append(_deepseek(fb[len("deepseek/"):]))
+            else:
                 config_list.extend(_gemini_all_keys(fb))
-
-        # Fallback Groq inter-fournisseur (toutes les clés)
-        config_list.extend(_groq_all_keys("meta-llama/llama-4-scout-17b-16e-instruct"))
-
-        # Fallbacks OpenRouter en ultime recours
-        if _openrouter_keys:
-            config_list.extend(_openrouter_all_keys("meta-llama/llama-3.3-70b-instruct:free"))
-            config_list.extend(_openrouter_all_keys("mistralai/mistral-small-3.1-24b-instruct:free"))
-            config_list.extend(_openrouter_all_keys("arcee-ai/trinity-large-preview:free"))
 
     # ── Sécurité : au cas où aucune clé n'est configurée ─────────────────────
     if not config_list:
