@@ -115,6 +115,44 @@ def _checkbox(parent, var, label):
     cb.pack(anchor="w", padx=20, pady=2)
     return cb
 
+def _make_scrollable(parent):
+    """Transforme un tk.Frame en zone scrollable, retourne le frame intérieur."""
+    canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
+    sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=sb.set)
+    sb.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    inner = tk.Frame(canvas, bg=BG)
+    win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas.bind("<Configure>", lambda e: canvas.itemconfig(win_id, width=e.width))
+
+    def _on_wheel(e):
+        if e.delta:
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+    def _on_wheel_linux(e):
+        if e.num == 4:
+            canvas.yview_scroll(-1, "units")
+        elif e.num == 5:
+            canvas.yview_scroll(1, "units")
+
+    def _bind_scroll(e):
+        canvas.bind_all("<MouseWheel>", _on_wheel)
+        canvas.bind_all("<Button-4>", _on_wheel_linux)
+        canvas.bind_all("<Button-5>", _on_wheel_linux)
+
+    def _unbind_scroll(e):
+        canvas.unbind_all("<MouseWheel>")
+        canvas.unbind_all("<Button-4>")
+        canvas.unbind_all("<Button-5>")
+
+    canvas.bind("<Enter>", _bind_scroll)
+    canvas.bind("<Leave>", _unbind_scroll)
+    
+    return inner
 
 # ─── Onglets ──────────────────────────────────────────────────────────────────
 
@@ -130,8 +168,9 @@ def _tab_agents(nb, cfg, vars_):
              text="Modifié en temps réel si la session est active · Redémarrer pour appliquer au GroupChatManager",
              bg="#0a1520", fg=FG_DIM, font=("Arial", 8)).pack(side=tk.RIGHT, padx=16)
 
-    scroll_frame = tk.Frame(tab, bg=BG)
-    scroll_frame.pack(fill=tk.BOTH, expand=True, pady=8)
+    outer = tk.Frame(tab, bg=BG)
+    outer.pack(fill=tk.BOTH, expand=True, pady=0)
+    scroll_frame = _make_scrollable(outer)
 
     for char in ["Kaelen", "Elara", "Thorne", "Lyra"]:
         color = CHAR_COLORS.get(char, FG)
@@ -279,26 +318,30 @@ def _tab_chronicler(nb, cfg, vars_):
     tk.Label(header, text="Résumé de session & fusion de l'historique",
              bg="#0a1520", fg=FG_DIM, font=("Arial", 8)).pack(side=tk.RIGHT, padx=16)
 
+    outer = tk.Frame(tab, bg=BG)
+    outer.pack(fill=tk.BOTH, expand=True)
+    content = _make_scrollable(outer)
+
     chron = cfg.get("chronicler", DEFAULTS["chronicler"])
 
-    _section(tab, "Modèle & génération", GOLD)
+    _section(content, "Modèle & génération", GOLD)
 
     m_var = tk.StringVar(value=chron.get("model", DEFAULTS["chronicler"]["model"]))
-    _row(tab, "Modèle LLM", _model_dropdown, var=m_var)
+    _row(content, "Modèle LLM", _model_dropdown, var=m_var)
 
     t_var = tk.DoubleVar(value=chron.get("temperature", 0.3))
-    _row(tab, "Température", _temp_slider, var=t_var)
+    _row(content, "Température", _temp_slider, var=t_var)
 
-    _section(tab, "Mémoires injectées", GOLD)
+    _section(content, "Mémoires injectées", GOLD)
 
     imp_var = tk.IntVar(value=chron.get("memories_importance", 1))
-    _row(tab, "Importance min. des mémoires", _int_slider,
+    _row(content, "Importance min. des mémoires", _int_slider,
          var=imp_var, from_=1, to=3,
          label_suffix="  1=Toutes  2=Notables+  3=Critiques seul.")
 
-    _section(tab, "System prompt du Chroniqueur", GOLD)
+    _section(content, "System prompt du Chroniqueur", GOLD)
 
-    prompt_frame = tk.Frame(tab, bg=BG)
+    prompt_frame = tk.Frame(content, bg=BG)
     prompt_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(4, 10))
     prompt_box = scrolledtext.ScrolledText(
         prompt_frame, height=10, bg=BG2, fg=FG,
@@ -326,28 +369,36 @@ def _tab_groupchat(nb, cfg, vars_):
     tk.Label(header, text="Paramètres du moteur de conversation multi-agents",
              bg="#0a1520", fg=FG_DIM, font=("Arial", 8)).pack(side=tk.RIGHT, padx=16)
 
+    outer = tk.Frame(tab, bg=BG)
+    outer.pack(fill=tk.BOTH, expand=True)
+    content = _make_scrollable(outer)
+
     gc = cfg.get("groupchat", DEFAULTS["groupchat"])
 
-    _section(tab, "Limites de session", PURPLE)
+    _section(content, "Limites de session", PURPLE)
 
     mr_var = tk.IntVar(value=gc.get("max_round", 100))
-    _row(tab, "Rounds max par session", _int_slider,
+    _row(content, "Rounds max par session", _int_slider,
          var=mr_var, from_=10, to=500,
          label_suffix="  (100 ≈ ~30 minutes de jeu)")
 
-    _section(tab, "Comportement", PURPLE)
+    _section(content, "Comportement", PURPLE)
 
     rep_var = tk.BooleanVar(value=gc.get("allow_repeat_speaker", False))
-    _checkbox(tab, rep_var, "Autoriser le même agent à parler deux fois de suite")
+    _checkbox(content, rep_var, "Autoriser le même agent à parler deux fois de suite")
 
-    _section(tab, "Modèle du GroupChatManager", PURPLE)
+    asc_var = tk.BooleanVar(value=gc.get("allow_skill_checks", True))
+    _checkbox(content, asc_var, "Autoriser les agents à faire des jets de compétence d'eux-mêmes")
 
-    tk.Label(tab, text="  Le GroupChatManager utilise le modèle du Chroniqueur (onglet précédent).",
+    _section(content, "Modèle du GroupChatManager", PURPLE)
+
+    tk.Label(content, text="  Le GroupChatManager utilise le modèle du Chroniqueur (onglet précédent).",
              bg=BG, fg=FG_DIM, font=("Consolas", 9, "italic")).pack(anchor="w", padx=20)
 
     vars_["groupchat"] = {
         "max_round":            mr_var,
         "allow_repeat_speaker": rep_var,
+        "allow_skill_checks":   asc_var,
     }
     return tab
 
@@ -363,25 +414,29 @@ def _tab_memories(nb, cfg, vars_):
     tk.Label(header, text="Injection permanente + détection contextuelle dynamique",
              bg="#0a1520", fg=FG_DIM, font=("Arial", 8)).pack(side=tk.RIGHT, padx=16)
 
+    outer = tk.Frame(tab, bg=BG)
+    outer.pack(fill=tk.BOTH, expand=True)
+    content = _make_scrollable(outer)
+
     mem = cfg.get("memories", DEFAULTS["memories"])
 
-    _section(tab, "Bloc permanent (injecté à chaque message)", "#80cbc4")
-    tk.Label(tab,
+    _section(content, "Bloc permanent (injecté à chaque message)", "#80cbc4")
+    tk.Label(content,
              text="  Injecté dans le system_message de chaque agent au démarrage et à chaque tour.",
              bg=BG, fg=FG_DIM, font=("Consolas", 9, "italic")).pack(anchor="w", padx=20)
 
     ci_var = tk.IntVar(value=mem.get("compact_importance_min", 2))
-    _row(tab, "Importance min. (bloc compact)", _int_slider,
+    _row(content, "Importance min. (bloc compact)", _int_slider,
          var=ci_var, from_=1, to=3,
          label_suffix="  1=Tout  2=Notable+  3=Critique seul.")
 
-    _section(tab, "Détection contextuelle dynamique", "#80cbc4")
-    tk.Label(tab,
+    _section(content, "Détection contextuelle dynamique", "#80cbc4")
+    tk.Label(content,
              text="  Activée à chaque message : scanne le texte pour trouver des mémoires mentionnées.",
              bg=BG, fg=FG_DIM, font=("Consolas", 9, "italic")).pack(anchor="w", padx=20)
 
     tl_var = tk.IntVar(value=mem.get("contextual_tag_min_length", 4))
-    _row(tab, "Longueur min. des tags", _int_slider,
+    _row(content, "Longueur min. des tags", _int_slider,
          var=tl_var, from_=2, to=10,
          label_suffix="  (4 recommandé — évite les faux positifs)")
 
@@ -446,26 +501,30 @@ def _tab_voice_ui(nb, cfg, vars_):
     tk.Label(header, text="edge-tts (en ligne) ou Piper TTS (local, hors-ligne)",
              bg="#0a1520", fg=FG_DIM, font=("Arial", 8)).pack(side=tk.RIGHT, padx=16)
 
+    outer = tk.Frame(tab, bg=BG)
+    outer.pack(fill=tk.BOTH, expand=True)
+    content = _make_scrollable(outer)
+
     voice  = cfg.get("voice",  DEFAULTS["voice"])
     piper  = cfg.get("piper",  DEFAULTS["piper"])
     ui_cfg = cfg.get("ui",     DEFAULTS["ui"])
 
     # ── Activer/désactiver TTS global ────────────────────────────────────────
-    _section(tab, "Synthèse vocale (TTS)", GREEN)
+    _section(content, "Synthèse vocale (TTS)", GREEN)
     v_var = tk.BooleanVar(value=voice.get("enabled", True))
-    _checkbox(tab, v_var, "Activer la synthèse vocale")
+    _checkbox(content, v_var, "Activer la synthèse vocale")
 
     # ── Sélecteur de backend ─────────────────────────────────────────────────
-    _section(tab, "Backend TTS", GREEN)
+    _section(content, "Backend TTS", GREEN)
 
     backend_var = tk.StringVar(value=voice.get("backend", "edge-tts"))
 
-    backend_frame = tk.Frame(tab, bg=BG)
+    backend_frame = tk.Frame(content, bg=BG)
     backend_frame.pack(fill=tk.X, padx=20, pady=(4, 0))
 
     # Panneaux conditionnels
-    edgetts_panel = tk.Frame(tab, bg=BG2, relief="flat", bd=0)
-    piper_panel   = tk.Frame(tab, bg=BG2, relief="flat", bd=0)
+    edgetts_panel = tk.Frame(content, bg=BG2, relief="flat", bd=0)
+    piper_panel   = tk.Frame(content, bg=BG2, relief="flat", bd=0)
 
     def _update_panels(*_):
         if backend_var.get() == "piper":
@@ -703,12 +762,12 @@ def _tab_voice_ui(nb, cfg, vars_):
     _update_panels()
 
     # ── Push-to-Talk ─────────────────────────────────────────────────────────
-    _section(tab, "Push-to-Talk (PTT)", ACCENT)
+    _section(content, "Push-to-Talk (PTT)", ACCENT)
 
     ptt_cfg = cfg.get("ptt", DEFAULTS.get("ptt", {"hotkey": "F12"}))
     ptt_hotkey_var = tk.StringVar(value=ptt_cfg.get("hotkey", "F12"))
 
-    ptt_row = tk.Frame(tab, bg=BG)
+    ptt_row = tk.Frame(content, bg=BG)
     ptt_row.pack(fill=tk.X, padx=20, pady=6)
 
     tk.Label(ptt_row, text="Touche PTT", bg=BG, fg=FG_DIM,
@@ -751,14 +810,14 @@ def _tab_voice_ui(nb, cfg, vars_):
             ptt_hotkey_var.set(keysym)
             ptt_display.config(bg=BG2, fg=ACCENT)
             ptt_status_var.set(f"✓ Touche capturée : {keysym}")
-            tab.after(2000, lambda: ptt_status_var.set(""))
-            tab.unbind("<KeyPress>")
+            content.after(2000, lambda: ptt_status_var.set(""))
+            content.unbind("<KeyPress>")
             _ptt_capture_active[0] = False
             btn_capture.config(state=tk.NORMAL)
             return "break"
 
-        tab.focus_set()
-        tab.bind("<KeyPress>", _on_key_capture)
+        content.focus_set()
+        content.bind("<KeyPress>", _on_key_capture)
 
     btn_capture = tk.Button(
         ptt_row, text="Changer",
@@ -770,7 +829,7 @@ def _tab_voice_ui(nb, cfg, vars_):
 
     # Note explicative
     tk.Label(
-        tab,
+        content,
         text=(
             "  Maintenez la touche PTT enfoncée pour parler, relâchez pour envoyer.\n"
             "  Le bouton souris « 🎤 Parler » fonctionne aussi (maintenir = enregistrer).\n"
@@ -782,14 +841,14 @@ def _tab_voice_ui(nb, cfg, vars_):
     vars_["ptt"] = {"hotkey": ptt_hotkey_var}
 
     # ── Rafraîchissement interface ────────────────────────────────────────────
-    _section(tab, "Rafraîchissement interface", GREEN)
+    _section(content, "Rafraîchissement interface", GREEN)
 
     pg_var = tk.IntVar(value=ui_cfg.get("poll_geometry_ms", 2000))
-    _row(tab, "Polling géométrie fenêtres (ms)", _int_slider,
+    _row(content, "Polling géométrie fenêtres (ms)", _int_slider,
          var=pg_var, from_=500, to=10000, label_suffix="  (2000 recommandé)")
 
     sr_var = tk.IntVar(value=ui_cfg.get("stats_refresh_ms", 2000))
-    _row(tab, "Rafraîchissement HP sidebar (ms)", _int_slider,
+    _row(content, "Rafraîchissement HP sidebar (ms)", _int_slider,
          var=sr_var, from_=500, to=10000, label_suffix="  (2000 recommandé)")
 
     vars_["voice"] = {
@@ -826,26 +885,7 @@ def _tab_llm_resources(nb, cfg):
     # ── Zone scrollable ───────────────────────────────────────────────────────
     outer = tk.Frame(tab, bg=BG)
     outer.pack(fill=tk.BOTH, expand=True)
-
-    canvas = tk.Canvas(outer, bg=BG, highlightthickness=0)
-    sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-    canvas.configure(yscrollcommand=sb.set)
-    sb.pack(side=tk.RIGHT, fill=tk.Y)
-    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-    inner = tk.Frame(canvas, bg=BG)
-    win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
-
-    inner.bind("<Configure>",
-               lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-    canvas.bind("<Configure>",
-                lambda e: canvas.itemconfig(win_id, width=e.width))
-
-    def _on_wheel(e):
-        canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
-
-    canvas.bind("<Enter>",  lambda e: canvas.bind_all("<MouseWheel>", _on_wheel))
-    canvas.bind("<Leave>",  lambda e: canvas.unbind_all("<MouseWheel>"))
+    inner = _make_scrollable(outer)
 
     # ── Helpers locaux ────────────────────────────────────────────────────────
     def _mask(k: str) -> str:
@@ -1322,9 +1362,25 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
     win.title("⚙️  Configuration — Moteur de l'Aube Brisée")
     win.configure(bg=BG)
     win.resizable(True, True)
+
+    # Contrainte de hauteur maximale pour éviter que la fenêtre dépasse l'écran (ex: 1080p)
+    screen_h = win.winfo_screenheight()
+    max_h = min(900, screen_h - 80) # Laisse de la place pour la barre des tâches
+    win.maxsize(width=root.winfo_screenwidth(), height=max_h)
+
     track_fn("modal_config", win)
     if "modal_config" not in win_state:
-        win.geometry("760x640")
+        win.geometry(f"760x{min(700, max_h)}")
+    else:
+        # Assure que la géométrie rechargée ne dépasse pas la hauteur maximale
+        try:
+            geom = win_state["modal_config"]
+            w_str, rest = geom.split('x')
+            h_str, x_str, y_str = rest.replace('+', ' +').replace('-', ' -').split()
+            if int(h_str) > max_h:
+                win.geometry(f"{w_str}x{max_h}+{int(x_str)}+{int(y_str)}")
+        except Exception:
+            pass
 
     # ── En-tête ──
     hdr = tk.Frame(win, bg="#060d18", pady=10)
@@ -1410,6 +1466,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
         new_cfg["groupchat"].update({
             "max_round":            gv["max_round"].get(),
             "allow_repeat_speaker": gv["allow_repeat_speaker"].get(),
+            "allow_skill_checks":   gv["allow_skill_checks"].get(),
         })
 
         mv = vars_["memories"]

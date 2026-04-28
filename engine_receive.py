@@ -42,14 +42,14 @@ from engine_spell_mj   import (
     validate_bonus_action_rule, validate_cast_time_in_combat
 )
 
-# ── OVERRIDE DU PATTERN ACTION (TOLÉRANCE MAXIMALE) ─────────────────────────
+# ── OVERRIDE DU PATTERN ACTION (TOLÉRANCE MAXIMALE ET SÉCURISÉ) ─────────────
 ACTION_PATTERN = _re.compile(
-    r'(?:\*\*)?(?:\[\s*ACTION\s*\])?(?:\*\*)?\s*'
-    r'(?:(?:[\*\-]\s*)?(?:Type|Action|Type d\'action)\s*:\s*(?P<type>[^\n]*)\s*)'
-    r'(?:(?:[\*\-]\s*)?Intention\s*:\s*(?P<intention>.*?)\s*)?'
-    r'(?:(?:[\*\-]\s*)?R[eéè]gle\s*(?:5e)?\s*:\s*(?P<regle>.*?)\s*)?'
-    r'(?:(?:[\*\-]\s*)?Cible(?:s)?\s*:\s*(?P<cible>.*?))?(?=\n\s*\n|\[ACTION\]|</thought>|$)',
-    _re.IGNORECASE | _re.DOTALL
+    r'(?:\*\*)?\[\s*ACTION\s*\](?:\*\*)?\s*'
+    r'(?:(?:\*\*)?(?:Type|Action|Type d\'action)(?:\*\*)?[^\n:]*:\s*(?P<type>[^\n]*?)\s*\n+)'
+    r'(?:(?:\*\*)?Intention(?:\*\*)?[^\n:]*:\s*(?P<intention>[\s\S]*?)(?=\n\s*(?:\*\*)?R[eéè]gles?[^\n:]*:|\n\s*(?:\*\*)?Cibles?[^\n:]*:|\n\s*\n|\[\s*ACTION|</?thought>|</?think>|\Z|$)\n*)?'
+    r'(?:(?:\*\*)?R[eéè]gles?(?:\s*5e)?(?:\*\*)?[^\n:]*:\s*(?P<regle>[\s\S]*?)(?=\n\s*(?:\*\*)?Cibles?[^\n:]*:|\n\s*\n|\[\s*ACTION|</?thought>|</?think>|\Z|$)\n*)?'
+    r'(?:(?:\*\*)?Cibles?(?:\*\*)?[^\n:]*:\s*(?P<cible>[\s\S]*?)(?=\n\s*\n|\[\s*ACTION|</?thought>|</?think>|\Z|$))?',
+    _re.IGNORECASE
 )
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -129,13 +129,22 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
         if not text:
             return text
         import re as _re_strip
+        
+        # Remplacer la narration entre astérisques par des guillemets français
+        text = _re_strip.sub(r'\*{1,2}([^*]+?)\*{1,2}', r'« \1 »', text)
         text = text.replace("*", "")
+        
         # Supprimer les pensées du modèle (DeepSeek/Gemma 4)
         text = _re_strip.sub(r"<thought>.*?(?:</thought>|$)", "", text, flags=_re_strip.IGNORECASE | _re_strip.DOTALL)
         text = _re_strip.sub(r"<think>.*?(?:</think>|$)", "", text, flags=_re_strip.IGNORECASE | _re_strip.DOTALL)
+        
         # Supprimer les marqueurs mécaniques qui n'ont rien à faire dans le chat
-        text = _re_strip.sub(r"\[SILENCE\]",     "", text)
-        text = _re_strip.sub(r"\[RÈGLES DU BLOC ACTION[^\]]*\](?:\s*•[^\n]*)*", "", text, flags=_re_strip.IGNORECASE)
+        text = _re_strip.sub(r"\[SILENCE\]", "", text, flags=_re_strip.IGNORECASE)
+        
+        # EFFACEMENT COMPLET DU BLOC DE RÈGLES HALLUCINÉ
+        # On supprime depuis "[RÈGLES DU BLOC ACTION...]" jusqu'au prochain double saut de ligne ou la fin du message.
+        text = _re_strip.sub(r"\[R[EÉÈ]GLES?\s+DU\s+BLOC\s+ACTION[^\]]*\][\s\S]*?(?=\n\s*\n|\Z)", "", text, flags=_re_strip.IGNORECASE)
+        
         # Effondrer les lignes blanches multiples en une seule
         text = _re_strip.sub(r"\n{3,}", "\n\n", text)
         return text.strip()
@@ -191,11 +200,12 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
     def _get_turn_res(char_name: str) -> dict:
         """
         Retourne le dict de ressources pour le tour en cours de char_name.
-        Réinitialise automatiquement dès que c'est un nouveau combattant actif.
+        Initialise uniquement si char_name n'a pas encore d'entrée.
+        La réinitialisation se fait en externe quand le combat tracker
+        avance au combattant suivant (clear de turn_res).
         """
         _tr_dict = COMBAT_STATE.setdefault("turn_res", {})
-        if _tr_dict.get("_last_initialized") != char_name:
-            _tr_dict["_last_initialized"] = char_name
+        if char_name not in _tr_dict:
             _tr_dict[char_name] = {
                 "action":               True,
                 "bonus":                True,
@@ -204,14 +214,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                 "extra_attack_available": False,
                 "extra_attack_used":    False,
             }
-        return _tr_dict.setdefault(char_name, {
-            "action":               True,
-            "bonus":                True,
-            "movement_ft":          _get_char_speed_ft(char_name),
-            "sneak_used":           False,
-            "extra_attack_available": False,
-            "extra_attack_used":    False,
-        })
+        return _tr_dict[char_name]
 
     def _consume_turn_res(char_name: str, type_label: str, movement_ft: int = 0):
         """Marque une ressource comme consommée pour ce tour."""
@@ -1396,6 +1399,17 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         "dissip","mur de","bouclier","protection","résistance","balise",
                     )
                 )
+                
+                # ── EXEMPTION CAPACITÉS DE CLASSE ──
+                # Empêche "Imposition des mains" d'être bloqué comme un sort non préparé
+                _CLASS_FEATURES = (
+                    "imposition", "lay on hands", "second wind", "second souffle", 
+                    "action surge", "sursaut", "rage", "châtiment", "smite", 
+                    "forme sauvage", "wild shape", "inspiration", "conduit divin", "channel divinity"
+                )
+                if _pre_is_spell and any(k in _sk_combined_pre for k in _CLASS_FEATURES):
+                    _pre_is_spell = False
+
                 _pre_lvl = None
                 _pre_spell_candidate = None
                 if _pre_is_spell:
@@ -1473,7 +1487,10 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                     # ── Sort soin/utilitaire hors combat → laisser passer vers
                     # le flow MJ confirmation + execute_action_mechanics pour que
                     # les mécaniques (slot, dés, HP) soient exécutées.
-                    if _is_heal_or_utility and _pre_is_spell:
+                    _CLASS_HEAL_FEATURES = ("imposition", "lay on hands", "second wind", "second souffle", "potion", "conduit divin", "channel divinity")
+                    _is_class_heal = any(kw in _oc_combined for kw in _CLASS_HEAL_FEATURES)
+
+                    if (_is_heal_or_utility and _pre_is_spell) or _is_class_heal:
                         pass  # fall through → slot check, MJ confirm, mechanics
                     else:
                         # Pas d'attaque/sort → auto-approuver (interactions sociales, perception...)
@@ -1500,6 +1517,18 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         )
                         _is_skill_chk_oc = any(k in _sk_combined_oc for k in _SKILL_CHECK_KEYS_OC)
                         if _is_skill_chk_oc:
+                            from app_config import get_groupchat_config
+                            if not get_groupchat_config().get("allow_skill_checks", True):
+                                _viol_msg = (
+                                    f"[DIRECTIVE SYSTÈME — ACTION IMPOSSIBLE]\n"
+                                    f"{name} : les jets de compétence de ta propre initiative sont DÉSACTIVÉS.\n"
+                                    f"Le MJ gère tes perceptions passivement. Contente-toi de décrire tes intentions en roleplay.\n\n"
+                                    f"[INSTRUCTION]\nAnnule ce bloc [ACTION] et réponds simplement en roleplay."
+                                )
+                                _app.msg_queue.put({"sender": "⚙️ Système", "text": f"❌ {name} a tenté un jet de compétence (désactivé).", "color": "#cc4444"})
+                                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                                _original_receive(self_mgr, {"role": "user", "content": _viol_msg, "name": "Alexis_Le_MJ"}, sender, request_reply=True, silent=False)
+                                return
                             # Ouvrir la boîte de jet de compétence hors combat
                             _SKILL_MAP_OC = {
                                 "arcane":         ("Arcane",          "INT"),
@@ -1568,6 +1597,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 "dc":               _sk_dc_oc,
                                 "has_advantage":    _sk_adv_oc,
                                 "has_disadvantage": _sk_dis_oc,
+                                "intention":        _sub.get("intention", ""),
                                 "resume_callback":  _sk_cb_oc,
                             })
                             _sk_ev_oc.wait(timeout=600)
@@ -2424,11 +2454,11 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             _sneak_ev.wait(timeout=600)
                             _app._unregister_approval_event(_sneak_ev)
 
-                            # Marquer comme utilisé ce tour (qu'il soit approuvé ou non)
-                            _get_turn_res(name)["sneak_used"] = True
-
                             if _sneak_res.get("apply", False):
                                 _sneak_approved = True
+                                # Marquer comme utilisé ce tour uniquement si approuvé
+                                # (D&D 5e : Sneak Attack se consomme à l'application, pas à la tentative)
+                                _get_turn_res(name)["sneak_used"] = True
                                 _app.msg_queue.put({
                                     "sender": "⚙️ Système",
                                     "text": f"[🗡️ Sneak Attack] {name} — approuvé par MJ, dégâts sournois ajoutés.",
@@ -2496,10 +2526,10 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
 
                         try:
                             from state_manager import load_state as _ls_d, save_state as _ss_d
-                            _cible_str   = _final_tgt.lower()
+                            _cible_str   = _final_tgt.lower().strip()
                             _pj_targets  =[
                                 _pn for _pn in PLAYER_NAMES
-                                if _pn.lower() in _cible_str or _cible_str in _pn.lower()
+                                if _pn.lower() == _cible_str or _pn.lower() == _cible_str.split()[0]
                             ]
                             _state_d = _ls_d()
                             for _pj in _pj_targets:
@@ -2606,6 +2636,22 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         )
 
                         if _is_skill_chk:
+                            from app_config import get_groupchat_config
+                            if not get_groupchat_config().get("allow_skill_checks", True):
+                                _viol_msg = (
+                                    f"[RÉSULTAT SYSTÈME — ACTION IMPOSSIBLE — {name}]\n"
+                                    f"Les jets de compétence de ta propre initiative sont DÉSACTIVÉS.\n\n"
+                                    f"[INSTRUCTION]\nAnnule cette tentative et déclare une action valide (attaque, sort, mouvement, ou Fin de tour)."
+                                )
+                                _app.msg_queue.put({"sender": "⚙️ Système", "text": f"❌ {name} a tenté un jet de compétence (désactivé).", "color": "#cc4444"})
+                                _app._pending_combat_trigger = _viol_msg
+                                _app._pending_impossible_retrigger = None
+                                _refus_public = f"{name} : tentative impossible (jets de compétence désactivés). Nouvelle déclaration requise."
+                                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                                _original_receive(self_mgr, {"role": "user", "content": _refus_public, "name": "Alexis_Le_MJ"}, sender, request_reply=False, silent=False)
+                                _original_receive(self_mgr, {"role": "user", "content": f"Continue ton tour, {name}. Corrige ton action.", "name": "Alexis_Le_MJ"}, sender, request_reply=True, silent=False)
+                                _sub_ev.set()
+                                return
                             # ── Extraire skill / bonus / DC / avantage ────────
                             _SKILL_MAP_SC = {
                                 "arcane":         ("Arcane",          "INT"),
@@ -2682,6 +2728,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 "dc":               _sk_dc,
                                 "has_advantage":    _sk_adv,
                                 "has_disadvantage": _sk_dis,
+                                "intention":        _sub.get("intention", ""),
                                 "resume_callback":  _sk_cb,
                             })
                             _sk_ev.wait(timeout=600)
@@ -2771,8 +2818,10 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 # Fallback : si le nom du sort n'a pas été trouvé dans la DB
                                 # mais qu'on connaît le niveau, on consomme quand même le slot.
                                 if _pre_is_spell and not _consumed_slot and _pre_lvl and _pre_lvl > 0:
-                                    use_spell_slot(name, str(_pre_lvl))
-                                    _app._update_agent_combat_prompts()
+                                    # Ne pas consommer si le sort peut être lancé en rituel
+                                    if not (_pre_spell_candidate and can_ritual_cast(name, _pre_spell_candidate)):
+                                        use_spell_slot(name, str(_pre_lvl))
+                                        _app._update_agent_combat_prompts()
 
 
                                 feedback = execute_action_mechanics(
@@ -3031,7 +3080,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             _app._register_approval_event(_result_ev)
                             _app.msg_queue.put({
                                 "action": "result_confirm", "char_name": name,
-                                "type_label": f"Sort — {_sub.get('intention', '')}",
+                                "type_label": f"Soin — {_pre_spell_candidate.title()}" if _pre_spell_candidate else "Soin",
                                 "results_text": _results_part,
                                 "mode": "healing", "resume_callback": _heal_action_cb,
                             })
@@ -3253,12 +3302,13 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             except Exception as _mv_err:
                                 print(f"[MoveToken] {_mv_err}")
 
-                        _app.msg_queue.put({"sender": "⚙️ Système", "text": feedback, "color": "#4fc3f7"})
-                        _original_receive(
-                            self_mgr,
-                            {"role": "user", "content": feedback, "name": "Alexis_Le_MJ"},
-                            sender, request_reply=False, silent=True,
-                        )
+                        if not _is_skill_chk:
+                            _app.msg_queue.put({"sender": "⚙️ Système", "text": feedback, "color": "#4fc3f7"})
+                            _original_receive(
+                                self_mgr,
+                                {"role": "user", "content": feedback, "name": "Alexis_Le_MJ"},
+                                sender, request_reply=False, silent=True,
+                            )
 
                 else:
                     # Action refusée par le MJ
@@ -3314,7 +3364,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         )
                     else:
                         _app._pending_combat_trigger = (
-                            f"[ACTION REFUSÉE — {name.upper()}]\n"
+                            f"[ACTION HORS COMBAT REFUSÉE — {name.upper()}]\n"
                             f"Ton action a été refusée par le MJ.\n"
                             f"[INSTRUCTION]\n"
                             f"Action refusée : {_sub['type_label']} — {_sub['intention']}\n"
@@ -3523,6 +3573,11 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 _app.root.after(600, _app._combat_tracker.sync_pc_hp_from_state)
                         except Exception:
                             pass
+                        _original_receive(
+                            self_mgr,
+                            {"role": "user", "content": _instr, "name": "Alexis_Le_MJ"},
+                            sender, request_reply=False, silent=True,
+                        )
 
                     elif _d_action == "soin":
                         _montant = int(_d.get("montant", 0))
@@ -3536,135 +3591,12 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             f"IMMÉDIATEMENT — AVANT tout texte.\n"
                             f"Ensuite, narre en 1 phrase ta réaction au soin."
                         )
+                        _original_receive(
+                            self_mgr,
+                            {"role": "user", "content": _instr, "name": "Alexis_Le_MJ"},
+                            sender, request_reply=False, silent=True,
+                        )
 
-                    elif _d_action in ("jet_sauvegarde", "jet_competence", "jet_attaque"):
-                        _carac  = _d.get("caracteristique", "")
-                        _dc     = _d.get("dc")
-                        _de     = _d.get("de", "1d20")
-                        _bonus  = int(_d.get("bonus", 0))
-                        _dc_str = f" contre DC {_dc}" if _dc else ""
-                        _action_label = {
-                            "jet_sauvegarde": "Jet de sauvegarde",
-                            "jet_competence": "Jet de compétence",
-                            "jet_attaque":    "Jet d'attaque",
-                        }.get(_d_action, "Jet")
-                        _real_bonus = _bonus
-                        if _real_bonus == 0 and _tgt in _CM:
-                            _stats = _CM[_tgt]
-                            _carac_low = _carac.lower()
-                            _real_bonus = (
-                                _stats.get("saves", {}).get(_carac_low)
-                                or _stats.get("skills", {}).get(_carac_low)
-                                or 0
-                            )
-
-                        # ── Boîte skill_check_confirm pour le jet ─────────────
-                        # Le dé est lancé directement dans le widget UI.
-                        # Le MJ voit les deux d20, choisit Avantage/Normal/Désavantage,
-                        # valide ou refuse — le résultat est injecté à l'agent.
-                        import threading as _th_jet
-                        _jet_ev  = _th_jet.Event()
-                        _jet_res = {}
-
-                        def _jet_cb(confirmed, total=0, mj_note="",
-                                    _ev=_jet_ev, _res=_jet_res,
-                                    _tgt2=_tgt, _carac2=_carac, _dc2=_dc,
-                                    _bonus2=_real_bonus,
-                                    _label2=_action_label, _dc_str2=_dc_str):
-                            """
-                            Callback skill_check_confirm.
-                            confirmed=True  → total = résultat validé par le MJ.
-                            confirmed=False → jet refusé.
-                            """
-                            _res["confirmed"] = confirmed
-                            _res["total"]     = total
-                            _res["mj_note"]   = mj_note
-                            if confirmed:
-                                _sign = "+" if _bonus2 >= 0 else ""
-                                _raw  = total - _bonus2
-                                _crit = ""
-                                if _raw == 20: _crit = " 🎯 CRITIQUE!"
-                                elif _raw == 1: _crit = " ☠ FUMBLE"
-                                _dc_result = ""
-                                if _dc2:
-                                    try:
-                                        _dc_result = (
-                                            " ✅ SUCCÈS" if total >= int(_dc2) else " ❌ ÉCHEC"
-                                        )
-                                    except Exception:
-                                        pass
-                                _roll_txt = (
-                                    f"# {_tgt2} — {_label2} {_carac2}{_dc_str2}\n"
-                                    f"  Résultat : **{total}**{_crit}{_dc_result}"
-                                    + (f"\n  Note MJ : {mj_note}" if mj_note else "")
-                                )
-                                _app.msg_queue.put({
-                                    "sender": f"🎲 {_tgt2}",
-                                    "text":   _roll_txt,
-                                    "color":  "#aaddff",
-                                })
-                                # Stocker la directive narrative pour le thread AutoGen
-                                # NE PAS appeler _original_receive ici : on est dans le
-                                # thread Tk (callback bouton), ce qui bloquerait l'UI
-                                # le temps de l'appel LLM complet (polling make_thinking_wrapper).
-                                _res["narr_instr"] = (
-                                    f"[RÉSULTAT SYSTÈME — JET]\n"
-                                    f"{_label2} {_carac2}{_dc_str2} pour {_tgt2} : "
-                                    f"total = {total}{_crit}{_dc_result}"
-                                    + (f"\n\nNote MJ : {mj_note}" if mj_note else "")
-                                    + f"\n\n[INSTRUCTION]\nNarre en 1 phrase comment {_tgt2} vit "
-                                    f"physiquement ce moment. Ne mentionne pas le chiffre."
-                                )
-                            _ev.set()  # Débloque le thread AutoGen immédiatement
-
-                        # Détecter avantage/désavantage dans le contexte récent
-                        _has_adv_ctx = False
-                        _has_dis_ctx = False
-                        try:
-                            _gc_obj = _gc()
-                            for _ctx_m in reversed((_gc_obj.messages if _gc_obj else [])[-6:]):
-                                _ctx_c = str(_ctx_m.get("content", "")).lower()
-                                if any(k in _ctx_c for k in ("avantage", "advantage")):
-                                    _has_adv_ctx = True
-                                    break
-                                if any(k in _ctx_c for k in ("désavantage", "disadvantage")):
-                                    _has_dis_ctx = True
-                                    break
-                        except Exception:
-                            pass
-
-                        _app._register_approval_event(_jet_ev)
-                        _app.msg_queue.put({
-                            "action":           "skill_check_confirm",
-                            "char_name":        _tgt,
-                            "skill_label":      _carac or _action_label,
-                            "stat_label":       _carac,
-                            "bonus":            _real_bonus,
-                            "dc":               str(_dc) if _dc else None,
-                            "has_advantage":    _has_adv_ctx,
-                            "has_disadvantage": _has_dis_ctx,
-                            "resume_callback":  _jet_cb,
-                        })
-                        _jet_ev.wait(timeout=300)
-                        _app._unregister_approval_event(_jet_ev)
-                        # Injecter la directive narrative depuis le thread AutoGen
-                        # (pas depuis le callback Tk pour ne pas bloquer l'UI)
-                        _narr_to_inject = _jet_res.get("narr_instr", "")
-                        if _narr_to_inject:
-                            _original_receive(
-                                self_mgr,
-                                {"role": "user", "content": _narr_to_inject, "name": "Alexis_Le_MJ"},
-                                sender, request_reply=True, silent=False,
-                            )
-                        continue
-                    else:
-                        continue
-
-                    _original_receive(
-                        self_mgr,
-                        {"role": "user", "content": _instr, "name": "Alexis_Le_MJ"},
-                        sender, request_reply=False, silent=True,
-                    )
 
         # ── Rebuild prompts avant l'appel normal (messages MJ) ─────────────
         # Garantit que les agents ont le contexte frais (scène, quêtes, sorts,

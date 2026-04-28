@@ -349,7 +349,7 @@ class CampaignLogMixin:
         tk.Checkbutton(filter_bar, text="Cachées", variable=show_hidden_var,
                        bg=_BG2, fg="#aaaacc", selectcolor="#2a2a4e",
                        font=("Consolas", 9), activebackground=_BG2,
-                       command=lambda: _refresh_list(),
+                       command=lambda: win.after(10, _refresh_list),
                        ).pack(side="left", padx=8)
 
         # ── Panneau principal ────────────────────────────────────────────────
@@ -580,8 +580,8 @@ class CampaignLogMixin:
         btn_delete.config(command=_do_delete)
 
         # Lier les filtres
-        cat_var.trace_add("write", lambda *_: _refresh_list())
-        imp_var.trace_add("write", lambda *_: _refresh_list())
+        cat_var.trace_add("write", lambda *_: win.after(10, _refresh_list))
+        imp_var.trace_add("write", lambda *_: win.after(10, _refresh_list))
 
         # Initial load
         _refresh_list()

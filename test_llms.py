@@ -12,7 +12,7 @@ Usage :
     python test_llms.py --agents     # seulement agents + chroniqueur
     python test_llms.py --llms       # seulement les modèles de llm_config.py
     python test_llms.py Kaelen       # un agent spécifique
-    python test_llms.py gemini-2.5-pro  # un modèle spécifique
+    python test_llms.py gemini-2.5-flash  # un modèle spécifique
     python test_llms.py --raw        # affiche la réponse complète
     python test_llms.py --parallel   # tests en parallèle (plus rapide)
 
@@ -208,12 +208,12 @@ def get_all_llm_config_models() -> list:
 
     # Gemini (ordre = priorite dans la chaine de fallback)
     if gemini_key:
-        _add("gemini-2.5-pro")
         _add("gemini-3.1-pro-preview")
         _add("gemma-4-31b-it")
         _add("gemma-4-26b-a4b-it")
         _add("gemini-3.1-flash-lite-preview")
         _add("gemini-2.5-flash")
+        _add("gemini-2.5-flash-lite")
 
     # DeepSeek direct
     if deepseek_key:

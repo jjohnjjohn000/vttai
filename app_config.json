@@ -1,11 +1,11 @@
 {
   "agents": {
     "Kaelen": {
-      "model": "deepseek/deepseek-chat",
+      "model": "gemini-2.5-flash",
       "temperature": 0.7
     },
     "Elara": {
-      "model": "gemini-3.1-flash-lite-preview",
+      "model": "gemini-2.5-flash",
       "temperature": 0.7
     },
     "Thorne": {
@@ -13,19 +13,20 @@
       "temperature": 0.8
     },
     "Lyra": {
-      "model": "gemini-3.1-flash-lite-preview",
+      "model": "gemini-2.5-flash",
       "temperature": 0.6
     }
   },
   "chronicler": {
-    "model": "gemini-3-flash-preview",
+    "model": "gemini-3.1-flash-lite-preview",
     "temperature": 0.3,
     "memories_importance": 1,
     "system_prompt": "Tu es le Chroniqueur IA d'une campagne D&D. Ton but est de maintenir un résumé global à jour de l'histoire. Je vais te fournir l'ancien résumé de la campagne, le journal de quêtes actif, les mémoires clés du groupe, puis la transcription de la nouvelle session. Rédige un UNIQUE résumé mis à jour qui inclut l'essentiel de l'ancien résumé ET de façon fluide les nouveaux événements. Note si des objectifs de quête semblent avoir progressé ou été accomplis. Sois immersif, concis (pas de détails inutiles), et liste les objets majeurs trouvés."
   },
   "groupchat": {
-    "max_round": 100,
-    "allow_repeat_speaker": false
+    "max_round": 500,
+    "allow_repeat_speaker": false,
+    "allow_skill_checks": false
   },
   "memories": {
     "compact_importance_min": 2,
@@ -34,7 +35,7 @@
   "voice": {
     "enabled": true,
     "backend": "piper",
-    "volume": 13
+    "volume": 100
   },
   "piper": {
     "models_dir": "piper_models",
@@ -65,13 +66,13 @@
   },
   "fallback_chain": [
     "gemini-3.1-flash-lite-preview",
-    "gemma-4-26b-a4b-it",
     "gemini-3-flash-preview",
     "openrouter/meta-llama/llama-3.3-70b-instruct:free",
     "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
     "groq/meta-llama/llama-4-scout-17b-16e-instruct",
     "gemini-2.5-flash",
-    "gemini-2.5-pro",
+    "gemini-2.5-flash-lite",
     "gemini-2.0-flash",
     "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
     "openrouter/arcee-ai/trinity-large-preview:free"

@@ -382,10 +382,10 @@ def load_state():
                 "quests": DEFAULT_QUESTS,
                 "scene_context": DEFAULT_SCENE.copy(),
                 "characters": {
-                    "Kaelen": {"llm": "gemini-2.5-pro", "hp": 140, "max_hp": 140, "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 1}, "spells": DEFAULT_SPELLS["Kaelen"]},
-                    "Elara":  {"llm": "gemini-2.5-pro", "hp": 95,  "max_hp": 95,  "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1}, "spells": DEFAULT_SPELLS["Elara"]},
+                    "Kaelen": {"llm": "gemini-2.5-flash", "hp": 140, "max_hp": 140, "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 1}, "spells": DEFAULT_SPELLS["Kaelen"], "features": {"lay_on_hands": 55, "max_lay_on_hands": 55}},
+                    "Elara":  {"llm": "gemini-2.5-flash", "hp": 95,  "max_hp": 95,  "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1}, "spells": DEFAULT_SPELLS["Elara"]},
                     "Thorne": {"llm": "groq/llama-4-scout-17b", "hp": 105, "max_hp": 105, "spell_slots": {}, "spells":[]},
-                    "Lyra":   {"llm": "gemini-2.5-pro", "hp": 110, "max_hp": 110, "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1}, "spells": DEFAULT_SPELLS["Lyra"]},
+                    "Lyra":   {"llm": "gemini-2.5-flash", "hp": 110, "max_hp": 110, "spell_slots": {"1": 4, "2": 3, "3": 3, "4": 3, "5": 2, "6": 1}, "spells": DEFAULT_SPELLS["Lyra"]},
                 },
                 "memories": DEFAULT_MEMORIES,
                 "calendar": DEFAULT_CALENDAR.copy(),
@@ -438,6 +438,12 @@ def load_state():
                     if key not in char_data:
                         char_data[key] = defaults[key]
                         dirty = True
+        
+        # Migration : ajout des features de classe si absentes
+        for _cn, _cdata in state.get("characters", {}).items():
+            if _cn == "Kaelen" and "features" not in _cdata:
+                _cdata["features"] = {"lay_on_hands": 55, "max_lay_on_hands": 55}
+                dirty = True
 
         # Migration : ajoute le calendrier si absent
         if "calendar" not in state:
@@ -501,15 +507,15 @@ BAROVIAN_WEEKDAYS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
 def lunar_phase(day: int) -> tuple:
     """Retourne (icône, nom_court, nom_long) pour le jour du mois donné (1-28)."""
     d = ((day - 1) % 28) + 1
-    if d == 1:             return ("🌑", "NL",  "Nouvelle Lune")
-    if 2  <= d <= 6:       return ("🌒", "CC",  "Croissant Naissant")
-    if d == 7:             return ("🌓", "PQ",  "Premier Quartier")
-    if 8  <= d <= 13:      return ("🌔", "GC",  "Gibbeuse Croissante")
-    if d == 14:            return ("🌕", "PL",  "Pleine Lune")
-    if 15 <= d <= 20:      return ("🌖", "GD",  "Gibbeuse Décroissante")
-    if d == 21:            return ("🌗", "DQ",  "Dernier Quartier")
-    if 22 <= d <= 27:      return ("🌘", "CD",  "Croissant Décroissant")
-    return                        ("🌑", "NL",  "Nuit sans Lune")   # jour 28
+    if d == 1:             return ("🌕", "PL",  "Pleine Lune")
+    if 2  <= d <= 6:       return ("🌖", "GD",  "Gibbeuse Décroissante")
+    if d == 7:             return ("🌗", "DQ",  "Dernier Quartier")
+    if 8  <= d <= 13:      return ("🌘", "CD",  "Croissant Décroissant")
+    if d == 14:            return ("🌑", "NL",  "Nuit sans Lune")
+    if 15 <= d <= 20:      return ("🌑", "NL",  "Nouvelle Lune")
+    if d == 21:            return ("🌒", "CC",  "Croissant Naissant")
+    if 22 <= d <= 27:      return ("🌓", "PQ",  "Premier Quartier")
+    return                        ("🌔", "GC",  "Gibbeuse Croissante")   # jour 28
 
 DEFAULT_CALENDAR = {
     "year":  351,   # An 351 du règne de Strahd
@@ -883,7 +889,11 @@ def get_health_prompt(char_name: str = "") -> str:
         else:
             status = "💀"
         temp_str = f" (+{temp_hp} tmp)" if temp_hp > 0 else ""
-        lines.append(f"  {status} {name} : {pct}% PV{temp_str}")
+        features_str = ""
+        feats = c.get("features", {})
+        if "lay_on_hands" in feats:
+            features_str = f"  [Imposition des mains: {feats['lay_on_hands']}/{feats.get('max_lay_on_hands', 55)}]"
+        lines.append(f"  {status} {name} : {pct}% PV{temp_str}{features_str}")
 
     # ── PNJ alliés (groupe) ─────────────────────────────────────────────────
     if group_npcs:

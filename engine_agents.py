@@ -20,7 +20,7 @@ import types as _types
 
 from llm_config    import build_llm_config, _default_model, StopLLMRequested, _SSL_LOCK
 from class_data    import get_combat_prompt as _get_combat_prompt
-from app_config    import get_agent_config, get_memories_config
+from app_config    import get_agent_config, get_memories_config, get_groupchat_config
 from state_manager import (
     get_scene_prompt, get_active_quests_prompt, get_memories_prompt_compact,
     get_calendar_prompt, get_session_logs_prompt, get_spells_prompt,
@@ -187,6 +187,29 @@ def build_regle_outils(combat_mode: bool = False) -> str:
 
 
 def _build_regle_hors_combat() -> str:
+    allow_skills = get_groupchat_config().get("allow_skill_checks", True)
+    
+    if allow_skills:
+        skill_rules = (
+            "\n▶ COMPÉTENCES PASSIVES — NE JETTE PAS DE DÉS INUTILEMENT"
+            "\nLe MJ utilise tes SCORES PASSIFS (10 + ton bonus) pour Perception, Investigation et Perspicacité."
+            "\nCela signifie que le MJ détecte automatiquement les menaces et détails que ton personnage"
+            "\nremarquerait naturellement — TU N'AS PAS BESOIN de demander un jet pour ça."
+            "\n⛔ N'utilise un bloc [ACTION] avec un jet de compétence QUE si :"
+            "\n  • Tu as une RAISON NARRATIVE FORTE et SPÉCIFIQUE (indice concret, événement déclencheur)."
+            "\n  • Tu fais quelque chose d'ACTIF et DÉLIBÉRÉ (fouiller un meuble, crocheter une serrure,"
+            "\n    interroger quelqu'un avec insistance, escalader un mur…)."
+            "\n⛔ INTERDIT : jets de Perception / Investigation / Arcanes « au cas où », par prudence"
+            "\n    ou pour « surveiller les alentours ». Le MJ gère ça passivement.\n"
+        )
+    else:
+        skill_rules = (
+            "\n▶ COMPÉTENCES ET JETS DE DÉS — INTERDICTION"
+            "\n⛔ INTERDICTION ABSOLUE : Tu ne dois JAMAIS déclarer de jet de compétence (Perception, Investigation, Arcanes, etc.) de ta propre initiative."
+            "\nLe MJ utilise tes SCORES PASSIFS pour détecter ce que tu remarques. Contente-toi de décrire tes intentions en roleplay."
+            "\nN'utilise un bloc [ACTION] pour un jet de compétence QUE si le MJ te le demande explicitement.\n"
+        )
+
     return (
         _REGLES_COMMUNES
         # ── Section spécifique HORS COMBAT ──────────────────────────────────
@@ -195,21 +218,9 @@ def _build_regle_hors_combat() -> str:
         "\nAgis et déclare tes actions de façon autonome — n'attends pas qu'on te liste les choix."
         "\nNe déclare PAS d'action d'attaque, ne lance PAS de dés, ne prends PAS d'initiative de combat"
         "\nsauf si le MJ l'indique explicitement.\n"
-        "\n▶ COMPÉTENCES PASSIVES — NE JETTE PAS DE DÉS INUTILEMENT"
-        "\nLe MJ utilise tes SCORES PASSIFS (10 + ton bonus) pour Perception, Investigation et Perspicacité."
-        "\nCela signifie que le MJ détecte automatiquement les menaces et détails que ton personnage"
-        "\nremarquerait naturellement — TU N'AS PAS BESOIN de demander un jet pour ça."
-        "\n⛔ N'utilise un bloc [ACTION] avec un jet de compétence QUE si :"
-        "\n  • Tu as une RAISON NARRATIVE FORTE et SPÉCIFIQUE (indice concret, événement déclencheur)."
-        "\n  • Tu fais quelque chose d'ACTIF et DÉLIBÉRÉ (fouiller un meuble, crocheter une serrure,"
-        "\n    interroger quelqu'un avec insistance, escalader un mur…)."
-        "\n⛔ INTERDIT : jets de Perception / Investigation / Arcanes « au cas où », par prudence"
-        "\n    ou pour « surveiller les alentours ». Le MJ gère ça passivement.\n"
-        "\n▶ ACTIONS MÉCANIQUES"
-        "\nTu peux librement déclarer un bloc [ACTION] pour toute action non offensive :"
-        "\n  • Fouiller, crocheter, escalader, soigner, lancer un sort utilitaire, se déplacer…"
-        "\n  • ⛔ INTERDIT sans l'accord du MJ : attaques, sorts offensifs, actions hostiles."
-        "\nTermine ton message par :\n\n"
+        + skill_rules
+        + "\n▶ ACTIONS MÉCANIQUES"
+        "\nUNIQUEMENT si le MJ te demande explicitement un jet ou une action mécanique, termine ton message par :\n\n"
         + _ACTION_FORMAT_HORS_COMBAT
         + "\n▶ MOUVEMENT SUR LA CARTE — HORS COMBAT"
         "\nLe bloc [ACTION] Type: Mouvement est réservé aux déplacements de 6 cases (9 m / 30 ft) ou plus."
@@ -223,6 +234,9 @@ def _build_regle_hors_combat() -> str:
 
 
 def _build_regle_en_combat() -> str:
+    allow_skills = get_groupchat_config().get("allow_skill_checks", True)
+    skill_rule_combat = "" if allow_skills else "\n⛔ RAPPEL : Tu ne dois JAMAIS déclarer de jet de compétence de ta propre initiative, même en combat.\n"
+
     return (
         _REGLES_COMMUNES
         # ── Section spécifique EN COMBAT ─────────────────────────────────────
@@ -232,7 +246,8 @@ def _build_regle_en_combat() -> str:
         "\nAprès chaque action confirmée, le système t'envoie un [TOUR EN COURS]"
         "\nqui liste tes ressources restantes. Tu déclares alors ta prochaine action."
         "\n⚠️ RAPPEL TRÈS IMPORTANT : Quand tu n'as plus rien à faire ou que tes ressources sont épuisées, TU DOIS terminer ton tour en envoyant [ACTION] de type: Fin de tour.\n"
-        "\n▶ ACTIONS EN COMBAT — FORMAT OBLIGATOIRE\n\n"
+        + skill_rule_combat
+        + "\n▶ ACTIONS EN COMBAT — FORMAT OBLIGATOIRE\n\n"
         + _ACTION_FORMAT
         + "\n⚔️ PORTÉE DE MÊLÉE — VÉRIFIE AVANT D'ATTAQUER"
         "\n   Consulte la section 📏 DISTANCES HÉROS → ENNEMIS dans ton prompt."
@@ -1048,18 +1063,25 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
         if _retrig is not None:
             app._pending_impossible_retrigger = None
             _char_name, _instruction = _retrig
-            # ⚠️ Format [TOUR DE COMBAT — NOM] et non [RÉSULTAT SYSTÈME…] :
-            # custom_speaker_selection route tout [RÉSULTAT SYSTÈME vers mj_agent
-            # (ligne ~807) → boucle infinie. Avec [TOUR DE COMBAT — NOM], le
-            # sélecteur détecte le nom du joueur dans content_low (~ligne 849)
-            # et route directement vers l'agent concerné.
+            
+            # --- MODIFICATION : Vérification de l'état de combat ---
+            from combat_tracker import COMBAT_STATE
+            if COMBAT_STATE.get("active"):
+                header = f"[TOUR DE COMBAT — {_char_name.upper()}]"
+                tour_text = f"C'est à nouveau le tour de {_char_name}."
+                options = "(sort différent, tour de magie, attaque physique, ou Fin de tour)"
+            else:
+                header = f"[ACTION HORS COMBAT — {_char_name.upper()}]"
+                tour_text = f"C'est à nouveau à {_char_name} de jouer."
+                options = "(sort utilitaire, compétence, dialogue, ou simple roleplay)"
+            # -------------------------------------------------------
+            
             return (
-                f"[TOUR DE COMBAT — {_char_name.upper()}]\n"
-                f"C'est à nouveau le tour de {_char_name}. "
+                f"{header}\n"
+                f"{tour_text} "
                 f"Ton action précédente a été annulée par le système.\n"
                 f"[INSTRUCTION]\n{_instruction}\n"
-                f"{_char_name}, déclare maintenant une nouvelle action valide "
-                f"(sort différent, tour de magie, attaque physique, ou Fin de tour)."
+                f"{_char_name}, déclare maintenant une nouvelle action valide {options}."
             )
 
         # ── 3. Auto-exécution du roll_dice ([DIRECTIVE SYSTÈME — JET] en attente)
@@ -1072,6 +1094,23 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
         app._set_waiting_for_mj(True)
         result = app.wait_for_input()
         app._set_waiting_for_mj(False)
+
+        # ── 5. CORRECTIF /msg : forcer le passage par le GroupChat normal ────
+        # Si le MJ tape "/msg Kaelen ...", AutoGen peut l'interpréter comme un
+        # message direct (hors GroupChat) : dans ce cas patched_receive ne voit
+        # jamais la réponse et ne détecte pas le bloc [ACTION].
+        # On convertit "/msg PlayerName text" → "[MJ → PlayerName] text" pour
+        # forcer le passage par le flux GroupChat normal.
+        # Le speaker selector détecte le nom du joueur dans content_low et route
+        # correctement, sans bypasser patched_receive.
+        _ALL_PC = {"Kaelen", "Elara", "Thorne", "Lyra"}
+        if result and result.startswith("/msg "):
+            _parts = result.split(" ", 2)
+            if len(_parts) >= 2 and _parts[1] in _ALL_PC:
+                _target = _parts[1]
+                _body   = _parts[2] if len(_parts) == 3 else ""
+                result  = f"[MJ → {_target}] {_body}".strip()
+
         return result
 
     mj_agent.get_human_input = _t.MethodType(gui_get_human_input, mj_agent)
@@ -1319,6 +1358,19 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
         _think_agent.generate_reply = make_thinking_wrapper(
             _think_agent, _think_name, app
         )
+        
+        # ── REDIRECTION DES CHUCHOTEMENTS (/msg) VERS LE GROUPCHAT ────────────
+        # Forcer les réponses adressées directement au MJ à passer par le GroupChatManager.
+        # Note technique : _orig_send est déjà une méthode liée (bound method), 
+        # on ne doit donc pas lui repasser self_agent lors de l'appel.
+        _orig_send = _think_agent.send
+        
+        def _patched_send(self_agent, message, recipient, request_reply=None, silent=False, _os=_orig_send):
+            if recipient.name == "Alexis_Le_MJ" and getattr(self_agent, "_groupchat_manager_ref", None) is not None:
+                recipient = self_agent._groupchat_manager_ref
+            return _os(message, recipient, request_reply, silent)
+            
+        _think_agent.send = _types.MethodType(_patched_send, _think_agent)
 
     return {
         "mj":         mj_agent,

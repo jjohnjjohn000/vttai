@@ -27,7 +27,7 @@
     "w": 300,
     "h": 576,
     "x": 3540,
-    "y": 1540
+    "y": 1539
   },
   "modal_skill_check": {
     "w": 560,
@@ -62,7 +62,7 @@
   "calendar": {
     "w": 420,
     "h": 540,
-    "x": 0,
+    "x": 1966,
     "y": 0
   },
   "monster_Ismark": {
@@ -84,10 +84,10 @@
     "y": 1363
   },
   "modal_config": {
-    "w": 893,
-    "h": 1016,
-    "x": 2502,
-    "y": 993
+    "w": 880,
+    "h": 900,
+    "x": 2828,
+    "y": 1147
   },
   "combat_tracker": {
     "w": 1920,
@@ -101,7 +101,7 @@
     "x": 0,
     "y": 1080
   },
-  "active_map_name": "Tser Falls",
+  "active_map_name": "Barovie MJ",
   "campaign_log_viewer": {
     "w": 1016,
     "h": 898,
@@ -115,7 +115,6 @@
     "y": 1202
   },
   "_open_char_Kaelen": true,
-  "_open_char_Elara": true,
   "_open_char_Thorne": true,
   "_open_char_Lyra": true,
   "monster_Ireena": {
@@ -143,5 +142,5 @@
     "y": 0
   },
   "_open_combat_map": true,
-  "_open_combat_tracker": true
+  "_open_char_Elara": true
 }

@@ -170,6 +170,10 @@ def extract_spell_name_llm(intention: str, char_name: str) -> str:
         client = _ag.OpenAIWrapper(config_list=_cfg["config_list"])
         response = client.create(messages=[{"role": "user", "content": prompt}])
         raw = (response.choices[0].message.content or "").strip()
+        
+        # Nettoyage des balises de réflexion (modèles reasoning type Gemma/DeepSeek)
+        raw = _re.sub(r'<(thought|think)>.*?</\1>\s*', '', raw, flags=_re.IGNORECASE | _re.DOTALL)
+        
         raw = _re.sub(r"^```[a-z]*\s*", "", raw)
         raw = _re.sub(r"\s*```$", "", raw.strip()).strip()
         if raw.upper() == "AUCUN" or not raw:
@@ -642,7 +646,7 @@ def parse_mj_directives(mj_text: str,
         with _psl:
             _resp = _oa.chat.completions.create(
                 model    = _model_name,
-                messages = [
+                messages =[
                     {"role": "system", "content": PARSER_SYSTEM},
                     {"role": "user",   "content": mj_text},
                 ],
@@ -650,6 +654,10 @@ def parse_mj_directives(mj_text: str,
                 max_tokens  = 400,
             )
         _raw = _resp.choices[0].message.content.strip()
+        
+        # Nettoyage des balises de réflexion
+        _raw = _re.sub(r'<(thought|think)>.*?</\1>\s*', '', _raw, flags=_re.IGNORECASE | _re.DOTALL)
+        
         _raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", _raw).strip()
         _parsed = _json.loads(_raw)
         if isinstance(_parsed, list):

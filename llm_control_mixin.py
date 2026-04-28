@@ -26,6 +26,7 @@ import concurrent.futures as _cf
 import tkinter as tk
 
 from llm_config   import StopLLMRequested, build_llm_config, _SSL_LOCK
+from autogen_engine import LLMTimeoutError
 from state_manager import roll_dice, load_state
 from agent_logger  import log_llm_start, log_llm_end, log_tts_start
 from state_manager import get_active_characters
@@ -206,7 +207,20 @@ class LLMControlMixin:
                     "color": "#FF9800"
                 })
                 return
-            threading.Thread(target=self._send_private_message, args=(real_name, private_text), daemon=True).start()
+            
+            # 1. On affiche joliment le message dans le chat du MJ avec le cadenas
+            self.msg_queue.put({
+                "sender": f"🔒 MJ → {real_name}",
+                "text": private_text,
+                "color": "#888844"
+            })
+            
+            # 2. CORRECTIF : Au lieu de bypasser AutoGen en ouvrant un thread parallèle,
+            # on transmet la commande brute au moteur principal. 
+            # 'gui_get_human_input' (dans engine_agents.py) s'occupera de la convertir
+            # en "[MJ → Nom]" pour que les actions mécaniques soient interceptées !
+            self.user_input = text
+            self.input_event.set()
             return
 
         # ── Commande /dmg [nom] [valeur] [type_dégâts] ────────────────────────
@@ -971,6 +985,16 @@ class LLMControlMixin:
             reply = agent.generate_reply(
                 messages=[{"role": "user", "content": prompt}]
             )
+        except LLMTimeoutError as e:
+            self.msg_queue.put({
+                "sender": "⏱ Timeout",
+                "text": (
+                    f"⏱ Narration de {char_name} ignorée — aucune réponse après 10 s.\n"
+                    f"Le jet de dés est acquis. Tapez un message pour relancer la scène."
+                ),
+                "color": "#FF9800",
+            })
+            return
         except Exception as e:
             self.msg_queue.put({"sender": "❌ Erreur", "text": f"Narration impossible pour {char_name} : {e}", "color": "#F44336"})
             return

@@ -799,6 +799,27 @@ class CharacterMixin:
         ac_lbl.config(fg=color)
         ac_spx.config(fg=color)
 
+        # ── Capacités (Features) ──────────────────────────────────────────────
+        def get_lay_on_hands():
+            return load_state().get("characters", {}).get(char_name, {}).get("features", {}).get("lay_on_hands", 0)
+        def set_lay_on_hands(v):
+            s = load_state()
+            if "features" not in s["characters"][char_name]:
+                s["characters"][char_name]["features"] = {}
+            s["characters"][char_name]["features"]["lay_on_hands"] = max(0, min(v, s["characters"][char_name]["features"].get("max_lay_on_hands", 55)))
+            save_state(s)
+
+        state_now = load_state()
+        if "lay_on_hands" in state_now.get("characters", {}).get(char_name, {}).get("features", {}):
+            loh_row = tk.Frame(body, bg="#1e1e2e")
+            loh_row.pack(fill=tk.X, pady=(0, 6))
+            tk.Label(loh_row, text="🤲 Imposition", bg="#1e1e2e", fg="#e57373", font=("Arial", 9)).pack(side=tk.LEFT)
+            slash_lbl2 = tk.Label(loh_row, text=f" / {state_now['characters'][char_name]['features'].get('max_lay_on_hands', 55)}", bg="#1e1e2e", fg="#444455", font=("Consolas", 10))
+            slash_lbl2.pack(side=tk.RIGHT)
+            loh_lbl, loh_spx = _make_editable(loh_row, get_lay_on_hands, set_lay_on_hands, min_v=0, max_v=state_now['characters'][char_name]['features'].get('max_lay_on_hands', 55), font=("Consolas", 11, "bold"))
+            loh_lbl.config(fg="#e57373")
+            loh_spx.config(fg="#e57373")
+
         # ── Hit Dice ──────────────────────────────────────────────────────
         hd_row = tk.Frame(body, bg="#1e1e2e")
         hd_row.pack(fill=tk.X, pady=(0, 6))
@@ -913,6 +934,14 @@ class CharacterMixin:
                 hd_lbl.config(text=str(avail))
                 ac_lbl.config(text=str(d2.get("ac", ac)))
                 _rebuild_slots()
+                
+                # Mise à jour Imposition des mains si présent
+                if "lay_on_hands" in d2.get("features", {}):
+                    try:
+                        loh_lbl.config(text=str(d2["features"]["lay_on_hands"]))
+                    except Exception:
+                        pass
+
                 # ── Mise à jour du label LLM si le modèle a changé ──────────────
                 # (ex: fallback quota automatique, ou changement via dropdown)
                 current_short = _fmt_llm(_get_actual_llm())
@@ -960,7 +989,8 @@ class CharacterMixin:
                                 f"Long Rest pour {char_name} ?\n\n"
                                 f"• PV restaurés à {mh_now}/{mh_now}\n"
                                 f"• Hit Dice récupérés : {recovered} (max {level})\n"
-                                f"• Tous les emplacements de sort restaurés",
+                                f"• Tous les emplacements de sort restaurés\n"
+                                f"• Imposition des mains restaurée (si Paladin)",
                                 parent=win): return
             s  = load_state()
             d2 = s["characters"][char_name]
@@ -968,6 +998,11 @@ class CharacterMixin:
             d2["hp"] = mh_now
             d2["hit_dice_used"]  = max(0, used - recovered)
             d2["spell_slots"]    = dict(max_slots)
+            
+            # Restaure l'imposition des mains si présente
+            if "features" in d2 and "lay_on_hands" in d2["features"]:
+                d2["features"]["lay_on_hands"] = d2["features"].get("max_lay_on_hands", 55)
+
             save_state(s)
             self.msg_queue.put({"sender": "☀ Long Rest",
                                 "text": f"{char_name} — PV: {mh_now}/{mh_now} | "
@@ -1049,12 +1084,18 @@ class CharacterMixin:
 
         # ── Barre de recherche + bouton Ajouter ─────────────────────────────
         search_var = tk.StringVar()
+        if not hasattr(self, "_tk_vars_keepalive"): self._tk_vars_keepalive =[]
+        self._tk_vars_keepalive.append(search_var)
+        
         spell_bar  = tk.Frame(spells_frame, bg="#12121e")
         spell_bar.pack(fill=tk.X)
-        tk.Entry(spell_bar, textvariable=search_var, bg="#1e1e2e", fg="#aaaaaa",
+        search_entry = tk.Entry(spell_bar, textvariable=search_var, bg="#1e1e2e", fg="#aaaaaa",
                  insertbackground="white", font=("Consolas", 9),
-                 relief="flat").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, pady=4)
-        search_var.trace_add("write", lambda *_: _render_spells())
+                 relief="flat")
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, pady=4)
+        search_entry.bind("<KeyRelease>", lambda e: _render_spells())
+        search_entry.bind("<<Paste>>", lambda e: search_entry.after(50, _render_spells))
+        search_entry.bind("<<Cut>>", lambda e: search_entry.after(50, _render_spells))
 
         stats_lbl = tk.Label(spell_bar, text="", bg="#12121e", fg="#444466",
                              font=("Consolas", 7))
@@ -1305,10 +1346,13 @@ class CharacterMixin:
             try:
                 _all_races = get_available_races()
             except Exception:
-                _all_races = []
+                _all_races =[]
+
+            def _on_race_changed(val):
+                _refresh_subrace_menu(val)
 
             race_var = tk.StringVar(value=race_name)
-            race_combo = tk.OptionMenu(sel_fr, race_var, *(_all_races or ["—"]))
+            race_combo = tk.OptionMenu(sel_fr, race_var, *(_all_races or ["—"]), command=_on_race_changed)
             race_combo.config(bg=_race_sec, fg="#cccccc", activebackground="#3a3a5a",
                               font=("Arial", 9), relief="flat", highlightthickness=0,
                               indicatoron=True)
@@ -1317,6 +1361,10 @@ class CharacterMixin:
             race_combo.grid(row=0, column=1, sticky="w")
 
             subrace_var = tk.StringVar(value=subrace_name)
+            
+            if not hasattr(self, "_tk_vars_keepalive"): self._tk_vars_keepalive =[]
+            self._tk_vars_keepalive.extend([race_var, subrace_var])
+            
             sub_label = tk.Label(sel_fr, text="Sous-race :", bg=_race_sec, fg="#888899",
                                  font=("Arial", 9))
             sub_label.grid(row=1, column=0, sticky="w", padx=(0, 4), pady=(4, 0))
@@ -1357,11 +1405,6 @@ class CharacterMixin:
                 new_sub  = subrace_var.get() if _subraces_cache["list"] else ""
                 _save_race(new_race, new_sub)
                 _build_race_tab(new_race, new_sub)
-
-            def _on_race_changed(*_):
-                _refresh_subrace_menu(race_var.get())
-
-            race_var.trace_add("write", _on_race_changed)
 
             tk.Button(sel_fr, text="✔ Appliquer", bg=color, fg="#0d0d0d",
                       font=("Arial", 9, "bold"), relief="flat", padx=8, pady=2,

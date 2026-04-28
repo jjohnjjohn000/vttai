@@ -34,13 +34,13 @@ KNOWN_MODELS = [
     "ollama/llama3.3:latest",
     "ollama/mistral:latest",
     "ollama/deepseek-r1:8b",
+    "ollama/qwen3.5:9b",
 
     # Gemini — modèles actifs
     "gemini-3.1-flash-lite-preview",
     "gemini-3-flash-preview",
     "gemma-4-31b-it",
     "gemma-4-26b-a4b-it",
-    "gemini-2.5-pro",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
     # gemini-2.0-flash — DÉPRÉCIÉ, retiré
@@ -51,28 +51,27 @@ KNOWN_MODELS = [
     # Groq
     "groq/meta-llama/llama-4-scout-17b-16e-instruct",
     "groq/llama-3.3-70b-versatile",
-    "groq/llama-3.1-70b-versatile",
     # groq/mixtral-8x7b-32768 — DÉPRÉCIÉ, retiré
     # OpenRouter — modèles moins restrictifs, adaptés au jeu de rôle
     "openrouter/nousresearch/hermes-3-llama-3.1-70b",        # Hermes 3 — roleplay, peu restrictif
     "openrouter/nousresearch/hermes-3-llama-3.1-405b",       # Hermes 3 large — plus puissant
-    "openrouter/qwen/qwen-2.5-72b-instruct",                 # Qwen 2.5 72B — permissif, multilingue
     "openrouter/mistralai/mistral-small-3.1-24b-instruct",   # Mistral Small 3.1 — rapide, peu restrictif
     "openrouter/meta-llama/llama-3.3-70b-instruct",          # LLaMA 3.3 70B — non censuré
     "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
     "openrouter/google/gemma-4-26b-a4b-it:free",
     "openrouter/minimax/minimax-m2.5:free",
+    "openrouter/inclusionai/ling-2.6-1t:free"
 ]
 
 # ─── Valeurs par défaut ────────────────────────────────────────────────────────
 DEFAULTS: dict = {
     "agents": {
         "Kaelen": {
-            "model":       "gemini-2.5-pro",
+            "model":       "gemini-2.5-flash",
             "temperature": 0.7,
         },
         "Elara": {
-            "model":       "gemini-2.5-pro",
+            "model":       "gemini-2.5-flash",
             "temperature": 0.7,
         },
         "Thorne": {
@@ -80,7 +79,7 @@ DEFAULTS: dict = {
             "temperature": 0.8,
         },
         "Lyra": {
-            "model":       "gemini-2.5-pro",
+            "model":       "gemini-2.5-flash",
             "temperature": 0.6,
         },
     },
@@ -101,6 +100,7 @@ DEFAULTS: dict = {
     "groupchat": {
         "max_round":            9999,
         "allow_repeat_speaker": False,
+        "allow_skill_checks":   True,
     },
     "memories": {
         "compact_importance_min":    2,   # importance min pour le bloc compact injecté en permanence
@@ -147,7 +147,7 @@ DEFAULTS: dict = {
         # Ordre de tentative quand le modèle principal (Gemini) est épuisé.
         # Modifiable depuis l'onglet Agents du panneau de configuration.
         "gemini-2.5-flash",
-        "gemini-2.5-pro",
+        "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
         "gemma-4-31b-it",
         "gemma-4-26b-a4b-it",

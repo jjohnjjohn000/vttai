@@ -177,7 +177,12 @@ def speak_as_npc(npc_name: str, monster: dict | None, prompt: str,
             ])
             text = (response.choices[0].message.content or "").strip()
             if text:
-                msg_queue.put({"sender": npc_name, "text": text, "color": color})
+                msg_queue.put({
+                    "action": "npc_speak",
+                    "sender": npc_name,
+                    "text": text,
+                    "color": color
+                })
                 if audio_queue:
                     audio_queue.put((text, npc_name))
         except Exception as e:

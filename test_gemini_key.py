@@ -25,8 +25,8 @@ for key in keys:
         "gemini-3-flash-preview",
         "gemma-4-31b-it",
         "gemma-4-26b-a4b-it",
-        "gemini-2.5-pro",
         "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
     ]
 
     for model in MODELS:

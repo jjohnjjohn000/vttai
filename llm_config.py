@@ -9,7 +9,6 @@ Préfixes reconnus dans le champ "llm" de campaign_state.json :
   ollama/*               → Ollama local    (aucune clé requise, localhost:11434)
 
 Exemples de valeurs :
-  "gemini-2.5-pro"
   "gemini-2.5-flash"
   "groq/llama-3.3-70b-versatile"
   "openrouter/meta-llama/llama-3.3-70b-instruct:free"
@@ -95,8 +94,8 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
     Ordre de fallback (après le modèle principal demandé) :
       1. gemini-3-flash-preview        (toutes les clés)
       2. gemini-3.1-flash-lite-preview (toutes les clés)
-      3. gemini-2.5-pro                (toutes les clés)
-      4. gemini-2.5-flash              (toutes les clés)
+      3. gemini-2.5-flash              (toutes les clés)
+      4. gemini-2.5-flash-lite         (toutes les clés)
       5. groq/meta-llama/llama-4-scout-17b-16e-instruct
       6. OpenRouter (llama + mistral + arcee trinity)
 
@@ -334,7 +333,7 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
 
 
 # Config par défaut (utilisée pour le résumé de session et le GroupChatManager)
-_default_model = os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-pro")
+_default_model = os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-flash")
 llm_config = build_llm_config(_default_model)
 
 

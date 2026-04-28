@@ -39,8 +39,38 @@ import types
 import ctypes
 import time as _time_dbg
 import tkinter as tk
+import tkinter.font as tk_font
 from tkinter import scrolledtext
 from dotenv import load_dotenv
+
+# ====================================================================
+# FIX ABSOLU — Anti-Corruption du GC (Garbage Collector)
+# Empêche la destruction asynchrone des objets Tkinter ET des images PIL
+# par les threads en arrière-plan (cause #1 des Segfaults Tcl sous Linux).
+# ====================================================================
+_classes_to_patch =[tk.Variable, tk.Image, tk_font.Font]
+
+try:
+    from PIL import ImageTk
+    _classes_to_patch.extend([ImageTk.PhotoImage, ImageTk.BitmapImage])
+except ImportError:
+    pass
+
+for _cls in _classes_to_patch:
+    _orig_del = getattr(_cls, "__del__", None)
+    if _orig_del:
+        def _make_safe_del(orig_del):
+            def _safe_del(self):
+                try:
+                    import threading
+                    # Si le GC tourne dans le thread principal, on nettoie proprement
+                    if threading.current_thread() is threading.main_thread():
+                        orig_del(self)
+                except Exception:
+                    pass
+            return _safe_del
+        setattr(_cls, "__del__", _make_safe_del(_orig_del))
+# ====================================================================
 
 def _dbg(msg):
     print(f"[STARTUP {_time_dbg.time():.3f}] {msg}", flush=True)

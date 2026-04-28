@@ -13,6 +13,24 @@ from combat_simulator import CombatSimulator
 from npc_bestiary_panel import GroupNPCPanel
 
 
+class _ChatEntryWrapper(tk.Text):
+    """Wrapper pour utiliser tk.Text (multiligne) avec la même API que tk.Entry."""
+    def get(self, start=None, end=None):
+        if start is None and end is None:
+            return super().get("1.0", "end-1c")
+        return super().get(start, end)
+        
+    def delete(self, first, last=None):
+        if first == 0 or first == "0": first = "1.0"
+        if last == tk.END: last = "end"
+        super().delete(first, last)
+        
+    def insert(self, index, chars, *args):
+        if index == 0 or index == "0": index = "1.0"
+        elif index == tk.END: index = "end"
+        super().insert(index, chars, *args)
+
+
 class UISetupMixin:
     """Mixin pour DnDApp — construction de l'UI principale."""
 
@@ -28,7 +46,7 @@ class UISetupMixin:
         self.chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         # Index des messages pour édition/suppression
-        self.messages_index = []  # Liste de dicts: {id, sender, text, tag_start, tag_end}
+        self.messages_index =[]  # Liste de dicts: {id, sender, text, tag_start, tag_end}
         self.msg_counter = 0
 
         # Menu clic droit — FIX SEGFAULT : création paresseuse au premier clic droit
@@ -43,13 +61,25 @@ class UISetupMixin:
         input_frame = tk.Frame(chat_frame, bg="#1e1e1e")
         input_frame.pack(fill=tk.X)
 
-        self.entry = tk.Entry(input_frame, bg="#3d3d3d", fg="white", font=("Consolas", 12), insertbackground="white")
-        self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6), ipady=5)
-        self.entry.bind("<Return>",   lambda event: self.send_text())
-        self.entry.bind("<KP_Enter>", lambda event: self.send_text())
+        # ── Champ de texte multiligne pleine largeur ──
+        self.entry = _ChatEntryWrapper(
+            input_frame, bg="#3d3d3d", fg="white", 
+            font=("Consolas", 12), insertbackground="white", 
+            height=3, wrap=tk.WORD
+        )
+        self.entry.pack(side=tk.TOP, fill=tk.X, expand=True, pady=(0, 6))
+
+        def _on_return(event):
+            # Si Majuscule (Shift) n'est PAS enfoncée, on envoie le texte
+            if not (event.state & 0x0001):
+                self.send_text()
+                return "break" # Empêche l'ajout du \n
+
+        self.entry.bind("<Return>",   _on_return)
+        self.entry.bind("<KP_Enter>", _on_return)
 
         # ── Historique des entrées (↑ / ↓) ──────────────────────────────────
-        self._chat_history   = []   # liste des messages envoyés
+        self._chat_history   =[]   # liste des messages envoyés
         self._chat_hist_idx  = -1   # -1 = pas en navigation
         self._chat_hist_draft = ""  # brouillon sauvegardé avant navigation
         self.entry.bind("<Up>",   self._on_hist_up)
@@ -59,6 +89,10 @@ class UISetupMixin:
         self.entry.bind("<Tab>",       self._on_tab_complete)
         self.entry.bind("<Shift-Tab>", self._on_tab_complete_back)
         self.entry.bind("<Escape>",    self._on_tab_cancel)
+
+        # ── LIGNE DES BOUTONS (Sous le champ texte) ─────────────────────────
+        buttons_frame = tk.Frame(input_frame, bg="#1e1e1e")
+        buttons_frame.pack(side=tk.TOP, fill=tk.X)
 
         # ── Bouton "Parler en tant que" inline ──────────────────────────────
         # Affiche le PNJ actif (ou "MJ") et ouvre le même menu que le sélecteur
@@ -80,7 +114,7 @@ class UISetupMixin:
             )
 
         self._inline_npc_btn = tk.Button(
-            input_frame,
+            buttons_frame,
             textvariable=self._inline_npc_var,
             bg="#3d2d4d", fg="#c77dff",
             font=("Consolas", 9, "bold"),
@@ -90,14 +124,14 @@ class UISetupMixin:
         )
         self._inline_npc_btn.pack(side=tk.LEFT, padx=(0, 5))
 
-        btn_send = tk.Button(input_frame, text="Envoyer", bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), command=self.send_text)
+        btn_send = tk.Button(buttons_frame, text="Envoyer", bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), command=self.send_text)
         btn_send.pack(side=tk.LEFT, padx=(0, 5))
 
         # ── Bouton Push-to-Talk (maintenir = enregistrer, relâcher = envoyer) ──
         # On stocke la référence dans self.btn_voice pour que _on_ptt_press /
         # _on_ptt_release puissent modifier son apparence en temps réel.
         self.btn_voice = tk.Button(
-            input_frame, text="🎤 Parler",
+            buttons_frame, text="🎤 Parler",
             bg="#2196F3", fg="white",
             font=("Arial", 10, "bold"),
         )
@@ -108,12 +142,12 @@ class UISetupMixin:
         self.btn_voice.bind("<ButtonPress-1>",   lambda e: self._on_ptt_press())
         self.btn_voice.bind("<ButtonRelease-1>", lambda e: self._on_ptt_release())
 
-        self.btn_stop = tk.Button(input_frame, text="⏹ Stop LLMs", bg="#880000", fg="white",
+        self.btn_stop = tk.Button(buttons_frame, text="⏹ Stop LLMs", bg="#880000", fg="white",
                                   font=("Arial", 10, "bold"), command=self.stop_llms, state=tk.DISABLED)
         self.btn_stop.pack(side=tk.LEFT)
 
         self.btn_pause = tk.Button(
-            input_frame, text="⏸ Pause",
+            buttons_frame, text="⏸ Pause",
             bg="#e67e22", fg="white",
             font=("Arial", 10, "bold"),
             command=self.toggle_session_pause,
@@ -121,15 +155,16 @@ class UISetupMixin:
         self.btn_pause.pack(side=tk.LEFT, padx=(5, 0))
 
         # ── Contrôle de volume ───────────────────────────────────────────────
-        self.build_volume_control(input_frame).pack(side=tk.LEFT, padx=(8, 0))
+        self.build_volume_control(buttons_frame).pack(side=tk.LEFT, padx=(8, 0))
 
         tk.Button(
-            input_frame, text="↑ Fenêtres",
+            buttons_frame, text="↑ Fenêtres",
             bg="#2a3a4a", fg="#aaccee",
             font=("Arial", 10, "bold"),
             relief="flat", padx=6,
             command=self.raise_all_windows,
         ).pack(side=tk.LEFT, padx=(5, 0))
+
 
         # --- PANNEAU LATÉRAL (Stats & Actions) ---
         stats_frame = tk.Frame(self.root, bg="#252526", width=250)
@@ -439,11 +474,11 @@ class UISetupMixin:
             return
 
         from state_manager import get_active_characters as _get_active
-        _ALL_PLAYERS = ["Kaelen", "Elara", "Thorne", "Lyra"]
+        _ALL_PLAYERS =["Kaelen", "Elara", "Thorne", "Lyra"]
         active_names = set(_get_active())
 
         # Garder les agents non-joueurs (MJ, manager…) intacts
-        non_players = [a for a in self.groupchat.agents if a.name not in _ALL_PLAYERS]
+        non_players =[a for a in self.groupchat.agents if a.name not in _ALL_PLAYERS]
 
         # Reconstruire la liste des joueurs depuis self._agents (source de vérité)
         # en respectant l'ordre canonique
@@ -515,7 +550,7 @@ class UISetupMixin:
         }
         label = _LABELS.get(tool_name, f"⚙ {tool_name}")
 
-        args_parts = []
+        args_parts =[]
         for k, v in (tool_args or {}).items():
             if k == "character_name":
                 continue          # redondant avec char_name

@@ -105,20 +105,23 @@ class ChatMixin:
             # ── Lecture ───────────────────────────────────────────────────
             face = self.face_windows.get(current_name)
             if face:
-                face.set_talking(True)
+                # DÉLÉGATION AU THREAD PRINCIPAL (Sécurité Tkinter)
+                self.root.after(0, lambda f=face: f.set_talking(True))
             try:
                 if current_files:
                     success = play_prefetched(current_files)
                 else:
                     # Fallback : prefetch a échoué → lecture directe
                     success = play_voice(current_text, current_name)
-                log_tts_end(current_name, success=bool(success))
+                
+                # log_tts_end modifie probablement l'UI, il DOIT être dans root.after
+                self.root.after(0, lambda c=current_name, s=bool(success): log_tts_end(c, success=s))
             except Exception as e:
-                log_tts_end(current_name, success=False)
+                self.root.after(0, lambda c=current_name: log_tts_end(c, success=False))
                 print(f"Erreur audio de {current_name}: {e}")
             finally:
                 if face:
-                    face.set_talking(False)
+                    self.root.after(0, lambda f=face: f.set_talking(False))
             self.audio_queue.task_done()
 
     # ─── Pompe de messages (appelée par root.after) ───────────────────────────
@@ -274,6 +277,7 @@ class ChatMixin:
                             msg.get("dc"),
                             msg.get("has_advantage", False),
                             msg.get("has_disadvantage", False),
+                            msg.get("intention", ""),
                             msg["resume_callback"],
                         )
                     except Exception as _e_sc:
@@ -311,11 +315,39 @@ class ChatMixin:
                     )
                 elif action == "damage_link":
                     self._handle_damage_link(msg)
+                elif action == "npc_speak":
+                    self._append_npc_speak(msg)
                 else:
                     self.append_message(msg["sender"], msg["text"], msg["color"])
         except queue.Empty:
             pass
         self.root.after(100, self.process_queue)
+
+    def _append_npc_speak(self, msg: dict):
+        import re
+        text = msg["text"]
+        
+        # Remplacer les astérisques de narration du LLM PNJ par des guillemets
+        text = re.sub(r'\*{1,2}([^*]+?)\*{1,2}', r'« \1 »', text)
+        
+        npc_name = msg["sender"]
+        color = msg.get("color", "#c77dff")
+        
+        # 1. Update UI
+        self.append_message(f"🎭 {npc_name}", text, color)
+        
+        # 2. Feed to agents (bypass if paused)
+        if getattr(self, '_session_paused', False):
+            return
+            
+        formatted = f"[{npc_name}] : {text}"
+        if self._llm_running and not self._waiting_for_mj:
+            self._pending_interrupt_input = formatted
+            self._pending_interrupt_display = None
+            self._inject_stop()
+        else:
+            self.user_input = formatted
+            self.input_event.set()
 
     # ─── Ajout de messages taggés ─────────────────────────────────────────────
 
@@ -440,7 +472,8 @@ class ChatMixin:
         # Si le message vient du MJ et contient *...*, on vérifie la mémoire
         # persistante et on crée/met-à-jour l'entrée en arrière-plan.
         _mj_senders = {"Alexis_Le_MJ", "Alexis_Le_MJ (Vocal)"}
-        if sender in _mj_senders or sender.startswith("🎭 "):
+        # On RETIRE `or sender.startswith("🎭 ")` pour que les PNJ ne créent JAMAIS de mémoire
+        if sender in _mj_senders:
             import re as _re_kw, threading as _th_kw
             _keywords = _re_kw.findall(r'\*([^*]+)\*', text)
             if _keywords:
@@ -568,6 +601,7 @@ class ChatMixin:
                         spell_name, search_from,
                         stopindex=tag_end,
                         nocase=True,
+                        exact=True
                     )
                     if not idx:
                         break
@@ -930,6 +964,8 @@ class ChatMixin:
         tag_deny    = f"spell_no_{n}"
 
         level_var = tk.IntVar(value=spell_level)
+        if not hasattr(self, "_tk_vars_keepalive"): self._tk_vars_keepalive =[]
+        self._tk_vars_keepalive.append(level_var)
 
         self.chat_display.config(state=tk.NORMAL)
 
@@ -1194,7 +1230,7 @@ class ChatMixin:
                       activebackground="#4a1a1a", command=_miss
                       ).pack(side=tk.LEFT)
         elif mode == "healing":
-            # ── Mode soin : bouton Appliquer soin ─────────────────────────
+            # ── Mode soin : boutons Appliquer / Annuler ─────────────────────────
             def _apply_heal(event=None):
                 if _callback_done[0]:
                     return
@@ -1202,17 +1238,85 @@ class ChatMixin:
                 note = note_entry.get().strip()
                 frame.destroy()
                 _cleanup_header()
+
+                # --- APPLICATION EFFECTIVE DES SOINS ---
+                import re as _re_heal
+                from state_manager import update_hp, load_state, save_state
+                
+                # 1. Extraction du montant à partir de results_text
+                _amt = 0
+                _m_heal = _re_heal.search(r'Total\s*=\s*(\d+)', results_text)
+                if _m_heal:
+                    _amt = int(_m_heal.group(1))
+
+                # 2. Déduction de Lay on Hands (si applicable)
+                _m_loh = _re_heal.search(r'\[Imposition des mains\]\s*-(\d+)', results_text)
+                if _m_loh:
+                    _loh_amt = int(_m_loh.group(1))
+                    _st = load_state()
+                    if char_name in _st.get("characters", {}):
+                        _feats = _st["characters"][char_name].setdefault("features", {})
+                        _curr_loh = _feats.get("lay_on_hands", 0)
+                        _feats["lay_on_hands"] = max(0, _curr_loh - _loh_amt)
+                        save_state(_st)
+                        
+                # 3. Soins sur la ou les cibles
+                _m_tgts = _re_heal.findall(r'soigner\s+([A-Za-zÀ-ÿ0-9\s\-\']+?)\s+de', results_text)
+                _actual_targets = [t.strip() for t in _m_tgts] if _m_tgts else[]
+                
+                if not _actual_targets and target:
+                    _actual_targets = [target]
+                
+                if not _actual_targets:
+                    _m_tgt_fb = _re_heal.search(r'→\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9\s\-\']+?)(?:\s*[\n:(]|$)', results_text)
+                    if _m_tgt_fb:
+                        _actual_targets =[_m_tgt_fb.group(1).strip()]
+                
+                if _amt > 0 and _actual_targets:
+                    for t in _actual_targets:
+                        update_hp(t, _amt)
+                        
+                # Synchronisation UI Combat Tracker si présent
+                try:
+                    if hasattr(self, "_combat_tracker_win") and getattr(self, "_combat_tracker_win", None):
+                        self.root.after(0, self._combat_tracker_win.sync_pc_hp_from_state)
+                except Exception:
+                    pass
+                
+                # Synchronisation de la barre d'état principale (PV)
+                try:
+                    if hasattr(self, "_refresh_char_stats"):
+                        self.root.after(0, self._refresh_char_stats)
+                except Exception:
+                    pass
+                # ----------------------------------------
+
+                _tgts_str = ", ".join(_actual_targets) if _actual_targets else "la cible"
+                _amt_str = f" de {_amt} PV" if _amt > 0 else ""
+                
                 self.append_message(
                     f"💚 Soin — {type_label}",
-                    f"Soin appliqué" + (f"  — {note}" if note else ""),
+                    f"Soin{_amt_str} appliqué à {_tgts_str}" + (f"  — {note}" if note else ""),
                     "#44cc44",
                 )
                 resume_callback(note)
 
+            def _cancel_heal(event=None):
+                if _callback_done[0]:
+                    return
+                _callback_done[0] = True
+                frame.destroy()
+                _cleanup_header()
+                self.append_message(f"🚫 Soin refusé — {type_label}", "Soin annulé par le MJ.", "#cc4444")
+                resume_callback("")
+
             note_entry.bind("<Return>", _apply_heal)
             tk.Button(row_btns, text="💚 Appliquer soin", bg="#0d2a0d", fg="#66ee66",
                       font=("Arial", 9, "bold"), relief="flat", padx=10, pady=3,
-                      activebackground="#1a4a1a", command=_apply_heal).pack(side=tk.LEFT)
+                      activebackground="#1a4a1a", command=_apply_heal).pack(side=tk.LEFT, padx=(0, 4))
+            tk.Button(row_btns, text="✗ Annuler", bg="#2a0d0d", fg="#ee6666",
+                      font=("Arial", 9, "bold"), relief="flat", padx=10, pady=3,
+                      activebackground="#4a1a1a", command=_cancel_heal).pack(side=tk.LEFT)
 
         elif mode == "save":
             # ── AUTO-ROLL (JDS) ──────────────────────────────────────────────
@@ -1834,6 +1938,7 @@ class ChatMixin:
     def _append_skill_check_confirm(self, char_name: str, skill_label: str,
                                      stat_label: str, bonus: int,
                                      dc, has_advantage: bool, has_disadvantage: bool,
+                                     intention: str,
                                      resume_callback):
         """
         Boîte de jet de compétence ou de sauvegarde.
@@ -1856,13 +1961,16 @@ class ChatMixin:
 
         # ── Tirage initial ───────────────────────────────────────────────────
         r1_init, r2_init = _rnd.randint(1, 20), _rnd.randint(1, 20)
-        roll_vars  = [tk.IntVar(value=r1_init), tk.IntVar(value=r2_init)]
+        roll_vars  =[tk.IntVar(value=r1_init), tk.IntVar(value=r2_init)]
         adv_var    = tk.StringVar(value=(
             "avantage"    if has_advantage    else
             "désavantage" if has_disadvantage else
             "normal"
         ))
         bonus_var  = tk.IntVar(value=bonus)
+        
+        if not hasattr(self, "_tk_vars_keepalive"): self._tk_vars_keepalive =[]
+        self._tk_vars_keepalive.extend([*roll_vars, adv_var, bonus_var])
 
         # ── En-tête dans le chat ─────────────────────────────────────────────
         hdr_tag  = f"skill_hdr_{n}"
@@ -1893,6 +2001,10 @@ class ChatMixin:
         badge.pack(anchor="w", pady=(0, 6))
         tk.Label(badge, text=badge_txt, bg=ACCENT, fg="white",
                  font=("Consolas", 8, "bold"), padx=4).pack()
+
+        if intention:
+            intent_lbl = tk.Label(frame, text=f"Intention : {intention}", bg=BG, fg="#cccccc", font=("Consolas", 9, "italic"), wraplength=450, justify=tk.LEFT)
+            intent_lbl.pack(anchor="w", pady=(0, 4))
 
         # ── Ligne bonus ──────────────────────────────────────────────────────
         row_bonus = tk.Frame(frame, bg=BG)
@@ -2012,6 +2124,7 @@ class ChatMixin:
         # ── Ligne résultat ───────────────────────────────────────────────────
         tk.Frame(frame, bg="#1a3050", height=1).pack(fill=tk.X, pady=(4, 4))
         result_var = tk.StringVar()
+        self._tk_vars_keepalive.append(result_var)
         row_result = tk.Frame(frame, bg=BG)
         row_result.pack(fill=tk.X, pady=(0, 6))
         tk.Label(row_result, text="Résultat :", bg=BG, fg=FG_DIM,
@@ -2566,6 +2679,8 @@ class ChatMixin:
         # ── Variable de cible (partagée par tous les boutons) ─────────────────
         target_var = tk.StringVar(
             value=targets[0].name if targets else "— aucune —")
+        if not hasattr(self, "_tk_vars_keepalive"): self._tk_vars_keepalive =[]
+        self._tk_vars_keepalive.append(target_var)
 
         # ── Bloc racine ───────────────────────────────────────────────────────
         outer = tk.Frame(self.chat_display, bg=BG2, bd=0,
@@ -2700,6 +2815,7 @@ class ChatMixin:
 
                 # ── État critique par action (D&D 5e : dés doublés) ──────────
                 crit_var = tk.BooleanVar(value=False)
+                self._tk_vars_keepalive.append(crit_var)
 
                 from state_manager import get_npc_cooldown, set_npc_cooldown
                 on_cooldown = False

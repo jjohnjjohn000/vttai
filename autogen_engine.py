@@ -24,8 +24,30 @@ Prérequis sur l'instance hôte (DnDApp) :
 
 import threading
 import copy
+import concurrent.futures as _cf
 
 from llm_config    import build_llm_config, _default_model, StopLLMRequested
+
+
+# ─── Timeout par appel LLM ───────────────────────────────────────────────────
+
+class LLMTimeoutError(Exception):
+    """Levée quand un appel LLM dépasse _LLM_TIMEOUT_SEC secondes."""
+
+_LLM_TIMEOUT_SEC = 100   # secondes avant déclenchement du fallback
+
+# ─── Chaîne de fallback (partagée entre timeout et quota épuisé) ─────────────
+
+_FALLBACK_CHAIN = [
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "groq/meta-llama/llama-4-scout-17b-16e-instruct",
+    "openrouter/meta-llama/llama-3.3-70b-instruct:free",
+    "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
+    "openrouter/arcee-ai/trinity-large-preview:free",
+]
 from app_config    import (get_agent_config, get_chronicler_config,
                            get_groupchat_config, get_combat_config,
                            APP_CONFIG,
@@ -324,7 +346,7 @@ class AutogenEngineMixin:
         self.groupchat = autogen.GroupChat(
             agents=_active_agents,
             messages=[],
-            max_round=_gc_cfg.get("max_round", 100),
+            max_round=_gc_cfg.get("max_round", 9999),
             speaker_selection_method=combat_speaker_selector,
             allow_repeat_speaker=_gc_cfg.get("allow_repeat_speaker", False),
         )
@@ -332,6 +354,10 @@ class AutogenEngineMixin:
             groupchat=self.groupchat,
             llm_config=_manager_llm
         )
+        
+        # Donner la référence du manager aux agents pour la redirection des /msg
+        for agent in _all_player_agents.values():
+            agent._groupchat_manager_ref = manager
 
         # ── Construction du contexte patched_receive ──────────────────────────
         groupchat_ref = [self.groupchat]   # référence mutable pour les closures
@@ -353,6 +379,54 @@ class AutogenEngineMixin:
             (manager.__class__,),
             {"receive": patched_receive}
         )
+
+        # ── REDIRECTION DES CHUCHOTEMENTS (/msg) VERS LE GROUPCHAT ────────────
+        # Si un agent répond directement au MJ (suite à un /msg), la réponse contourne
+        # le GroupChatManager et les blocs [ACTION] ne sont pas détectés.
+        # On force l'agent à rediriger sa réponse dans le GroupChat principal.
+        import types
+        for _agent in[kaelen_agent, elara_agent, thorne_agent, lyra_agent]:
+            _agent._groupchat_manager_ref = manager
+            _orig_send = _agent.send
+            
+            def _patched_send(self_agent, message, recipient, request_reply=None, silent=False, _os=_orig_send):
+                if recipient.name == "Alexis_Le_MJ" and hasattr(self_agent, "_groupchat_manager_ref"):
+                    recipient = self_agent._groupchat_manager_ref
+                return _os(message, recipient, request_reply, silent)
+                
+            _agent.send = types.MethodType(_patched_send, _agent)
+
+        # ── Timeout par appel LLM : wrapper generate_reply ───────────────────
+        # Chaque agent.generate_reply (y compris le manager) est wrappé dans un
+        # ThreadPoolExecutor à 1 worker.  Si la réponse dépasse _LLM_TIMEOUT_SEC
+        # secondes, LLMTimeoutError remonte jusqu'au except Exception du game
+        # loop et déclenche le même basculement automatique que pour les quotas.
+        # Note : le thread sous-jacent continue jusqu'à la réponse réseau, mais
+        # son résultat est simplement ignoré — aucun double-post dans le groupchat.
+
+        def _make_timed_generate_reply(agent_obj, orig_fn, timeout_sec):
+            def _timed(*args, **kwargs):
+                with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
+                    _fut = _ex.submit(orig_fn, *args, **kwargs)
+                    try:
+                        return _fut.result(timeout=timeout_sec)
+                    except _cf.TimeoutError:
+                        raise LLMTimeoutError(
+                            f"LLM timeout après {timeout_sec}s — agent : {agent_obj.name}"
+                        )
+            return _timed
+
+        _agents_to_wrap = list(self._agents.values())   # manager exclu — voir ci-dessous
+        # Le GroupChatManager n'est PAS wrappé : son rôle est la sélection du
+        # prochain speaker (appel LLM rapide).  Si un agent joueur dépasse
+        # _LLM_TIMEOUT_SEC, son propre wrapper lève LLMTimeoutError qui remonte
+        # naturellement à travers le manager jusqu'au game loop.
+        # Wrapper le manager ajouterait un second timer qui se déclenche en
+        # premier et masque quel agent est réellement lent.
+        for _agt in _agents_to_wrap:
+            _agt.generate_reply = _make_timed_generate_reply(
+                _agt, _agt.generate_reply, _LLM_TIMEOUT_SEC
+            )
 
         # ── Méthode _sync_groupchat_agents (utilisée par character_mixin) ──────
         # Doit rester sur self, référence le groupchat construit ici.
@@ -475,6 +549,13 @@ class AutogenEngineMixin:
                     or "429" in err_msg
                     or "quota" in err_msg.lower()
                 )
+                
+                is_timeout_error = isinstance(e, LLMTimeoutError)
+
+                print(f"\n[Fallback Trace] Exception caught. Analyzing error message...")
+                print(f"[Fallback Trace] is_quota_error={is_quota_error}")
+                print(f"[Fallback Trace] is_timeout_error={is_timeout_error}")
+                
                 # ── Erreur 400 : capacité invalide (modèle sans tool-use) ─────────
                 # Certains modèles free OpenRouter ou Groq n'acceptent pas les
                 # appels de fonctions/outils. AutoGen lève une Exception avec
@@ -486,6 +567,8 @@ class AutogenEngineMixin:
                             for kw in ("capacit", "invalid", "capability",
                                        "tool", "function", "unsupported"))
                 )
+                print(f"[Fallback Trace] is_tool_capability_error={is_tool_capability_error}")
+                
                 if is_tool_capability_error:
                     self.msg_queue.put({
                         "sender": "⚠️ Système (Tool Error)",
@@ -504,62 +587,86 @@ class AutogenEngineMixin:
                     clear_hist = False
                     continue
 
-                # ── Fallback automatique sur quota épuisé ─────────────────────
-                _FALLBACK_CHAIN = [
-                    "gemini-3-flash-preview",
-                    "gemini-3.1-flash-lite-preview",
-                    "gemini-2.5-pro",
-                    "gemini-2.5-flash",
-                    "groq/meta-llama/llama-4-scout-17b-16e-instruct",
-                    "openrouter/meta-llama/llama-3.3-70b-instruct:free",
-                    "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
-                    "openrouter/arcee-ai/trinity-large-preview:free",
-                ]
-
-                if is_quota_error:
+                # ── Fallback automatique sur quota épuisé ou timeout LLM ──────
+                if is_quota_error or is_timeout_error:
+                    _fallback_reason = (
+                        f"Timeout LLM ({_LLM_TIMEOUT_SEC}s sans réponse)"
+                        if is_timeout_error else "Quota épuisé"
+                    )
+                    print(f"[Fallback Trace] {_fallback_reason} confirmed. Starting fallback sequence...")
                     try:
                         exhausted_model = None
                         for candidate in _FALLBACK_CHAIN:
                             bare = candidate.split("/")[-1]
                             if candidate in err_msg or bare in err_msg:
                                 exhausted_model = candidate
+                                print(f"[Fallback Trace] Found exhausted model via error message string matching FALLBACK_CHAIN: {exhausted_model}")
                                 break
 
                         if exhausted_model is None:
+                            print("[Fallback Trace] Model not found directly in FALLBACK_CHAIN. Checking agent configs for a match...")
                             for _cn in PLAYER_NAMES:
                                 _m = get_agent_config(_cn).get("model", "")
                                 # Extraire le nom de base du modèle (après le dernier "/")
                                 _base_model = _m.split("/")[-1].split(":")[0].lower() if _m else ""
                                 # Chercher si un morceau du nom du modèle configuré est dans l'erreur
-                                if _m and (_base_model in err_msg.lower() or any(kw in err_msg.lower() for kw in ["gemini", "groq", "llama", "arcee", "gemma", "deepseek"])):
+                                if _m and (_base_model in err_msg.lower() or any(kw in err_msg.lower() for kw in["gemini", "groq", "llama", "arcee", "gemma", "deepseek"])):
                                     exhausted_model = _m
+                                    print(f"[Fallback Trace] Deduced exhausted model from Agent '{_cn}' config: {exhausted_model}")
                                     break
+
+                        if exhausted_model is None:
+                            print("[Fallback Trace] Could not identify the exhausted model from the error message.")
+                            # Pour un timeout, l'agent lent est nommé dans le message d'erreur
+                            # (ex: "agent : Kaelen").  Si ce n'est pas le cas (ex: chat_manager
+                            # qui ne devrait plus être wrappé), on prend le modèle du premier
+                            # PJ actif comme modèle à faire basculer.
+                            if is_timeout_error:
+                                for _cn in PLAYER_NAMES:
+                                    _m = (_char_state.get(_cn, {}).get("llm", "")
+                                          or get_agent_config(_cn).get("model", "")
+                                          or _default_model)
+                                    if _m:
+                                        exhausted_model = _m
+                                        print(f"[Fallback Trace] Timeout fallback: using model of first active agent ({_cn}): {exhausted_model}")
+                                        break
 
                         next_model = None
                         if exhausted_model and exhausted_model in _FALLBACK_CHAIN:
                             idx = _FALLBACK_CHAIN.index(exhausted_model)
+                            print(f"[Fallback Trace] Exhausted model is at index {idx} in FALLBACK_CHAIN.")
                             if idx + 1 < len(_FALLBACK_CHAIN):
                                 next_model = _FALLBACK_CHAIN[idx + 1]
+                                print(f"[Fallback Trace] Next model determined as: {next_model}")
+                            else:
+                                print("[Fallback Trace] Exhausted model is the last one in the FALLBACK_CHAIN. No next model available.")
+                        elif exhausted_model:
+                            print("[Fallback Trace] Exhausted model is NOT in the FALLBACK_CHAIN. Cannot determine the next model.")
 
                         if next_model:
                             # ── Détermine les agents concernés (lecture seule) ─
                             # campaign_state.json["characters"][*]["llm"] est en
                             # LECTURE SEULE — le fallback ne l'écrit jamais.
                             # Seul app_config.json est mis à jour sur disque.
-                            switched = []
+                            switched =[]
+                            print("[Fallback Trace] Checking which agents are currently using the exhausted model...")
                             for _cn in PLAYER_NAMES:
                                 current = (_char_state.get(_cn, {}).get("llm", "")
                                            or get_agent_config(_cn).get("model", ""))
+                                print(f"[Fallback Trace] Agent '{_cn}' currently uses: {current}")
                                 if current == exhausted_model:
                                     switched.append(_cn)
 
                             if switched:
+                                print(f"[Fallback Trace] Agents to switch: {switched}")
                                 try:
+                                    print("[Fallback Trace] Updating APP_CONFIG on disk...")
                                     cfg = APP_CONFIG
                                     for _cn in switched:
                                         cfg.setdefault("agents", {}).setdefault(_cn, {})["model"] = next_model
                                     save_app_config(cfg)
                                     reload_app_config()
+                                    print("[Fallback Trace] APP_CONFIG successfully updated and reloaded.")
                                 except Exception as _ae:
                                     print(f"[Auto-Fallback] Erreur écriture app_config : {_ae}")
 
@@ -567,8 +674,10 @@ class AutogenEngineMixin:
                                 # Sans ça, les agents continuent d'utiliser
                                 # l'ancien modèle épuisé et le fallback boucle.
                                 for _cn in switched:
+                                    print(f"[Fallback Trace] Applying new model '{next_model}' to Agent '{_cn}' in memory...")
                                     _agent_obj = self._agents.get(_cn)
                                     if _agent_obj is None:
+                                        print(f"[Fallback Trace] Warning: Agent '{_cn}' not found in self._agents.")
                                         continue
                                     try:
                                         _new_cfg = build_llm_config(next_model, temperature=0.7)
@@ -592,8 +701,10 @@ class AutogenEngineMixin:
                                 # de fallback → on met à jour _char_state
                                 # directement pour que _cfg() voie next_model.
                                 try:
+                                    print("[Fallback Trace] Updating _char_state in memory to reflect fallback...")
                                     for _cn in switched:
                                         _char_state.setdefault(_cn, {})["llm"] = next_model
+                                    print("[Fallback Trace] _char_state successfully updated.")
                                 except Exception as _cse:
                                     print(f"[Auto-Fallback] Erreur mise à jour _char_state : {_cse}")
 
@@ -601,7 +712,7 @@ class AutogenEngineMixin:
                                 self.msg_queue.put({
                                     "sender": "⚠️ Système (Auto-Fallback)",
                                     "text": (
-                                        f"⚡ Quota épuisé : {exhausted_model}\n"
+                                        f"{'⏱ Timeout' if is_timeout_error else '⚡ Quota épuisé'} : {exhausted_model}\n"
                                         f"✅ Basculement automatique → {next_model}\n"
                                         f"Agents concernés : {', '.join(switched)}\n"
                                         f"app_config.json mis à jour.\n"

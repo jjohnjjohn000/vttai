@@ -22,6 +22,10 @@ from class_data import get_no_roll_feature, get_feature_details
 # ─── Stats mécaniques D&D 5e 2014, niveau 11 ──────────────────────────────────
 CHAR_MECHANICS: dict = {
     "Kaelen": {  # Paladin 11 — STR20 DEX14 CON16 INT10 WIS14 CHA18 — Prof+4
+        "strength": 20, "str_mod": +5, "dexterity": 14, "dex_mod": +2,
+        "constitution": 16, "con_mod": +3, "intelligence": 10, "int_mod": +0,
+        "wisdom": 14, "wis_mod": +2, "charisma": 18, "cha_mod": +4,
+        "spell_mod": +4,
         "atk_melee": +11, "atk_ranged": +7, "atk_spell": +9,
         "speed": 30,
         "dmg_melee": (2, 6, +8), "n_attacks": 2, "save_dc": 18,
@@ -32,6 +36,10 @@ CHAR_MECHANICS: dict = {
                    "intelligence":+5,"sagesse":+7,"charisme":+9},
     },
     "Elara": {   # Mage 11 — STR8 DEX16 CON14 INT20 WIS14 CHA10 — Prof+4
+        "strength": 8, "str_mod": -1, "dexterity": 16, "dex_mod": +3,
+        "constitution": 14, "con_mod": +2, "intelligence": 20, "int_mod": +5,
+        "wisdom": 14, "wis_mod": +2, "charisma": 10, "cha_mod": +0,
+        "spell_mod": +5,
         "atk_melee": +3, "atk_ranged": +8, "atk_spell": +10,
         "speed": 30,
         "dmg_melee": (1, 4, -1), "n_attacks": 1, "save_dc": 18,
@@ -42,6 +50,10 @@ CHAR_MECHANICS: dict = {
                    "intelligence":+10,"sagesse":+7,"charisme":+5},
     },
     "Thorne": {  # Voleur Assassin 11 — STR12 DEX20 CON14 INT16 WIS12 CHA14 — Prof+4
+        "strength": 12, "str_mod": +1, "dexterity": 20, "dex_mod": +5,
+        "constitution": 14, "con_mod": +2, "intelligence": 16, "int_mod": +3,
+        "wisdom": 12, "wis_mod": +1, "charisma": 14, "cha_mod": +2,
+        "spell_mod": +0,
         "atk_melee": +11, "atk_ranged": +11, "atk_spell": None,
         "speed": 30,
         "dmg_melee": (1, 6, +5), "dmg_sneak": (6, 6, 0),
@@ -54,6 +66,10 @@ CHAR_MECHANICS: dict = {
                    "intelligence":+8,"sagesse":+6,"charisme":+7},
     },
     "Lyra": {    # Clerc Vie 11 — STR14 DEX12 CON14 INT12 WIS20 CHA16 — Prof+4
+        "strength": 14, "str_mod": +2, "dexterity": 12, "dex_mod": +1,
+        "constitution": 14, "con_mod": +2, "intelligence": 12, "int_mod": +1,
+        "wisdom": 20, "wis_mod": +5, "charisma": 16, "cha_mod": +3,
+        "spell_mod": +5,
         "atk_melee": +7, "atk_ranged": +6, "atk_spell": +10,
         "speed": 30,
         "dmg_melee": (1, 8, +2), "n_attacks": 1, "save_dc": 18,
@@ -120,30 +136,27 @@ def split_into_subactions(type_label: str, intention: str,
                      "divine favor", "faveur divine", "bless", "bénédiction",
                      "spiritual weapon", "arme spirituelle", "marteau spirituel",
                      "flaming sphere", "sphère de feu", "bigby", "moonbeam",
-                     "rayon de lune", "cloud of daggers", "nuage de dagues")
+                     "rayon de lune", "cloud of daggers", "nuage de dagues",
+                     "soin", "soigne", "heal", "cure", "imposition", "lay on hands")
     _SMITE_SPELLS = ("wrathful smite", "courroux divin", "thunderous smite", 
                      "frappe tonnerre", "branding smite", "frappe lumière")
     
-    _is_spell = any(k in combined for k in _SPELL_DETECT) or any(k in combined for k in _SMITE_SPELLS)
-    _has_generic_atk = any(k in combined for k in _GENERIC_ATK)
+    # Utilisation des limites de mots (\b) pour éviter que "tir" ne matche dans "répartir"
+    _is_spell = bool(_re.search(r'\b(?:' + '|'.join(_SPELL_DETECT + _SMITE_SPELLS) + r')', combined))
+    _has_generic_atk = bool(_re.search(r'\b(?:' + '|'.join(_GENERIC_ATK) + r')', combined))
     
     # "divine smite" n'est pas un sort, c'est une feature ajoutée à une attaque
-    _is_divine_smite = any(k in combined for k in ("divine smite", "smite divin", "châtiment divin", "chatiment divin"))
+    _is_divine_smite = bool(_re.search(r'\b(?:divine smite|smite divin|châtiment divin|chatiment divin)', combined))
     
     # Identifier les actions qui sont manifestement des compétences/utilitaires et non des attaques
     _SKILL_OVERRIDE = ("se cacher", "cacher", "discrétion", "stealth", "aim", "steady aim", "visée", "viser", "jet de compétence", "skill check")
-    _is_skill_action = any(k in combined for k in _SKILL_OVERRIDE)
+    _is_skill_action = bool(_re.search(r'\b(?:' + '|'.join(_SKILL_OVERRIDE) + r')', combined))
     
-    # C'est une attaque physique si :
-    # 1. Mots-clés d'attaque présents OU "divine smite"
-    # 2. ET ce n'est pas un sort d'attaque ou un sort de smite
-    # 3. ET il y a une cible valide (un jet d'attaque contre "Aucune/Self" n'a pas de sens)
-    # 4. ET ce n'est pas une compétence/action spécifique (comme viser ou se cacher)
     _has_target = cible.lower().strip() not in ("", "none", "-", "n/a", "aucun", "aucune", "soi-même", "self", "personne", "moi-même", "moi meme", char_name.lower())
     _DODGE_KW = ("esquive", "dodge", "défensive", "defensive")
-    _is_dodge = any(k in combined for k in _DODGE_KW)
-    _is_dash = any(k in combined for k in ("dash", "foncer", "sprint", "course"))
-    _is_disengage = any(k in combined for k in ("disengage", "désengager", "desengager", "désengagement", "se désengager", "se desengager"))
+    _is_dodge = bool(_re.search(r'\b(?:' + '|'.join(_DODGE_KW) + r')', combined))
+    _is_dash = bool(_re.search(r'\b(?:dash|foncer|sprint|course)', combined))
+    _is_disengage = bool(_re.search(r'\b(?:disengage|désengager|desengager|désengagement|se désengager|se desengager)', combined))
     is_physical_attack = (_has_generic_atk or _is_divine_smite) and not _is_spell and not _is_dodge and not _is_dash and not _is_disengage and not _is_skill_action and _has_target
 
     # On nettoie le type_label pour enlever "1/2" ou "Extra Attack" s'il y en a, 
@@ -187,10 +200,15 @@ def roll_attack_only(char_name: str, regle: str, intention: str,
 
     # Dés de dégâts (extraits de la règle pour usage ultérieur)
     def _all_dice_local(text):
-        return [(int(m.group(1)), int(m.group(2)),
+        text_mod = text
+        if stats.get("spell_mod"):
+            # Remplacement automatique de "+ mod." par le spell_mod du lanceur
+            text_mod = _re.sub(r'\+\s*mod(?:ificateur|\.| )?(?:\s*de\s*sort)?', f"+{stats['spell_mod']}", text_mod, flags=_re.IGNORECASE)
+            
+        return[(int(m.group(1)), int(m.group(2)),
                  int(m.group(3).replace(" ","")) if m.group(3) else 0)
                 for m in _re.finditer(r"(\d+)d(\d+)(?:\s*([+-]\s*\d+))?",
-                                      text, _re.IGNORECASE)]
+                                      text_mod, _re.IGNORECASE)]
     all_d = _all_dice_local(regle)
     dmg_d = all_d[0] if all_d else None
     if dmg_d is None:
@@ -397,10 +415,15 @@ def execute_action_mechanics(
 
     # Helpers
     def _all_dice(text):
-        return [(int(m.group(1)), int(m.group(2)),
+        text_mod = text
+        if stats.get("spell_mod"):
+            # Remplacement automatique de "+ mod." par le spell_mod du lanceur
+            text_mod = _re.sub(r'\+\s*mod(?:ificateur|\.| )?(?:\s*de\s*sort)?', f"+{stats['spell_mod']}", text_mod, flags=_re.IGNORECASE)
+            
+        return[(int(m.group(1)), int(m.group(2)),
                  int(m.group(3).replace(" ","")) if m.group(3) else 0)
                 for m in _re.finditer(r"(\d+)d(\d+)(?:\s*([+-]\s*\d+))?",
-                                      text, _re.IGNORECASE)]
+                                      text_mod, _re.IGNORECASE)]
 
     def _extract_dc(text):
         m = _re.search(r"\bDC\s*(\d+)", text, _re.IGNORECASE)
@@ -446,7 +469,8 @@ def execute_action_mechanics(
                 "flaming sphere", "sphère de feu", "bigby", "moonbeam",
                 "rayon de lune", "cloud of daggers", "nuage de dagues",
                 "flamme","sacred","flame","toll the dead","glas des morts",
-                "word of radiance","mot radieux","cantrip")
+                "word of radiance","mot radieux","cantrip",
+                "imposition", "lay on hands")
     ATK_KW   = ("attaque","frappe","coup","tir","tire","charge","poignarde",
                 "tranche","abat","corps-à-corps","distance","assaut","offensive",
                 "extra attack", "seconde attaque", "deuxième attaque")
@@ -463,24 +487,20 @@ def execute_action_mechanics(
     _DIVINE_SMITE = ("divine smite", "smite divin", "châtiment divin", "chatiment divin")
 
     is_move_action = "mouvement" in t_low
-    is_spell = (any(k in r_low or k in i_low for k in SPELL_KW) or any(k in r_low or k in i_low for k in _SMITE_SPELLS)) and not is_move_action
-    # Garde mouvement : si type_label est explicitement "Mouvement", aucun jet de compétence
-    # ne doit être déclenché — le LLM met parfois "analyser / détecter" dans l'intention
-    # d'un déplacement, ce qui ferait firer is_skill avant la branche mouvement.
-    # Défini AVANT is_atk pour éviter "referenced before assignment".
-
+    is_spell = bool(_re.search(r'\b(?:' + '|'.join(SPELL_KW + _SMITE_SPELLS) + r')', r_low + " " + i_low)) and not is_move_action
+    
     _SKILL_OVERRIDE = ("se cacher", "cacher", "discrétion", "stealth", "aim", "steady aim", "visée", "viser", "jet de compétence", "skill check")
-    _is_skill_action = any(k in r_low or k in i_low for k in _SKILL_OVERRIDE)
+    _is_skill_action = bool(_re.search(r'\b(?:' + '|'.join(_SKILL_OVERRIDE) + r')', r_low + " " + i_low))
     
     _has_target = cible.lower().strip() not in ("", "none", "-", "n/a", "aucun", "aucune", "soi-même", "self", "personne", "moi-même", "moi meme", char_name.lower())
     _DODGE_KW = ("esquive", "dodge", "défensive", "defensive")
-    _is_dodge = any(k in r_low or k in i_low for k in _DODGE_KW)
-    _is_dash = any(k in r_low or k in i_low for k in ("dash", "foncer", "sprint", "course"))
+    _is_dodge = bool(_re.search(r'\b(?:' + '|'.join(_DODGE_KW) + r')', r_low + " " + i_low))
+    _is_dash = bool(_re.search(r'\b(?:dash|foncer|sprint|course)', r_low + " " + i_low))
     _DISENGAGE_KW = ("disengage", "désengager", "desengager", "désengagement", "se désengager", "se desengager")
-    _is_disengage = any(k in r_low or k in i_low for k in _DISENGAGE_KW)
-    is_atk   = (any(k in r_low or k in i_low for k in ATK_KW) or any(k in r_low or k in i_low for k in _DIVINE_SMITE)) and not is_spell and not is_move_action and not _is_dodge and not _is_dash and not _is_disengage and not _is_skill_action and _has_target
-    is_skill = (any(k in r_low or k in i_low for k in SKILL_KW)
-                and not is_atk and not is_spell and not is_move_action)
+    _is_disengage = bool(_re.search(r'\b(?:' + '|'.join(_DISENGAGE_KW) + r')', r_low + " " + i_low))
+    
+    is_atk   = bool(_re.search(r'\b(?:' + '|'.join(ATK_KW + _DIVINE_SMITE) + r')', r_low + " " + i_low)) and not is_spell and not is_move_action and not _is_dodge and not _is_dash and not _is_disengage and not _is_skill_action and _has_target
+    is_skill = bool(_re.search(r'\b(?:' + '|'.join(SKILL_KW) + r')', r_low + " " + i_low)) and not is_atk and not is_spell and not is_move_action
 
     _DASH_KW = ("mouvement", "déplace", "deplace", "dash", "foncer", "sprint",
                 "course", "avance", "recule", "approche", "fonce")
@@ -602,7 +622,7 @@ def execute_action_mechanics(
         is_cantrip = lvl is None or lvl == 0
         is_heal   = any(k in r_low or k in i_low
                         for k in ("soin","soigne","heal","cure","guéri",
-                                  "restaure","parole curative"))
+                                  "restaure","parole curative","imposition","lay on hands"))
         is_atk_roll = (any(k in r_low for k in ("jet d attaque de sort",
                                                   "attaque de sort"))
                        or (not is_heal and "rayon" in r_low
@@ -611,7 +631,12 @@ def execute_action_mechanics(
 
         # Vérification liste de sorts préparés
         _combined_text = f"{intention} {regle}".strip()
-        _spell_name_candidate = extract_spell_name_fn(_combined_text, char_name) if extract_spell_name_fn else ""
+        
+        _CLASS_FEATURES = ("imposition", "lay on hands", "second wind", "second souffle", "potion", "conduit divin", "channel divinity")
+        _is_class_feature = any(k in r_low or k in i_low for k in _CLASS_FEATURES)
+        
+        _spell_name_candidate = "" if _is_class_feature else (extract_spell_name_fn(_combined_text, char_name) if extract_spell_name_fn else "")
+        
         if not is_cantrip and _spell_name_candidate:
             if not is_spell_prepared_fn(char_name, _spell_name_candidate):
                 _avail = get_prepared_spell_names_fn(char_name)
@@ -639,7 +664,7 @@ def execute_action_mechanics(
 
         # Fallback : si le nom FR retourné par le LLM n'est pas dans la DB (anglaise),
         # chercher via les mots-clés de l intention/règle dans le catalogue de sorts.
-        if _sp_data is None and is_spell:
+        if _sp_data is None and is_spell and not _is_class_feature:
             try:
                 from spell_data import search_spells as _ss_fb, get_spell as _get_spell
                 _i_r_fb = (intention + " " + regle).lower()
@@ -680,14 +705,15 @@ def execute_action_mechanics(
             # Dégâts/Soins dynamiques depuis le tag {@damage XdY} ou {@dice XdY}
             if not _all_dice(regle):
                 import json as _json_parser
-                _entries_str = _json_parser.dumps(_sp_data.get("entries", []))
+                _entries_str = _json_parser.dumps(_sp_data.get("entries",[]))
                 _dmg_matches = _re.findall(r"\{@(damage|dice)\s+([^}]+)\}", _entries_str)
                 if _dmg_matches:
                     _base_dice = _dmg_matches[0][1]
                     _base_lvl = _sp_data.get("level", 0)
                     if lvl and lvl > _base_lvl and _sp_data.get("entries_higher"):
                         _higher_str = _json_parser.dumps(_sp_data["entries_higher"])
-                        _scale_m = _re.search(r"\{@scaledamage\s+[^|]+\|[^|]+\|(\d+d\d+)\}", _higher_str)
+                        # FIX : Ajout de (?:damage|dice) car les soins utilisent @scaledice
+                        _scale_m = _re.search(r"\{@scale(?:damage|dice)\s+[^|]+\|[^|]+\|(\d+d\d+)\}", _higher_str)
                         if _scale_m:
                             _diff = lvl - _base_lvl
                             _scale_dice = _scale_m.group(1)
@@ -702,6 +728,11 @@ def execute_action_mechanics(
                                 else:
                                     regle += f" + {_ext_dn}d{_ext_df}"
                     regle += f" {_base_dice} "
+                    
+                    # FIX : Ajout automatique du modificateur si mentionné dans le sort
+                    _low_entries = _entries_str.lower()
+                    if "spellcasting ability modifier" in _low_entries or "modificateur" in _low_entries or "modifier" in _low_entries:
+                        regle += "+ mod"
 
         results.append(f"✨ {char_name} — {intention.strip()} (niv.{lvl or 0}) → {cible}")
 
@@ -1017,12 +1048,25 @@ def execute_action_mechanics(
         # ── Sort à touche automatique (pas de jet d'attaque, pas de sauvegarde) ──
         # Détecté par les propriétés du sort dans la DB — aucun nom hardcodé.
         # Couvre Projectile Magique et tout sort auto-hit futur.
+        _deals_damage = False
+        if _sp_data:
+            import json as _json_parser
+            _entries_str = _json_parser.dumps(_sp_data.get("entries", []))
+            _deals_damage = (
+                bool(_sp_data.get("damage_inflict"))
+                or "{@damage " in _entries_str
+                or "{@dice " in _entries_str
+            )
+        if not _deals_damage and _all_dice(regle):
+            _deals_damage = True
+
         _is_auto_hit = (
             _sp_data is not None
             and not _sp_data.get("spell_attack")
             and not _sp_data.get("saving_throw")
             and not is_heal
             and not dc_val
+            and _deals_damage
         )
         if _is_auto_hit:
             # La DB fait autorité : pas de jet d attaque pour ce sort.
@@ -1103,6 +1147,8 @@ def execute_action_mechanics(
         # Dés de dégâts / soin
         all_d = _all_dice(regle)
         _dmg_total_save = 0   # total brut pour la boite sauvegarde
+        heal_amt = 0          # Initialisation sécurisée
+        
         if all_d:
             dn2, df2, db2 = all_d[0]
             verb = "soin" if is_heal else "dégâts"
@@ -1111,28 +1157,80 @@ def execute_action_mechanics(
             if is_heal:
                 m_tot_h  = _re.search(r"Total\s*=\s*(\d+)", res)
                 heal_amt = int(m_tot_h.group(1)) if m_tot_h else 0
-                _HEAL_NAMES = ["Kaelen", "Elara", "Thorne", "Lyra"]
-                try:
-                    from state_manager import load_state as _ls_heal
-                    _HEAL_NAMES = list(_ls_heal().get("characters", {}).keys()) or _HEAL_NAMES
-                except Exception:
-                    pass
-                targets = [n for n in _HEAL_NAMES if n.lower() in cible.lower()]
-                if not targets:
-                    targets = [char_name]
-                for tgt in targets:
-                    from state_manager import update_hp as _uhp
-                    hp_res = _uhp(tgt, heal_amt)
-                    results.append(f"  [PV] {hp_res}")
-                try:
-                    if app._combat_tracker is not None:
-                        app.root.after(0, app._combat_tracker.sync_pc_hp_from_state)
-                except Exception:
-                    pass
             elif dc_val:
                 # Extraire le total pour la boîte de confirmation MJ
                 _m_tot_sv = _re.search(r"Total\s*=\s*(\d+)", res)
                 _dmg_total_save = int(_m_tot_sv.group(1)) if _m_tot_sv else 0
+
+        elif is_heal:
+            # Soin sans dés (ex: Imposition des mains)
+            _combined_text = regle + " " + intention
+            _m_flat = _re.search(r"(\d+)\s*(?:pv|hp|points|de|d'imposition|chacun)", _combined_text, _re.IGNORECASE)
+            heal_amt = int(_m_flat.group(1)) if _m_flat else 0
+            
+            _intent_low = _combined_text.lower()
+            if heal_amt == 0 and ("imposition" in _intent_low or "lay on hands" in _intent_low):
+                _nums = _re.findall(r"\b(\d+)\b", _combined_text)
+                _valid_nums =[int(n) for n in _nums if int(n) > 0 and int(n) <= 100]
+                if _valid_nums:
+                    # On prend le premier nombre (évite de prendre la jauge max par erreur)
+                    heal_amt = _valid_nums[0]
+
+        # ── Rétrogradation des faux soins (ex: demander à être soigné en RP) ──
+        if is_heal and not all_d and heal_amt <= 0:
+            is_heal = False
+
+        # Préparation de l'affichage des soins (l'application réelle se fait lors du clic MJ)
+        if is_heal and heal_amt > 0:
+            _HEAL_NAMES =["Kaelen", "Elara", "Thorne", "Lyra"]
+            try:
+                from state_manager import load_state as _ls_heal
+                _HEAL_NAMES = list(_ls_heal().get("characters", {}).keys()) or _HEAL_NAMES
+            except Exception:
+                pass
+            targets =[n for n in _HEAL_NAMES if n.lower() in cible.lower()]
+            if not targets:
+                targets =[cible if cible.strip() not in ("-", "aucun", "aucune", "") else char_name]
+
+            _intent_low = (regle + " " + intention).lower()
+            _is_loh = "imposition" in _intent_low or "lay on hands" in _intent_low
+            _curr_loh = 0
+            
+            if _is_loh:
+                try:
+                    from state_manager import load_state as _ls_loh
+                    _st_loh = _ls_loh()
+                    _feats_loh = _st_loh.get("characters", {}).get(char_name, {}).get("features", {})
+                    _curr_loh = _feats_loh.get("lay_on_hands", 0)
+                except Exception as e:
+                    print(f"[Lay on Hands Error] {e}")
+
+            # ── CORRECTION DU BUG MATHÉMATIQUE (Valeur globale vs Valeur par cible) ──
+            if not all_d and len(targets) > 1:
+                _all_nums =[int(n) for n in _re.findall(r"\b(\d+)\b", regle + " " + intention) if int(n) > 0]
+                # Si heal_amt est le total (ex: 30) et que la part individuelle (15) est aussi dans le texte
+                if heal_amt in _all_nums and (heal_amt // len(targets)) in _all_nums:
+                    heal_amt = heal_amt // len(targets)
+                # Ou si le texte dit explicitement que les PV sont répartis
+                elif any(kw in _intent_low for kw in ("partagé", "réparti", "reparti", "total", "divisé", "divise")):
+                    heal_amt = heal_amt // len(targets)
+                # Fallback ultime pour Imposition : si la valeur globale dépasse la jauge mais passe si on la divise
+                elif _is_loh and (heal_amt * len(targets)) > _curr_loh >= heal_amt:
+                    heal_amt = heal_amt // len(targets)
+
+            # Restauration de la ligne nécessaire pour que chat_mixin extraie le montant fixe
+            if not all_d:
+                results.append(f"[soin] Total = {heal_amt} (montant fixe)")
+
+            if _is_loh:
+                _total_cost = heal_amt * len(targets)
+                if _curr_loh >= _total_cost:
+                    results.append(f"[Imposition des mains] -{_total_cost} points demandés (reste {_curr_loh - _total_cost} après confirmation)")
+                else:
+                    results.append(f"  [Attention] Pas assez de points Lay on Hands ({_curr_loh} vs {_total_cost} demandés) !")
+
+            for tgt in targets:
+                results.append(f"  [PV] En attente de confirmation MJ pour soigner {tgt} de {heal_amt} PV.")
 
         # ── Jet de sauvegarde avec cible → boite de confirmation MJ ──────────
         if dc_val and not is_atk_roll and not is_heal:

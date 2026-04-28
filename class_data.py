@@ -508,11 +508,6 @@ NO_ROLL_FEATURES: dict = {
         "Narre en 1-2 phrases la concentration de {name} : ses paupières qui se ferment, "
         "l'aura sacrée qui rayonne brièvement. Attends que le MJ décrive ce qu'il perçoit.",
     ),
-    "lay on hands": (
-        "paladin", "Lay on Hands",
-        "Narre le toucher sacré de {name} : la chaleur irradiant de sa paume. "
-        "Le MJ appliquera les PV restaurés.",
-    ),
     "aura of protection": (
         "paladin", "Aura of Protection",
         "Capacité passive — toujours active. Rappelle au MJ qu'elle s'applique "
