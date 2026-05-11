@@ -43,6 +43,7 @@ VOICE_MAPPING = {
     "Elara":  "fr-FR-DeniseNeural",
     "Thorne": "fr-CH-FabriceNeural",
     "Lyra":   "fr-FR-EloiseNeural",
+    "Alexis_Le_MJ": "en-US-SteffanNeural",
     "default":"fr-FR-HenriNeural",
 }
 
@@ -51,6 +52,7 @@ SPEED_MAPPING = {
     "Elara":   "+25%",
     "Thorne":  "+20%",
     "Lyra":    "+20%",
+    "Alexis_Le_MJ": "+15%",
     "default": "+10%",
 }
 
@@ -117,7 +119,7 @@ def _clean_for_tts(text):
     cleaned = ' '.join(cleaned.split())
     if len(re.findall(r'[a-zA-ZÀ-ÿ0-9]', cleaned)) < _MIN_ALPHANUM:
         return None
-    return cleaned[:4000]
+    return cleaned[:10000]
 
 def _normalize_rate(rate):
     m = re.match(r'^([+-]?\d+)%$', rate.strip())
@@ -752,9 +754,10 @@ def play_voice(text: str, character_name: str) -> bool:
     if _get_backend() == "piper":
         voice_id, models_dir = _get_piper_voice_id(character_name)
         from piper_tts import play_piper_voice
-        from app_config import get_piper_pitch
+        from app_config import get_piper_pitch, get_piper_volume
         return play_piper_voice(text, character_name, voice_id, models_dir,
-                                pitch_semitones=get_piper_pitch(character_name))
+                                pitch_semitones=get_piper_pitch(character_name),
+                                volume_percent=get_piper_volume(character_name))
     return _play_voice_edgetts(text, character_name)
 
 
@@ -769,9 +772,10 @@ def prefetch_voice(text: str, character_name: str) -> list[str]:
     if _get_backend() == "piper":
         voice_id, models_dir = _get_piper_voice_id(character_name)
         from piper_tts import prefetch_piper_voice
-        from app_config import get_piper_pitch
+        from app_config import get_piper_pitch, get_piper_volume
         return prefetch_piper_voice(text, character_name, voice_id, models_dir,
-                                    pitch_semitones=get_piper_pitch(character_name))
+                                    pitch_semitones=get_piper_pitch(character_name),
+                                    volume_percent=get_piper_volume(character_name))
     return _prefetch_voice_edgetts(text, character_name)
 
 

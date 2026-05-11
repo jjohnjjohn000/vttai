@@ -20,7 +20,7 @@ import types as _types
 
 from llm_config    import build_llm_config, _default_model, StopLLMRequested, _SSL_LOCK
 from class_data    import get_combat_prompt as _get_combat_prompt
-from app_config    import get_agent_config, get_memories_config, get_groupchat_config
+from app_config    import get_agent_config, get_memories_config, get_groupchat_config, get_agent_max_sentences
 from state_manager import (
     get_scene_prompt, get_active_quests_prompt, get_memories_prompt_compact,
     get_calendar_prompt, get_session_logs_prompt, get_spells_prompt,
@@ -101,7 +101,20 @@ def _patch_autogen_message_retrieval():
     except Exception as _pe:
         print(f"[engine_agents] Patch AutoGen message_retrieval: SKIPPED ({_pe})")
 
-_patch_autogen_message_retrieval()
+_autogen_patched = False
+
+def ensure_autogen_patched():
+    """Apply the AutoGen message_retrieval patch once, on first call.
+
+    Called from run_autogen() AFTER `import autogen` — never at module level,
+    because importing autogen.oai.client triggers the entire
+    google.cloud.aiplatform → vertexai → grpc stack (minutes of startup delay).
+    """
+    global _autogen_patched
+    if not _autogen_patched:
+        _patch_autogen_message_retrieval()
+        _autogen_patched = True
+
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -142,32 +155,44 @@ _ACTION_MOUVEMENT_FORMAT = (
     "  Cible     : <Destination>\n"
 )
 
-# Règles claires, aérées et sans surplus cognitif
-_REGLES_COMMUNES = (
-    "\n\n═══════════════════════════════════════════"
-    "\n📜 CONTRAT DE JEU — LIS ATTENTIVEMENT"
-    "\n═══════════════════════════════════════════"
-    "\n\n1. TON RÔLE (TU N'ES PAS LE MJ)"
-    "\n• Joue UNIQUEMENT ton personnage. Tu connais ton nom, ne parle pas à la 3ème personne."
-    "\n• Ne décris JAMAIS les actions, paroles ou réactions des PNJ (Van Richten, Ireena, etc.)."
-    "\n• Ne décris JAMAIS l'environnement, les objets découverts ou les conséquences de tes actes."
-    "\n• Si tu t'adresses à un PNJ, pose ta question en une phrase et arrête-toi net. Le MJ répondra."
-    "\n\n2. NARRATION ET SYSTÈME"
-    "\n• Le système (MJ) lance les dés et gère les PV. N'invente jamais un résultat de ton côté."
-    "\n• Après un[RÉSULTAT SYSTÈME] ou des dégâts reçus, narre UNIQUEMENT ta réaction physique ou mentale (douleur, effort, doute) en 1 ou 2 phrases. Pas de chiffres dans ton roleplay."
-    "\n• INTERDICTION DE COPIE : Ne paraphrase jamais le message d'un autre joueur. Sois unique."
-    "\n\n3. MÉCANIQUES ET SORTS"
-    "\n• Pour lancer un sort ou attaquer, utilise TOUJOURS un bloc [ACTION]."
-    "\n• ⚠️ ANTI-SPAM (RÈGLE ABSOLUE) : Ne lance JAMAIS un sort (détection, buff, etc.) s'il a déjà été lancé récemment et est toujours actif. Le MJ gère les compétences passivement (Perception passive, Investigation passive, etc.) — ne demande PAS de jet toi-même sauf si le MJ t'y invite."
-    "\n• ⚠️ UPCAST OBLIGATOIRE : Tu DOIS respecter les 'Sorts dispos' affichés dans ton [TOUR EN COURS]. Si tu n'as plus d'emplacement pour le niveau de base d'un sort et que tu veux lancer quand même, tu DOIS le lancer à un niveau supérieur en l'écrivant explicitement (ex: 'Règle 5e: Shield of Faith niv. 3')."
-    "\n• N'appelle pas les outils (update_hp, roll_dice) de ta propre initiative, sauf si une [DIRECTIVE SYSTÈME] te le demande explicitement."
-    "\n\n4. FORMAT DE RÉPONSE"
-    "\n• Structure : 1 réplique dialoguée (avec ton attitude incrustée dedans) + 1 bloc [ACTION] UNIQUEMENT si le MJ le demande ou si tu as une action physique délibérée à déclarer."
-    "\n• N'inclus JAMAIS les en-têtes d'instructions comme[RÈGLES DU BLOC ACTION] ou [RÈGLES DU BLOC ACTION (HORS COMBAT)] dans ta réponse."
-    "\n• Sois concis : pas de monologues, pas de descriptions entre parenthèses en paragraphe séparé."
-    "\n• N'utilise [SILENCE] que si tu es physiquement incapable de parler. Sinon, donne au moins une pensée ou une courte réaction."
-    "\n═══════════════════════════════════════════\n"
-)
+def _get_regles_communes() -> str:
+    max_sentences = get_agent_max_sentences()
+    return (
+        "\n\n═══════════════════════════════════════════"
+        "\n📜 CONTRAT DE JEU — LIS ATTENTIVEMENT"
+        "\n═══════════════════════════════════════════"
+        "\n\n1. TON RÔLE (TU N'ES PAS LE MJ)"
+        "\n• Joue UNIQUEMENT ton personnage. Tu connais ton nom, ne parle pas à la 3ème personne."
+        "\n• Ne décris JAMAIS les actions, paroles ou réactions des PNJ (Van Richten, Ireena, etc.)."
+        "\n• Ne décris JAMAIS l'environnement, les objets découverts ou les conséquences de tes actes."
+        "\n• Si tu t'adresses à un PNJ, pose ta question en une phrase et arrête-toi net. Le MJ répondra."
+        "\n\n2. NARRATION ET SYSTÈME"
+        f"\n• RÈGLE DE LONGUEUR : Tes réponses roleplay et tes narrations doivent OBLIGATOIREMENT être concises (MAXIMUM {max_sentences} PHRASES)."
+        "\n• Le système (MJ) lance les dés et gère les PV. N'invente jamais un résultat de ton côté."
+        "\n• Après un[RÉSULTAT SYSTÈME] ou des dégâts reçus, narre UNIQUEMENT ta réaction physique ou mentale (douleur, effort, doute). Pas de chiffres dans ton roleplay."
+        "\n• INTERDICTION DE COPIE : Ne paraphrase jamais le message d'un autre joueur. Sois unique."
+        "\n\n3. MÉCANIQUES ET SORTS"
+        "\n• Pour lancer un sort ou attaquer, utilise TOUJOURS un bloc [ACTION]."
+        "\n• ⚠️ ANTI-SPAM (RÈGLE ABSOLUE) : Ne lance JAMAIS un sort (détection, buff, etc.) s'il a déjà été lancé récemment et est toujours actif. Le MJ gère les compétences passivement (Perception passive, Investigation passive, etc.) — ne demande PAS de jet toi-même sauf si le MJ t'y invite."
+        "\n• ⚠️ UPCAST OBLIGATOIRE : Tu DOIS respecter les 'Sorts dispos' affichés dans ton [TOUR EN COURS]. Si tu n'as plus d'emplacement pour le niveau de base d'un sort et que tu veux lancer quand même, tu DOIS le lancer à un niveau supérieur en l'écrivant explicitement (ex: 'Règle 5e: Shield of Faith niv. 3')."
+        "\n• N'appelle pas les outils (update_hp, roll_dice) de ta propre initiative, sauf si une [DIRECTIVE SYSTÈME] te le demande explicitement."
+        "\n\n4. FORMAT DE RÉPONSE"
+        "\n• Structure : 1 réplique dialoguée (avec ton attitude incrustée dedans) + 1 bloc [ACTION] UNIQUEMENT si le MJ le demande ou si tu as une action physique délibérée à déclarer."
+        "\n• N'inclus JAMAIS les en-têtes d'instructions comme[RÈGLES DU BLOC ACTION] ou [RÈGLES DU BLOC ACTION (HORS COMBAT)] dans ta réponse."
+        "\n• Sois concis : pas de monologues, pas de descriptions entre parenthèses en paragraphe séparé."
+        "\n• N'utilise [SILENCE] que si tu es physiquement incapable de parler. Sinon, donne au moins une pensée ou une courte réaction."
+        "\n\n5. EXPRESSIONS ET ÉMOTIONS"
+        "\n• Ton avatar peut exprimer des émotions visuelles ('neutral', 'fear', 'surprise', 'disgust', 'impatient', 'tenderness', 'happy', 'sad', 'angry', 'focused')."
+        "\n• Si tu veux changer ton expression faciale en réagissant à l'événement en cours, inclus N'IMPORTE OÙ dans ton message le tag: [EMOTION] type_emotion."
+        "\n• Exemple: Ouch ! [EMOTION] sad"
+        "\n\n6. ALLIÉS INCONSCIENTS"
+        "\n• Si un allié est inconscient, tu PEUX utiliser tes sorts pour le soigner ou ta compétence de médecine pour le stabiliser."
+        "\n• Si un allié est stable et inconscient, tu PEUX le transporter. Une interaction pour l'aggriper et un mouvement à moitié de ta vitesse sont nécessaires pour le transporter."
+        "\n\n7. POINTS DE VIE BAS ET RESSOURCES ÉPUISÉES"
+        "\n• Si tes points de vie sont bas (inférieurs à 25% de ton maximum), ou que tes ressources (sorts, compétences, etc.) utilisables par court repos sont presque épuisées, tu PEUX demander au groupe et au MJ de prendre un court repos."
+        "\n• Si tes points de vie sont bas (inférieurs à 25% de ton maximum) et que tu as dépensé 50% ou plus de tes hit dices pour te soigner après un court repos, ou que tes ressources (sorts, compétences, etc.) utilisables par long repos sont presque épuisées, tu PEUX demander au groupe et au MJ de prendre un long repos."
+        "\n═══════════════════════════════════════════\n"
+    )
 
 def build_regle_outils(combat_mode: bool = False) -> str:
     """
@@ -211,7 +236,7 @@ def _build_regle_hors_combat() -> str:
         )
 
     return (
-        _REGLES_COMMUNES
+        _get_regles_communes()
         # ── Section spécifique HORS COMBAT ──────────────────────────────────
         + "\n▶ HORS COMBAT — MODE ACTIF"
         "\nTu joues ton rôle : roleplay, dialogue, exploration, réflexion."
@@ -238,7 +263,7 @@ def _build_regle_en_combat() -> str:
     skill_rule_combat = "" if allow_skills else "\n⛔ RAPPEL : Tu ne dois JAMAIS déclarer de jet de compétence de ta propre initiative, même en combat.\n"
 
     return (
-        _REGLES_COMMUNES
+        _get_regles_communes()
         # ── Section spécifique EN COMBAT ─────────────────────────────────────
         + "\n▶ COMBAT EN COURS — RÈGLES D'INITIATIVE"
         "\n▶ RÈGLE FONDAMENTALE — UNE ACTION À LA FOIS"
@@ -487,9 +512,15 @@ def make_thinking_wrapper(agent, name: str, app_ref):
         # le thread UI. On vérifie l'état actif ici, au dernier moment,
         # pour bloquer l'appel LLM sans crasher la boucle AutoGen.
         try:
-            from state_manager import is_character_active as _is_active
+            from state_manager import is_character_active as _is_active, load_state
             if not _is_active(name):
-                return None   # None = silence ; AutoGen retourne au MJ
+                # Renvoyer [SILENCE] est sûr : ça ne crashe pas AutoGen,
+                # et c'est ignoré par le détecteur anti-boucle (anti-copie).
+                return "[SILENCE]"
+            _state = load_state()
+            _char = _state.get("characters", {}).get(name, {})
+            if _char.get("unconscious") or _char.get("hp", 1) <= 0:
+                return "[SILENCE]"
         except Exception:
             pass
         # ─────────────────────────────────────────────────────────────────────
@@ -579,6 +610,31 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                                           or get_agent_config(name).get("model", "")
                                           or "")
                             log_llm_model_used(name, actual, configured)
+
+                            # Log de l'utilisation des tokens pour cet appel
+                            try:
+                                from agent_logger import log_token_usage
+                                _u_b = _usage_before.get(actual, {})
+                                _u_a = _usage_after.get(actual, {})
+                                
+                                def _get_tok(u, key):
+                                    if isinstance(u, dict): return u.get(key, 0)
+                                    return getattr(u, key, 0)
+
+                                _p_toks = _get_tok(_u_a, "prompt_tokens") - _get_tok(_u_b, "prompt_tokens")
+                                _c_toks = _get_tok(_u_a, "completion_tokens") - _get_tok(_u_b, "completion_tokens")
+                                _tot_toks = _get_tok(_u_a, "total_tokens") - _get_tok(_u_b, "total_tokens")
+                                
+                                log_token_usage(name, _p_toks, _c_toks, _tot_toks)
+
+                                # Si les tokens sont à 0, AutoGen ne les a pas parsés correctement.
+                                # Affichons les dictionnaires bruts pour voir comment récupérer la stat.
+                                if _tot_toks == 0 and _p_toks == 0 and _c_toks == 0:
+                                    print(f"[DEBUG TOKENS AUTO-GEN] _u_b: {_u_b}")
+                                    print(f"[DEBUG TOKENS AUTO-GEN] _u_a: {_u_a}")
+                            except Exception as _e_tok:
+                                print(f"[Tokens Log Error] {_e_tok}")
+
                     except Exception:
                         pass
 
@@ -630,12 +686,12 @@ def make_thinking_wrapper(agent, name: str, app_ref):
             if type(_e).__name__ == "BadRequestError" and "tool_use_failed" in _err_str:
                 if not kwargs.get("__is_fallback_retry"):
                     # Priorité de récupération :
-                    #   EN COMBAT    → gemini-3.1-flash-lite-preview (modèle combat obligatoire)
+                    #   EN COMBAT    → gemini-3.1-flash-lite (modèle combat obligatoire)
                     #   HORS COMBAT  → modèle configuré dans la fiche du personnage
                     #                  (llm_session_override > llm > app_config, même logique que _cfg())
                     if COMBAT_STATE.get("active"):
                         from app_config import get_combat_config as _gcc
-                        _recovery_model = _gcc().get("model", "gemini-3.1-flash-lite-preview")
+                        _recovery_model = _gcc().get("model", "gemini-3.1-flash-lite")
                     else:
                         try:
                             _cs_rec = load_state().get("characters", {}).get(name, {})
@@ -819,13 +875,19 @@ def combat_speaker_selector(last_speaker, groupchat):
     _player_names_in_gc = {a.name for a in _players_in_gc}
 
     def _eligible_agents():
+        try:
+            from state_manager import load_state
+            _chars = load_state().get("characters", {})
+        except Exception:
+            _chars = {}
+
         if not COMBAT_STATE["active"]:
-            return list(groupchat.agents)
+            return [a for a in groupchat.agents if not _chars.get(a.name, {}).get("unconscious")]
         else:
             _active = COMBAT_STATE.get("active_combatant")
             candidates =[
                 a for a in groupchat.agents
-                if not _is_fully_silenced(a.name) or a.name not in _ALL_PLAYERS or a.name == _active
+                if ((not _is_fully_silenced(a.name) or a.name == _active) and not _chars.get(a.name, {}).get("unconscious")) or a.name not in _ALL_PLAYERS
             ]
             if not candidates:
                 candidates =[a for a in groupchat.agents if a.name == "Alexis_Le_MJ"]
@@ -925,12 +987,21 @@ def combat_speaker_selector(last_speaker, groupchat):
             if mj_agent_ref:
                 return mj_agent_ref
 
+        # ── DEBUG SPEAKER SELECTOR ──────────────────────────────────────────
+        _gc_agent_names = [a.name for a in groupchat.agents]
+        print(f"\n[SPEAKER DEBUG] last_speaker={last_name}")
+        print(f"[SPEAKER DEBUG] id(groupchat)={id(groupchat)} id(agents)={id(groupchat.agents)} groupchat.agents={_gc_agent_names}")
+        print(f"[SPEAKER DEBUG] _player_names_in_gc={_player_names_in_gc}")
+        print(f"[SPEAKER DEBUG] eligible_names={eligible_names}")
+        print(f"[SPEAKER DEBUG] last_mj_content={last_mj_content[:120]!r}")
+
         # Cas 1 — noms explicites dans le message du MJ
         mentioned =[
             name for name in _ALL_PLAYERS
             if name.lower() in content_low
             and name in _player_names_in_gc
         ]
+        print(f"[SPEAKER DEBUG] Cas1 mentioned={mentioned}")
 
         # Cas 2 — question de groupe
         if not mentioned:
@@ -938,20 +1009,26 @@ def combat_speaker_selector(last_speaker, groupchat):
                 "?" in last_mj_content
                 or any(m in content_low for m in _GROUP_MARKERS)
             )
+            print(f"[SPEAKER DEBUG] Cas2 is_group_question={is_group_question}")
             if is_group_question:
                 mentioned =[n for n in _ALL_PLAYERS if n in _player_names_in_gc]
+                print(f"[SPEAKER DEBUG] Cas2 mentioned={mentioned}")
 
         if mentioned:
             responded = _responded_since(last_mj_idx)
             pending   = _next_pending(mentioned, responded)
+            print(f"[SPEAKER DEBUG] responded={responded}  pending={pending.name if pending else None}")
             if pending:
+                print(f"[SPEAKER DEBUG] → RETURN {pending.name} (Cas1/2 pending)")
                 return pending
             if mj_agent_ref:
+                print(f"[SPEAKER DEBUG] → RETURN MJ (all mentioned responded)")
                 return mj_agent_ref
 
     # Un PJ vient de parler → MJ
     if last_name in _ALL_PLAYERS:
         if mj_agent_ref:
+            print(f"[SPEAKER DEBUG] → RETURN MJ (PJ {last_name} vient de parler)")
             return mj_agent_ref
 
     # MJ vient de parler sans cibler → Cas 3 : un seul PJ réagit (rotation)
@@ -966,22 +1043,31 @@ def combat_speaker_selector(last_speaker, groupchat):
         )
         if _active_is_npc:
             # Tour PNJ : MJ reprend directement, les héros n'interviennent pas
+            print(f"[SPEAKER DEBUG] → RETURN MJ (tour PNJ {_active_cbt})")
             return mj_agent_ref or eligible[0]
         players_eligible =[a for a in eligible if a.name in _ALL_PLAYERS]
         if players_eligible:
             responded = _responded_since(last_mj_idx) if last_mj_idx is not None else set()
             not_yet =[a for a in players_eligible if a.name not in responded]
             if not_yet:
-                return _pick_least_recent(not_yet)
-            return _pick_least_recent(players_eligible)
+                _chosen = _pick_least_recent(not_yet)
+                print(f"[SPEAKER DEBUG] → RETURN {_chosen.name} (Cas3 least_recent, not_yet={[a.name for a in not_yet]})")
+                return _chosen
+            _chosen = _pick_least_recent(players_eligible)
+            print(f"[SPEAKER DEBUG] → RETURN {_chosen.name} (Cas3 all responded, restart)")
+            return _chosen
+        print(f"[SPEAKER DEBUG] → RETURN MJ (no players eligible)")
         return mj_agent_ref or eligible[0]
 
     # Fallback ultime : choix parmi les PJ éligibles qui ne viennent pas de parler
     players_eligible =[a for a in eligible if a.name in _ALL_PLAYERS]
     if players_eligible:
         candidates = [a for a in players_eligible if a.name != last_name]
-        return _pick_least_recent(candidates if candidates else players_eligible)
+        _chosen = _pick_least_recent(candidates if candidates else players_eligible)
+        print(f"[SPEAKER DEBUG] → RETURN {_chosen.name} (fallback)")
+        return _chosen
 
+    print(f"[SPEAKER DEBUG] → RETURN {eligible[0].name} (ultimate fallback)")
     return eligible[0]
 
 

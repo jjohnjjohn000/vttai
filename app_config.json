@@ -18,7 +18,7 @@
     }
   },
   "chronicler": {
-    "model": "gemini-3.1-flash-lite-preview",
+    "model": "gemini-3.1-flash-lite",
     "temperature": 0.3,
     "memories_importance": 1,
     "system_prompt": "Tu es le Chroniqueur IA d'une campagne D&D. Ton but est de maintenir un résumé global à jour de l'histoire. Je vais te fournir l'ancien résumé de la campagne, le journal de quêtes actif, les mémoires clés du groupe, puis la transcription de la nouvelle session. Rédige un UNIQUE résumé mis à jour qui inclut l'essentiel de l'ancien résumé ET de façon fluide les nouveaux événements. Note si des objectifs de quête semblent avoir progressé ou été accomplis. Sois immersif, concis (pas de détails inutiles), et liste les objets majeurs trouvés."
@@ -26,7 +26,8 @@
   "groupchat": {
     "max_round": 500,
     "allow_repeat_speaker": false,
-    "allow_skill_checks": false
+    "allow_skill_checks": false,
+    "agent_max_sentences": 1
   },
   "memories": {
     "compact_importance_min": 2,
@@ -44,6 +45,7 @@
       "Elara": "fr_FR-siwis-medium",
       "Thorne": "fr_FR-gilles-low",
       "Lyra": "fr_FR-upmc-medium",
+      "Alexis_Le_MJ": "en_US-bryce-medium",
       "default": "fr_FR-siwis-medium"
     },
     "pitch": {
@@ -51,7 +53,16 @@
       "Elara": 0.0,
       "Thorne": 2.0,
       "Lyra": 4.0,
+      "Alexis_Le_MJ": -0.5,
       "default": 0.0
+    },
+    "volume": {
+      "Kaelen": 105,
+      "Elara": 85,
+      "Thorne": 100,
+      "Lyra": 100,
+      "Alexis_Le_MJ": 115,
+      "default": 100
     }
   },
   "ui": {
@@ -62,9 +73,10 @@
     "hotkey": "numbersign"
   },
   "combat": {
-    "model": "gemini-3.1-flash-lite-preview"
+    "model": "gemini-3.1-flash-lite"
   },
   "fallback_chain": [
+    "gemini-3.1-flash-lite",
     "gemini-3.1-flash-lite-preview",
     "gemini-3-flash-preview",
     "openrouter/meta-llama/llama-3.3-70b-instruct:free",

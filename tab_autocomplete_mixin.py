@@ -33,13 +33,15 @@ import re
 import tkinter as tk
 
 # ─── Commandes reconnues ──────────────────────────────────────────────────────
-SLASH_COMMANDS: list[str] = [
+SLASH_COMMANDS: list[str] =[
     "/dmg",
     "/heal",
     "/msg",
     "/vote",
     "/round",
     "/quest",
+    "/skill",
+    "/search",
 ]
 
 # Pour chaque commande : index d'argument (0-based) → type de complétion
@@ -54,14 +56,24 @@ _COMPLETION_MAP: dict[str, dict[int, str]] = {
     "/vote":  {},        # choix libres — pas de complétion
     "/round": {},        # sans argument
     "/quest": {},        # texte libre — pas de complétion
+    "/skill": {0: "agent", 1: "skill"},
 }
 
 # Types de dégâts (même liste que dans damage_link_ui_handler)
-_DMG_TYPES_COMPLETION: list[str] = [
+_DMG_TYPES_COMPLETION: list[str] =[
     "Tranchant", "Contondant", "Perforant",
     "Acide", "Feu", "Froid", "Foudre",
     "Nécrotique", "Radiant", "Poison",
     "Psychique", "Tonnerre", "Force",
+]
+
+# Compétences et caractéristiques D&D 5e
+_SKILLS_COMPLETION: list[str] =[
+    "Acrobaties", "Arcanes", "Athlétisme", "Discrétion", "Dressage", 
+    "Escamotage", "Histoire", "Intimidation", "Investigation", "Médecine", 
+    "Nature", "Perception", "Perspicacité", "Persuasion", "Religion", 
+    "Représentation", "Survie", "Tromperie",
+    "Force", "Dextérité", "Constitution", "Intelligence", "Sagesse", "Charisme"
 ]
 
 
@@ -93,7 +105,8 @@ class TabAutocompleteMixin:
         if draft is not None:
             self.entry.delete(0, tk.END)
             self.entry.insert(0, draft)
-            self.entry.icursor(tk.END)
+            if hasattr(self.entry, "icursor"):
+                self.entry.icursor(tk.END)
             # Réinitialise l'état
             self._tab_candidates = []
             self._tab_idx        = -1
@@ -106,7 +119,10 @@ class TabAutocompleteMixin:
 
     def _tab_cycle(self, direction: int = +1) -> None:
         current_text = self.entry.get()
-        pos          = self.entry.index(tk.INSERT)
+        if hasattr(self.entry, "get_cursor_pos"):
+            pos = self.entry.get_cursor_pos()
+        else:
+            pos = self.entry.index(tk.INSERT)
         prefix       = current_text[:pos]
         suffix       = current_text[pos:]
 
@@ -154,7 +170,8 @@ class TabAutocompleteMixin:
 
         self.entry.delete(0, tk.END)
         self.entry.insert(0, new_text)
-        self.entry.icursor(new_pos)
+        if hasattr(self.entry, "icursor"):
+            self.entry.icursor(new_pos)
 
         # ── Afficher l'indice visuel dans le hint label ───────────────────────
         self._tab_show_hint(candidates, idx)
@@ -226,6 +243,9 @@ class TabAutocompleteMixin:
 
         elif comp_type == "dmg_type":
             pool = _DMG_TYPES_COMPLETION
+
+        elif comp_type == "skill":
+            pool = _SKILLS_COMPLETION
 
         elif comp_type == "number":
             # Valeur par défaut proposée ; filtrée si l'utilisateur a déjà tapé autre chose

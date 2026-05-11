@@ -71,7 +71,22 @@ class InventoryPanel:
         self.win.title("Inventaire du Groupe")
         self.win.geometry("900x640")
         self.win.configure(bg=BG)
-        self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+        def _safe_close():
+            # X11 fix : withdraw + ghost au lieu de destroy() pour éviter
+            # le gel clavier causé par ~centaines d'appels Tcl synchrones.
+            try: self.win.selection_clear()
+            except Exception: pass
+            try:
+                self.win.unbind_all("<MouseWheel>")
+                self.win.unbind_all("<Button-4>")
+                self.win.unbind_all("<Button-5>")
+            except Exception: pass
+            self.win.withdraw()
+            self.win.update_idletasks()
+            if not hasattr(root, "_ghosted_panels"):
+                root._ghosted_panels = []
+            root._ghosted_panels.append(self.win)
+        self.win.protocol("WM_DELETE_WINDOW", _safe_close)
 
         self._build_ui()
         self._refresh()

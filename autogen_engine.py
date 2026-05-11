@@ -40,6 +40,7 @@ _LLM_TIMEOUT_SEC = 100   # secondes avant déclenchement du fallback
 
 _FALLBACK_CHAIN = [
     "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite",
     "gemini-3.1-flash-lite-preview",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
@@ -65,7 +66,7 @@ from engine_receive  import EngineContext, build_patched_receive
 
 def _get_combat_llm_model() -> str:
     """Retourne le modèle LLM combat configuré (app_config.json → combat.model)."""
-    return get_combat_config().get("model", "gemini-3.1-flash-lite-preview")
+    return get_combat_config().get("model", "gemini-3.1-flash-lite")
 _PLAYER_NAMES_COMBAT = ["Kaelen", "Elara", "Thorne", "Lyra"]
 
 
@@ -160,6 +161,8 @@ class AutogenEngineMixin:
 
     def run_autogen(self):
         import autogen  # lazy — gRPC démarre ici, bien après Tk.mainloop()
+        from engine_agents import ensure_autogen_patched
+        ensure_autogen_patched()
 
         # ── Voix PNJ dans le mapping TTS ─────────────────────────────────────
         try:
@@ -350,10 +353,57 @@ class AutogenEngineMixin:
             speaker_selection_method=combat_speaker_selector,
             allow_repeat_speaker=_gc_cfg.get("allow_repeat_speaker", False),
         )
+
+        # ── DEBUG TRAP : TrackedList pour tracer TOUTE mutation de groupchat.agents ──
+        class _TrackedList(list):
+            def _trace(self, op):
+                import traceback
+                print(f"\n[GC TRAP] agents.{op}() → {[a.name for a in self]}")
+                traceback.print_stack(limit=8)
+            def append(self, v):
+                super().append(v)
+                self._trace("append")
+            def remove(self, v):
+                super().remove(v)
+                self._trace("remove")
+            def extend(self, v):
+                super().extend(v)
+                self._trace("extend")
+            def insert(self, i, v):
+                super().insert(i, v)
+                self._trace("insert")
+            def pop(self, *a):
+                r = super().pop(*a)
+                self._trace("pop")
+                return r
+            def clear(self):
+                super().clear()
+                self._trace("clear")
+            def __setitem__(self, k, v):
+                super().__setitem__(k, v)
+                self._trace("__setitem__")
+            def __delitem__(self, k):
+                super().__delitem__(k)
+                self._trace("__delitem__")
+            def __iadd__(self, v):
+                super().__iadd__(v)
+                self._trace("__iadd__")
+                return self
+
+        import time
+        _t0 = time.time()
+        self.groupchat.agents = _TrackedList(self.groupchat.agents)
+        print(f"[GC TRAP] TrackedList installed: {[a.name for a in self.groupchat.agents]} at {_t0}")
+        # ────────────────────────────────────────────────────────────────────
         manager = autogen.GroupChatManager(
             groupchat=self.groupchat,
             llm_config=_manager_llm
         )
+        _t1 = time.time()
+        print(f"[GC TRAP] GroupChatManager created in {_t1 - _t0:.2f}s")
+        
+        # Stocker la référence du manager pour _sync_groupchat_agents
+        self._groupchat_manager = manager
         
         # Donner la référence du manager aux agents pour la redirection des /msg
         for agent in _all_player_agents.values():
@@ -371,14 +421,19 @@ class AutogenEngineMixin:
             pnj_patterns=pnj_patterns,
         )
 
+        _t2 = time.time()
         patched_receive = build_patched_receive(ctx, groupchat_ref)
-
+        _t3 = time.time()
+        print(f"[GC TRAP] build_patched_receive returned in {_t3 - _t2:.2f}s")
+        
         # Substitution atomique de classe (safe gRPC, pas de MethodType sur instance)
         manager.__class__ = type(
             "PatchedGroupChatManager",
             (manager.__class__,),
             {"receive": patched_receive}
         )
+        _t4 = time.time()
+        print(f"[GC TRAP] class swapped in {_t4 - _t3:.2f}s")
 
         # ── REDIRECTION DES CHUCHOTEMENTS (/msg) VERS LE GROUPCHAT ────────────
         # Si un agent répond directement au MJ (suite à un /msg), la réponse contourne
@@ -428,62 +483,7 @@ class AutogenEngineMixin:
                 _agt, _agt.generate_reply, _LLM_TIMEOUT_SEC
             )
 
-        # ── Méthode _sync_groupchat_agents (utilisée par character_mixin) ──────
-        # Doit rester sur self, référence le groupchat construit ici.
-        _all_pa = _all_player_agents  # capture locale
 
-        def _sync_groupchat_agents(char_name: str, active: bool):
-            """Ajoute ou retire un agent du groupchat en cours de session."""
-            agent = _all_pa.get(char_name)
-            if agent is None:
-                return
-            agents = self.groupchat.agents
-            if active and agent not in agents:
-                agents.append(agent)
-                self.msg_queue.put({
-                    "sender": "⚙ Scène",
-                    "text":   f"{char_name} entre dans la scene.",
-                    "color":  "#666677",
-                })
-                # ── Injecter un message MJ dans l'historique AutoGen ─────────
-                # Sans ça, combat_speaker_selector ignore le nouvel arrivant :
-                # aucun message MJ ne le cible, donc il n'est jamais sélectionné.
-                # Le message injecté contient le nom explicite → Cas 1 du
-                # sélecteur → ce PJ et seulement lui est appelé en priorité.
-                if hasattr(self, "groupchat") and self.groupchat.messages is not None:
-                    self.groupchat.messages.append({
-                        "role":    "user",
-                        "name":    "Alexis_Le_MJ",
-                        "content": (
-                            f"[ENTRÉE EN SCÈNE] {char_name} rejoint le groupe. "
-                            f"{char_name}, quelle est ta première réaction ?"
-                        ),
-                    })
-                # ─────────────────────────────────────────────────────────────
-            elif not active and agent in agents:
-                agents.remove(agent)
-                # ── Nettoyer le message [ENTRÉE EN SCÈNE] injecté ───────────
-                # Sans ça, _find_last_mj_msg() peut encore trouver ce message
-                # et sélectionner l'agent comme prochain speaker malgré son
-                # retrait de groupchat.agents (ex: [PAROLE_SPONTANEE] vide).
-                if hasattr(self, "groupchat") and self.groupchat.messages is not None:
-                    self.groupchat.messages = [
-                        m for m in self.groupchat.messages
-                        if not (
-                            m.get("name") == "Alexis_Le_MJ"
-                            and f"[ENTRÉE EN SCÈNE] {char_name}" in str(m.get("content", ""))
-                        )
-                    ]
-                # ─────────────────────────────────────────────────────────────
-                self.msg_queue.put({
-                    "sender": "⚙ Scène",
-                    "text":   f"{char_name} quitte la scène.",
-                    "color":  "#666677",
-                })
-
-        # _sync_groupchat_agents est défini dans ui_setup_mixin.py — pas d'override ici.
-        # On garde _sync_gc comme alias interne si besoin depuis autogen_engine.
-        self._sync_gc = _sync_groupchat_agents
 
         # ── Démarrage ────────────────────────────────────────────────────────
         self.msg_queue.put({

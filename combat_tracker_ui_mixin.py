@@ -38,6 +38,7 @@ class CombatTrackerUIMixin:
 
     def _build_window(self):
         self.win = tk.Toplevel(self.root)
+        self.win.withdraw()  # Fix XWayland mapping freeze
         self.win.title("⚔️  Suivi de Combat — D&D 5e")
         self.win.geometry("980x700")
         self.win.configure(bg=C["bg"])
@@ -48,6 +49,10 @@ class CombatTrackerUIMixin:
         self._build_columns_header()
         self._build_list_area()
         self._build_bottom_panel()
+
+        # Mapping asynchrone
+        self.win.after(30, self.win.deiconify)
+        self.win.after(60, self.win.lift)
 
         # Raccourci clavier global : F3 → Tour suivant (actif même sans focus sur cette fenêtre)
         self.root.bind_all("<F3>", lambda e: self._next_turn())
@@ -290,7 +295,7 @@ class CombatTrackerUIMixin:
             field_label_row = 1
 
         # ── Labels + champs ────────────────────────────────────────────────
-        for col, text in enumerate(["Nom", "PV max", "CA", "Init+", "Init=", "Qte", "Align."]):
+        for col, text in enumerate(["Nom", "PV max", "CA", "Init+", "Init=", "Hit+", "Dmg+", "Qte"]):
             lbl(text).grid(row=field_label_row, column=col, padx=(0,2), sticky="w")
 
         fr = field_label_row + 1
@@ -299,14 +304,21 @@ class CombatTrackerUIMixin:
         self._npc_ac         = ent(4,  "13");         self._npc_ac.grid(row=fr,  column=2, padx=(0,4), ipady=3)
         self._npc_dex        = ent(4,  "1");          self._npc_dex.grid(row=fr, column=3, padx=(0,4), ipady=3)
         self._npc_init_fixed = ent(4,  "");           self._npc_init_fixed.grid(row=fr, column=4, padx=(0,4), ipady=3)
-        self._npc_qty        = ent(3,  "1");          self._npc_qty.grid(row=fr, column=5, padx=(0,4), ipady=3)
+        self._npc_hit        = ent(4,  "0");          self._npc_hit.grid(row=fr, column=5, padx=(0,4), ipady=3)
+        self._npc_dmg        = ent(4,  "0");          self._npc_dmg.grid(row=fr, column=6, padx=(0,4), ipady=3)
+        self._npc_qty        = ent(3,  "1");          self._npc_qty.grid(row=fr, column=7, padx=(0,4), ipady=3)
 
-        # ── Sélecteur d'alignement (Hostile / Neutral / Allié) ────────────────
+        # ── Ligne du dessous (Alignement, Upgrade, Boutons) ────────────────
+        fr2 = fr + 1
+        bottom_tools = tk.Frame(add_frame, bg="#0d1018")
+        bottom_tools.grid(row=fr2, column=0, columnspan=8, sticky="we", pady=(8, 0))
+
+        # Sélecteur d'alignement (Hostile / Neutral / Allié)
         self._npc_alignment = tk.StringVar(value="hostile")
-        align_frame = tk.Frame(add_frame, bg="#0d1018")
-        align_frame.grid(row=fr, column=6, padx=(2, 6))
+        align_frame = tk.Frame(bottom_tools, bg="#0d1018")
+        align_frame.pack(side=tk.LEFT)
 
-        _ALIGN_CFG = [
+        _ALIGN_CFG =[
             ("H", "hostile", "#e53935", "#3a0a0a"),
             ("N", "neutral", "#fdd835", "#3a3200"),
             ("A", "ally",    "#43a047", "#0a2a0a"),
@@ -336,17 +348,39 @@ class CombatTrackerUIMixin:
         self._align_btns["hostile"].config(
             bg="#3a0a0a", fg="#e53935", relief="sunken")
 
-        tk.Button(add_frame, text="+ Ajouter",
+        # Upgrade / Élite
+        upg_frame = tk.Frame(bottom_tools, bg="#0d1018")
+        upg_frame.pack(side=tk.LEFT, padx=16)
+
+        self._npc_upgrade_lvl = 0
+        self._npc_base_stats = None
+
+        def _do_upgrade(delta):
+            if not self._npc_base_stats:
+                return
+            self._npc_upgrade_lvl += delta
+            self._apply_base_stats_and_upgrade()
+
+        tk.Button(upg_frame, text="-", bg="#1a1a2a", fg="#fff", font=("Consolas", 8, "bold"), relief="flat", padx=4, cursor="hand2", command=lambda: _do_upgrade(-1)).pack(side=tk.LEFT)
+        self._npc_upgrade_var = tk.StringVar(value="Élite: +0")
+        tk.Label(upg_frame, textvariable=self._npc_upgrade_var, bg="#0d1018", fg=C["gold"], font=("Consolas", 9, "bold")).pack(side=tk.LEFT, padx=6)
+        tk.Button(upg_frame, text="+", bg="#1a1a2a", fg="#fff", font=("Consolas", 8, "bold"), relief="flat", padx=4, cursor="hand2", command=lambda: _do_upgrade(+1)).pack(side=tk.LEFT)
+
+        # Boutons Ajouter
+        btns_f = tk.Frame(bottom_tools, bg="#0d1018")
+        btns_f.pack(side=tk.RIGHT)
+
+        tk.Button(btns_f, text="+ Ajouter",
                   bg=_darken(C["blue"], 0.4), fg=C["blue_bright"],
                   font=("Consolas", 9, "bold"), relief="flat",
                   padx=8, pady=3, cursor="hand2",
-                  command=self._add_npc).grid(row=fr, column=7, padx=(4, 0))
+                  command=self._add_npc).pack(side=tk.LEFT, padx=(0, 4))
 
-        tk.Button(add_frame, text="+ Héros",
+        tk.Button(btns_f, text="+ Héros",
                   bg=_darken(C["green"], 0.35), fg=C["green_bright"],
                   font=("Consolas", 9, "bold"), relief="flat",
                   padx=8, pady=3, cursor="hand2",
-                  command=self._add_missing_pc).grid(row=fr, column=8, padx=(4, 0))
+                  command=self._add_missing_pc).pack(side=tk.LEFT)
 
         # ── Infos combat ───────────────────────────────────────────────────
         info_frame = tk.Frame(bot, bg="#0d1018")
@@ -379,13 +413,49 @@ class CombatTrackerUIMixin:
             self._ct_suggest_frame.place_forget()
             self._ct_suggest_visible = False
 
+    def _apply_base_stats_and_upgrade(self):
+        if not self._npc_base_stats: return
+        
+        lvl = self._npc_upgrade_lvl
+        self._npc_upgrade_var.set(f"Élite: {lvl:+d}")
+        
+        b = self._npc_base_stats
+        
+        if lvl >= 0:
+            hp = int(b["hp"] * (1 + lvl))
+        else:
+            hp = max(1, int(b["hp"] / (1 + abs(lvl))))
+            
+        ac = b["ac"] + lvl
+        dex = b["dex"] + lvl
+        hit = b["hit"] + lvl
+        dmg = b["dmg"] + lvl
+        
+        def _set(e, v):
+            e.delete(0, tk.END)
+            e.insert(0, str(v))
+            
+        _set(self._npc_hp, hp)
+        _set(self._npc_ac, ac)
+        _set(self._npc_dex, dex)
+        _set(self._npc_hit, hit)
+        _set(self._npc_dmg, dmg)
+
+        if self._current_bestiary_name:
+            try:
+                from state_manager import set_monster_upgrade
+                set_monster_upgrade(self._current_bestiary_name, lvl)
+            except ImportError:
+                pass
+
     def _ct_pick(self, bestiary_name: str):
         """Remplit le formulaire avec HP/CA/Init du monstre sélectionné."""
         self._ct_hide_suggest()
         if not _BESTIARY_OK:
             return
         _bestiary_load()
-        m = _bestiary_get(bestiary_name)
+        # On demande la version NON-upgradée car on va faire les calculs visuels dans le panneau
+        m = _bestiary_get(bestiary_name, apply_upgrades=False)
         if not m:
             self._ct_status.config(text="Introuvable", fg=C["red_bright"])
             return
@@ -402,19 +472,45 @@ class CombatTrackerUIMixin:
 
         dex_mod = (int(m.get("dex", 10)) - 10) // 2
 
+        import re
+        m_str = str(m)
+        hit_match = re.search(r'\{@hit\s+(\d+)\}', m_str)
+        hit_base = int(hit_match.group(1)) if hit_match else 0
+        dmg_base = 0
+
         cr_raw = m.get("cr", "?")
         cr = cr_raw.get("cr", "?") if isinstance(cr_raw, dict) else str(cr_raw)
-
-        def _set(e, v):
-            e.delete(0, tk.END)
-            e.insert(0, str(v))
-
-        _set(self._npc_name, bestiary_name)
-        _set(self._npc_hp,   hp)
-        _set(self._npc_ac,   ac)
-        _set(self._npc_dex,  dex_mod)
-        self._npc_init_fixed.delete(0, tk.END)
 
         self._current_bestiary_name = bestiary_name
         self._ct_search_var.set("")
         self._ct_status.config(text=f"CR {cr}  PV:{hp}  CA:{ac}", fg=C["green_bright"])
+
+        saved_lvl = 0
+        try:
+            from state_manager import get_monster_upgrade
+            saved_lvl = get_monster_upgrade(bestiary_name)
+        except ImportError:
+            pass
+
+        self._npc_upgrade_lvl = saved_lvl
+        self._npc_base_stats = {
+            "hp": hp,
+            "ac": ac,
+            "dex": dex_mod,
+            "hit": hit_base,
+            "dmg": dmg_base,
+            "stats": {
+                "str": m.get("str", 10),
+                "dex": m.get("dex", 10),
+                "con": m.get("con", 10),
+                "int": m.get("int", 10),
+                "wis": m.get("wis", 10),
+                "cha": m.get("cha", 10),
+            }
+        }
+        
+        self._npc_name.delete(0, tk.END)
+        self._npc_name.insert(0, bestiary_name)
+        self._npc_init_fixed.delete(0, tk.END)
+        
+        self._apply_base_stats_and_upgrade()

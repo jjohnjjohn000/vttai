@@ -100,6 +100,24 @@ class CampaignLogMixin:
 
         win._notebook = notebook
 
+        # X11 fix : withdraw + ghost au lieu de destroy()
+        def _safe_close():
+            try: win.selection_clear()
+            except Exception: pass
+            try:
+                win.unbind_all("<MouseWheel>")
+                win.unbind_all("<Button-4>")
+                win.unbind_all("<Button-5>")
+            except Exception: pass
+            win.withdraw()
+            win.update_idletasks()
+            if not hasattr(self.root, "_ghosted_panels"):
+                self.root._ghosted_panels = []
+            self.root._ghosted_panels.append(win)
+            self._campaign_log_win = None
+
+        win.protocol("WM_DELETE_WINDOW", _safe_close)
+
     # ═════════════════════════════════════════════════════════════════════════
     # ONGLET CHRONIQUES
     # ═════════════════════════════════════════════════════════════════════════
@@ -747,7 +765,16 @@ class CampaignLogMixin:
                     session_ajout=session,
                 )
 
-            dialog.destroy()
+            # X11 fix : withdraw + ghost au lieu de destroy()
+            try: dialog.grab_release()
+            except Exception: pass
+            try: dialog.selection_clear()
+            except Exception: pass
+            dialog.withdraw()
+            dialog.update_idletasks()
+            if not hasattr(win, "_ghosted_panels"):
+                win._ghosted_panels = []
+            win._ghosted_panels.append(dialog)
             # Refresh la liste
             if hasattr(tab_parent, "_refresh_memories"):
                 tab_parent._refresh_memories()
@@ -756,9 +783,20 @@ class CampaignLogMixin:
                   font=("Consolas", 11, "bold"), relief="flat", padx=16, pady=4,
                   cursor="hand2", command=_save).pack(side="left", padx=8)
 
+        def _cancel_dialog():
+            try: dialog.grab_release()
+            except Exception: pass
+            dialog.withdraw()
+            dialog.update_idletasks()
+            if not hasattr(win, "_ghosted_panels"):
+                win._ghosted_panels = []
+            win._ghosted_panels.append(dialog)
+
         tk.Button(btn_bar, text="Annuler", bg="#2a2a4e", fg=_FG,
                   font=("Consolas", 11), relief="flat", padx=16, pady=4,
-                  cursor="hand2", command=dialog.destroy).pack(side="left", padx=8)
+                  cursor="hand2", command=_cancel_dialog).pack(side="left", padx=8)
+
+        dialog.protocol("WM_DELETE_WINDOW", _cancel_dialog)
 
     # ═════════════════════════════════════════════════════════════════════════
     # ARCHIVAGE  (inchangé)

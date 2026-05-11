@@ -20,6 +20,27 @@ import tkinter as tk
 from tkinter import scrolledtext, filedialog
 
 from window_state import _save_window_state, _get_win_geometry
+
+
+def _ghost_close(win, root=None):
+    """X11 fix : withdraw + ghost au lieu de destroy().
+    Évite ~centaines d'appels Tcl synchrones (orig_del) qui gèlent le clavier."""
+    try: win.grab_release()
+    except Exception: pass
+    try: win.selection_clear()
+    except Exception: pass
+    try:
+        win.unbind_all("<MouseWheel>")
+        win.unbind_all("<Button-4>")
+        win.unbind_all("<Button-5>")
+    except Exception: pass
+    win.withdraw()
+    win.update_idletasks()
+    _root = root or win.master
+    if not hasattr(_root, "_ghosted_panels"):
+        _root._ghosted_panels = []
+    _root._ghosted_panels.append(win)
+
 from state_manager import (
     load_state, save_state, get_scene, save_scene,
     get_npcs, save_npcs, AVAILABLE_VOICES, get_available_voices,
@@ -36,6 +57,116 @@ from combat_map_panel import open_combat_map as _open_combat_map
 
 class PanelsMixin:
     """Mixin pour DnDApp — panneaux flottants et fenêtres modales."""
+
+    # ─── COLLAPSIBLE SIDEBAR SECTIONS ────────────────────────────────────────
+    # Usage in ui_setup_mixin.py:
+    #
+    #   header, content = self._make_collapsible_section(
+    #       parent      = right_sidebar_frame,
+    #       title       = "[Stats] ÉTAT DU GROUPE",
+    #       key         = "sidebar_stats",        # unique persistence key
+    #       title_fg    = "#00e5ff",
+    #       title_bg    = "#0d1b2a",
+    #   )
+    #   # Put all your existing widgets inside `content` instead of `right_sidebar_frame`
+    #   tk.Label(content, text="Kaelen …").pack(...)
+    #
+    # The collapsed/expanded state is persisted in self._win_state so it
+    # survives restarts. The entire section animates via pack/pack_forget.
+
+    def _make_collapsible_section(
+        self,
+        parent,
+        title: str,
+        key: str,
+        title_fg: str = "#c8b8ff",
+        title_bg: str = "#12121f",
+        section_bg: str | None = None,
+    ):
+        """
+        Wrap a sidebar block in a collapsible section.
+
+        Parameters
+        ----------
+        parent      : tk widget — the sidebar frame to pack into
+        title       : str       — header label text (supports existing bracket tags)
+        key         : str       — unique key for persistence (e.g. 'sidebar_stats')
+        title_fg    : str       — header text colour
+        title_bg    : str       — header background colour
+        section_bg  : str|None  — content background (defaults to parent bg)
+
+        Returns
+        -------
+        (header_frame, content_frame)
+          • header_frame  — the clickable title row (already packed)
+          • content_frame — put all your widgets here instead of `parent`
+        """
+        # ── Persistent state ──────────────────────────────────────────────
+        if not hasattr(self, "_sidebar_states"):
+            # Load saved states from win_state, fall back to all expanded
+            self._sidebar_states: dict = self._win_state.get("_sidebar_states", {})
+
+        is_collapsed: bool = self._sidebar_states.get(key, False)
+        bg = section_bg or (parent.cget("bg") if hasattr(parent, "cget") else "#1e1e1e")
+
+        # ── Outer container (keeps header + content together as one unit) ─
+        outer = tk.Frame(parent, bg=bg)
+        outer.pack(fill=tk.X, padx=0, pady=(2, 0))
+
+        # ── Header row ────────────────────────────────────────────────────
+        header = tk.Frame(outer, bg=title_bg, cursor="hand2")
+        header.pack(fill=tk.X)
+
+        # Toggle arrow — right-aligned
+        arrow_var = tk.StringVar(value="▶" if is_collapsed else "▼")
+        arrow_lbl = tk.Label(
+            header, textvariable=arrow_var,
+            bg=title_bg, fg=title_fg,
+            font=("Arial", 7), padx=4, cursor="hand2",
+        )
+        arrow_lbl.pack(side=tk.RIGHT, pady=3)
+
+        # Section title
+        title_lbl = tk.Label(
+            header, text=title,
+            bg=title_bg, fg=title_fg,
+            font=("Consolas", 9, "bold"), anchor="w",
+        )
+        title_lbl.pack(side=tk.LEFT, padx=6, pady=4, fill=tk.X, expand=True)
+
+        # ── Content frame ─────────────────────────────────────────────────
+        content = tk.Frame(outer, bg=bg)
+        if not is_collapsed:
+            content.pack(fill=tk.X, padx=0, pady=0)
+
+        # Thin separator line below header (always visible, acts as border)
+        sep = tk.Frame(outer, bg=title_bg, height=1)
+        sep.pack(fill=tk.X)
+
+        # ── Toggle logic ──────────────────────────────────────────────────
+        def _toggle(event=None):
+            if content.winfo_ismapped():
+                content.pack_forget()
+                arrow_var.set("▶")
+                self._sidebar_states[key] = True
+            else:
+                content.pack(fill=tk.X, padx=0, pady=0)
+                arrow_var.set("▼")
+                self._sidebar_states[key] = False
+            # Persist state
+            try:
+                self._win_state["_sidebar_states"] = self._sidebar_states
+                from window_state import _save_window_state
+                _save_window_state(self._win_state)
+            except Exception:
+                pass
+
+        for w in (header, arrow_lbl, title_lbl):
+            w.bind("<Button-1>", _toggle)
+
+        return header, content
+
+    # ─── END COLLAPSIBLE HELPER ──────────────────────────────────────────────
 
     def _refresh_scene_widget(self):
         """Met à jour les labels du widget scène dans la sidebar."""
@@ -121,6 +252,7 @@ class PanelsMixin:
         FULL_C   = "#fffde7"
 
         win = tk.Toplevel(self.root)
+        win.withdraw()  # Fix XWayland mapping freeze
         win.title("📅 Calendrier Barovien")
         win.configure(bg=BG)
         win.resizable(False, False)
@@ -142,7 +274,7 @@ class PanelsMixin:
             self._win_state.pop("_open_calendar", None)
             _save_window_state(self._win_state)
             self._calendar_popout = None
-            win.destroy()
+            _ghost_close(win, self.root)
         win.protocol("WM_DELETE_WINDOW", _on_close)
 
         # ── Vue courante (mois/année affiché, pas forcément today) ────────
@@ -396,7 +528,7 @@ class PanelsMixin:
                     cal2.get("notes", {}).pop(note_key, None)
                 save_calendar(cal2)
                 _do_refresh()
-                ew.destroy()
+                _ghost_close(ew, self.root)
 
             tk.Button(ew, text="✅ Sauvegarder", bg="#1a1a2e", fg=FG,
                       font=("Arial", 9, "bold"), relief="flat",
@@ -404,6 +536,9 @@ class PanelsMixin:
 
         # ── Lancement ─────────────────────────────────────────────────────
         _do_refresh()
+        
+        win.after(20, win.deiconify)
+        win.after(40, win.lift)
 
     # ─── POPOUT IMAGE DU LIEU ─────────────────────────────────────────────────
 
@@ -423,6 +558,7 @@ class PanelsMixin:
                 self._location_popout = None
 
         win = tk.Toplevel(self.root)
+        win.withdraw()  # Fix XWayland mapping freeze
         win.title("🗺️ Lieu")
         win.configure(bg="#0a0e0a")
         self._location_popout = win
@@ -446,7 +582,7 @@ class PanelsMixin:
             self._win_state.pop("_open_location_image", None)
             _save_window_state(self._win_state)
             self._location_popout = None
-            win.destroy()
+            _ghost_close(win, self.root)
 
         win.protocol("WM_DELETE_WINDOW", _on_close)
 
@@ -688,7 +824,9 @@ class PanelsMixin:
 
         # ── Lancement initial ─────────────────────────────────────────────────
         win.after(100, _refresh)   # 1er appel après que le canvas est rendu
-
+        
+        win.after(20, win.deiconify)
+        win.after(40, win.lift)
 
     def open_scene_editor(self):
         """Fenêtre d'édition du contexte de scène."""
@@ -698,6 +836,7 @@ class PanelsMixin:
         win.configure(bg="#0d1117")
         win.grab_set()
         self._track_window("modal_scene_editor", win)
+        win.protocol("WM_DELETE_WINDOW", lambda: _ghost_close(win, self.root))
 
         scene = get_scene()
 
@@ -706,6 +845,12 @@ class PanelsMixin:
         hdr.pack(fill=tk.X)
         tk.Label(hdr, text="🗺️  Contexte de la Scène Actuelle", bg="#0d2010", fg="#81c784",
                  font=("Arial", 13, "bold")).pack(side=tk.LEFT, padx=14, pady=10)
+
+        # Bouton IA pour générer la scène
+        tk.Button(hdr, text="🪄 Générer par IA", bg="#1a3a5c", fg="#64b5f6",
+                  font=("Arial", 9, "bold"), relief="flat", cursor="hand2",
+                  command=lambda: generate_scene_ai()).pack(side=tk.RIGHT, padx=14, pady=10)
+
         tk.Label(hdr, text="Injecté dans le contexte de tous les agents",
                  bg="#0d2010", fg="#555", font=("Arial", 8)).pack(side=tk.RIGHT, padx=14)
 
@@ -759,8 +904,8 @@ class PanelsMixin:
         lbl("Ambiance / Atmosphère")
         f_ambiance = text_field(scene.get("ambiance", ""), height=2)
 
-        f_npcs   = list_field(scene.get("npcs_presents", []),   "PNJs présents (un par ligne)")
-        f_objets = list_field(scene.get("objets_notables", []), "Elements notables (un par ligne)")
+        f_npcs   = list_field(scene.get("npcs_presents",[]),   "PNJs présents (un par ligne)")
+        f_objets = list_field(scene.get("objets_notables",[]), "Elements notables (un par ligne)")
 
         lbl("Menaces / Tension en cours")
         f_menaces = text_field(scene.get("menaces", ""), height=2)
@@ -843,12 +988,190 @@ class PanelsMixin:
         _img_path_var.trace_add("write", _update_thumb)
         _update_thumb()  # Affiche la vignette actuelle au chargement
 
+        def generate_scene_ai():
+            import tkinter.simpledialog as sd
+            import threading
+            import json
+            import os
+            import re
+
+            location_query = sd.askstring(
+                "Générer une Scène par IA",
+                "Où sommes-nous et y a-t-il des détails spécifiques ?\n\n(L'IA cherchera dans les livres et aventures, puis remplira la scène)",
+                parent=win
+            )
+            
+            if not location_query:
+                return
+                
+            self.msg_queue.put({
+                "sender": "Système",
+                "text": f"⏳ Recherche locale en cours pour : {location_query}...",
+                "color": "#64b5f6"
+            })
+            
+            def _ai_worker():
+                try:
+                    # 1. Recherche basique silencieuse dans les JSON d'aventure et de lore
+                    query_lower = location_query.lower()
+                    snippets =[]
+                    
+                    def _traverse(node, depth=0):
+                        if depth > 15: return  # Sécurité contre les arbres JSON trop profonds
+                        
+                        if isinstance(node, dict):
+                            text = ""
+                            name = str(node.get("name", ""))
+                            
+                            if "entries" in node:
+                                for entry in node["entries"]:
+                                    if isinstance(entry, str):
+                                        text += entry + "\n"
+                            
+                            if query_lower in name.lower() or query_lower in text.lower():
+                                if text.strip():
+                                    snippets.append(f"[{name}] {text.strip()}")
+                                    
+                            for v in node.values():
+                                _traverse(v, depth + 1)
+                                
+                        elif isinstance(node, list):
+                            for item in node:
+                                _traverse(item, depth + 1)
+
+                    for directory in["adventure", "book"]:
+                        if not os.path.exists(directory): continue
+                        for filename in os.listdir(directory):
+                            if filename.endswith(".json"):
+                                filepath = os.path.join(directory, filename)
+                                try:
+                                    with open(filepath, "r", encoding="utf-8") as f:
+                                        data = json.load(f)
+                                        _traverse(data)
+                                except Exception:
+                                    pass
+                                    
+                    context_text = "\n\n".join(snippets[:8])
+                    if not context_text:
+                        context_text = "Aucune information spécifique trouvée dans les livres. Invente la scène en te basant sur tes connaissances D&D 5e générales."
+
+                    # Notifie que la recherche locale est finie
+                    self.msg_queue.put({
+                        "sender": "Système",
+                        "text": "✅ Recherche locale terminée. Création de la scène par l'IA...",
+                        "color": "#64b5f6"
+                    })
+
+                    # 2. Appel au LLM (Chroniqueur)
+                    import autogen as _ag
+                    from app_config import get_chronicler_config
+                    from llm_config import build_llm_config, _default_model
+                    
+                    sys_prompt = """Tu es le Chroniqueur IA d'une campagne D&D 5e.
+On te donne une description ou un nom de lieu, et un contexte extrait des livres d'aventure.
+Génère les détails de la scène en t'imprégnant de l'ambiance du texte source.
+
+RÈGLES ABSOLUES :
+1. Réponds UNIQUEMENT avec du JSON valide.
+2. Ne mets aucun texte en dehors des accolades du JSON.
+
+FORMAT DE RÉPONSE :
+{
+  "lieu": "Nom précis du lieu",
+  "heure": "Matin / Après-midi / Soir / Nuit",
+  "meteo": "Météo et lumière (ex: Brume légère, pénombre)",
+  "ambiance": "1 à 2 phrases décrivant l'atmosphère",
+  "npcs_presents":["PNJ 1", "PNJ 2"],
+  "objets_notables":["Objet 1", "Objet 2"],
+  "menaces": "Menace immédiate ou 'Aucune'",
+  "notes_mj": "Secrets ou notes issus du contexte"
+}"""
+
+                    user_prompt = f"Lieu recherché : {location_query}\n\nContexte extrait des livres :\n{context_text}"
+                    
+                    chron_cfg = get_chronicler_config()
+                    llm_cfg   = build_llm_config(
+                        chron_cfg.get("model", _default_model),
+                        temperature=0.4,
+                    )
+                    
+                    # Injection propre de la configuration
+                    client_kwargs = {k: v for k, v in llm_cfg.items() if k not in ("functions", "tools")}
+                    client = _ag.OpenAIWrapper(**client_kwargs)
+                    
+                    response = client.create(messages=[
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user",   "content": user_prompt},
+                    ])
+
+                    raw_text = (response.choices[0].message.content or "").strip()
+                    
+                    # Extraction robuste du JSON
+                    match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+                    if match:
+                        clean = match.group(0)
+                    else:
+                        raise ValueError("Le LLM n'a pas renvoyé de JSON valide.")
+                    
+                    data = json.loads(clean)
+                    
+                    # 3. Mise à jour de l'UI
+                    def _update_ui():
+                        try:
+                            f_lieu.delete(0, tk.END)
+                            f_heure.delete(0, tk.END)
+                            f_meteo.delete(0, tk.END)
+                            f_ambiance.delete("1.0", tk.END)
+                            f_npcs.delete("1.0", tk.END)
+                            f_objets.delete("1.0", tk.END)
+                            f_menaces.delete("1.0", tk.END)
+                            f_notes.delete("1.0", tk.END)
+                            
+                            def format_list(val):
+                                if isinstance(val, list): return "\n".join(str(x) for x in val)
+                                return str(val)
+                            
+                            f_lieu.insert(0, str(data.get("lieu", "")))
+                            f_heure.insert(0, str(data.get("heure", "")))
+                            f_meteo.insert(0, str(data.get("meteo", "")))
+                            f_ambiance.insert("1.0", str(data.get("ambiance", "")))
+                            
+                            f_npcs.insert("1.0", format_list(data.get("npcs_presents",[])))
+                            f_objets.insert("1.0", format_list(data.get("objets_notables",[])))
+                            f_menaces.insert("1.0", str(data.get("menaces", "")))
+                            f_notes.insert("1.0", str(data.get("notes_mj", "")))
+                            
+                            self.msg_queue.put({
+                                "sender": "Système",
+                                "text": "✅ Contexte de la scène généré ! N'oubliez pas de cliquer sur [Sauvegarder la scène].",
+                                "color": "#81c784"
+                            })
+                        except Exception as inner_e:
+                            self.msg_queue.put({
+                                "sender": "⚠️ Système",
+                                "text": f"Erreur lors de l'insertion dans l'interface : {inner_e}",
+                                "color": "#e57373"
+                            })
+
+                    win.after(0, _update_ui)
+
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    self.msg_queue.put({
+                        "sender": "⚠️ Système",
+                        "text": f"Erreur lors de la génération IA : {e}",
+                        "color": "#e57373"
+                    })
+
+            threading.Thread(target=_ai_worker, daemon=True).start()
+
         # ── Boutons ──
         btn_frame = tk.Frame(win, bg="#0d1117")
         btn_frame.pack(fill=tk.X, padx=16, pady=12)
 
         def parse_list(widget):
-            return [l.strip() for l in widget.get("1.0", tk.END).strip().splitlines() if l.strip()]
+            return[l.strip() for l in widget.get("1.0", tk.END).strip().splitlines() if l.strip()]
 
         def save_and_close():
             old_image = scene.get("location_image", "")
@@ -872,20 +1195,20 @@ class PanelsMixin:
                 "color": "#81c784"
             })
             # Si l'image a changé et qu'il y en a une, proposer l'envoi automatique
-            if new_image and new_image != old_image and self._agents:
+            if new_image and new_image != old_image and getattr(self, '_agents', None):
                 self.msg_queue.put({
                     "sender": "🖼️ Système",
                     "text": "📸 Nouvelle image de lieu détectée — envoi aux agents multimodaux...",
                     "color": "#81c784"
                 })
                 self.root.after(500, self._broadcast_location_image)
-            win.destroy()
+            _ghost_close(win, self.root)
 
         def reset_scene():
             from state_manager import DEFAULT_SCENE
             save_scene(DEFAULT_SCENE.copy())
             self._refresh_scene_widget()
-            win.destroy()
+            _ghost_close(win, self.root)
 
         tk.Button(btn_frame, text="✅ Sauvegarder la scène", bg="#1a4a1a", fg="#81c784",
                   font=("Arial", 11, "bold"), relief="flat",
@@ -899,9 +1222,7 @@ class PanelsMixin:
                   command=reset_scene).pack(side=tk.LEFT, padx=10)
         tk.Button(btn_frame, text="Annuler", bg="#2a2a2a", fg="#888",
                   font=("Arial", 9), relief="flat",
-                  command=win.destroy).pack(side=tk.RIGHT)
-
-    # --- MÉTHODES PNJ ---
+                  command=lambda: _ghost_close(win, self.root)).pack(side=tk.RIGHT)
 
     def _rebuild_npc_menu(self):
         """Remplit self._npc_menu — appelé au 1er clic, jamais pendant setup_ui."""
@@ -1096,6 +1417,7 @@ class PanelsMixin:
         win.minsize(860, 400)
         # Pas de grab_set : on veut pouvoir ouvrir MonsterSheetWindow en parallèle
         self._track_window("modal_npc_manager", win)
+        win.protocol("WM_DELETE_WINDOW", lambda: _ghost_close(win, self.root))
 
         # ── En-tête ───────────────────────────────────────────────────────────
         hdr = tk.Frame(win, bg=BG2, pady=8)
@@ -1572,7 +1894,7 @@ class PanelsMixin:
                 except Exception:
                     pass
 
-            win.destroy()
+            _ghost_close(win, self.root)
 
         tk.Button(bottom, text="+ Ajouter un PNJ", bg="#1a2a1a", fg=GREEN,
                   font=("Arial", 10, "bold"), relief="flat", padx=10,
@@ -1583,7 +1905,7 @@ class PanelsMixin:
 
         tk.Button(bottom, text="Annuler", bg="#2a2a3a", fg="#888",
                   font=("Arial", 10), relief="flat", padx=8,
-                  command=win.destroy).pack(side=tk.RIGHT, padx=6)
+                  command=lambda: _ghost_close(win, self.root)).pack(side=tk.RIGHT, padx=6)
 
         tk.Button(bottom, text="Sauvegarder", bg="#4CAF50", fg="white",
                   font=("Arial", 10, "bold"), relief="flat", padx=12,
@@ -1617,6 +1939,12 @@ class PanelsMixin:
         win.grab_set()
         self._track_window("modal_quest_journal", win)
         self._quest_journal_win = win   # référence pour QuestTrackerMixin
+
+        def _close_quest_journal():
+            _ghost_close(win, self.root)
+            self._quest_journal_win = None
+
+        win.protocol("WM_DELETE_WINDOW", _close_quest_journal)
 
         quests = get_quests()
 
@@ -1692,6 +2020,25 @@ class PanelsMixin:
         list_canvas.configure(yscrollcommand=list_scroll.set)
         list_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def _on_mousewheel(e):
+            list_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        def _on_m_up(e):
+            list_canvas.yview_scroll(-1, "units")
+        def _on_m_dn(e):
+            list_canvas.yview_scroll(1, "units")
+
+        def _bind_mw(e):
+            list_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            list_canvas.bind_all("<Button-4>", _on_m_up)
+            list_canvas.bind_all("<Button-5>", _on_m_dn)
+        def _unbind_mw(e):
+            list_canvas.unbind_all("<MouseWheel>")
+            list_canvas.unbind_all("<Button-4>")
+            list_canvas.unbind_all("<Button-5>")
+
+        list_col.bind("<Enter>", _bind_mw)
+        list_col.bind("<Leave>", _unbind_mw)
 
         # Séparateur vertical
         tk.Frame(pane, bg="#30363d", width=1).pack(side=tk.LEFT, fill=tk.Y, padx=6)
@@ -1810,9 +2157,22 @@ class PanelsMixin:
                 w.destroy()
             refresh_list()
 
+        _list_cards = {}
+
+        def _update_selection_colors():
+            for qid, widgets in _list_cards.items():
+                bg = "#1a2a3a" if qid == selected_id[0] else "#161b22"
+                for w in widgets:
+                    try:
+                        if w.winfo_exists():
+                            w.config(bg=bg)
+                    except Exception:
+                        pass
+
         def refresh_list():
             for w in list_inner.winfo_children():
                 w.destroy()
+            _list_cards.clear()
 
             flt = filter_var.get()
             shown = [q for q in quests if flt == "all" or q["status"] == flt]
@@ -1841,13 +2201,16 @@ class PanelsMixin:
 
                     st_color = STATUS_COLORS.get(q["status"], "#888")
                     status_dot = "●" if q["status"] == "active" else ("✓" if q["status"] == "completed" else "✗")
-                    tk.Label(card, text=status_dot, bg=card_bg, fg=st_color,
-                             font=("Arial", 11, "bold"), width=2).pack(side=tk.LEFT, padx=(6,2))
+                    st_lbl = tk.Label(card, text=status_dot, bg=card_bg, fg=st_color,
+                                      font=("Arial", 11, "bold"), width=2)
+                    st_lbl.pack(side=tk.LEFT, padx=(6,2))
 
                     title_fg = "#e0e0e0" if q["status"] == "active" else "#777777"
                     title_lbl = tk.Label(card, text=q["title"], bg=card_bg, fg=title_fg,
                                          font=("Consolas", 10), anchor="w", wraplength=210, justify=tk.LEFT)
                     title_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=6, padx=4)
+
+                    widgets = [card, st_lbl, title_lbl]
 
                     # Barre de progression objectifs
                     objs = q.get("objectives", [])
@@ -1856,10 +2219,14 @@ class PanelsMixin:
                         prog = tk.Label(card, text=f"{done_count}/{len(objs)}", bg=card_bg,
                                         fg="#555555", font=("Arial", 8))
                         prog.pack(side=tk.RIGHT, padx=6)
+                        widgets.append(prog)
+
+                    _list_cards[q["id"]] = widgets
 
                     def on_click(event, qid=q["id"]):
                         show_detail(qid)
-                        refresh_list()
+                        _update_selection_colors()
+                    
                     card.bind("<Button-1>", on_click)
                     title_lbl.bind("<Button-1>", on_click)
 
@@ -1872,6 +2239,11 @@ class PanelsMixin:
             ew.geometry("600x640")
             ew.configure(bg="#0d1117")
             ew.grab_set()
+
+            def _close_quest_editor():
+                _ghost_close(ew, self.root)
+
+            ew.protocol("WM_DELETE_WINDOW", _close_quest_editor)
 
             import uuid
 
@@ -1948,7 +2320,7 @@ class PanelsMixin:
                 refresh_list()
                 if selected_id[0] == new_q["id"] or not q:
                     show_detail(new_q["id"])
-                ew.destroy()
+                _close_quest_editor()
 
             tk.Button(ew, text="✅ Sauvegarder", bg="#1a3a5c", fg="#64b5f6",
                       font=("Arial", 11, "bold"), relief="flat",
@@ -1961,200 +2333,7 @@ class PanelsMixin:
 
     # --- STOP LLMs ---
 
-    def open_dice_roller(self):
-        """Fenêtre flottante de lancer de dés rapide.
-        Toggle pour envoyer dans le chat ou afficher uniquement dans la fenêtre.
-        """
-        if getattr(self, "_dice_roller_win", None):
-            try:
-                self._dice_roller_win.deiconify()
-                self._dice_roller_win.lift()
-                return
-            except Exception:
-                self._dice_roller_win = None
 
-        BG     = "#0f0a1a"
-        BG2    = "#1a1030"
-        BG3    = "#231540"
-        FG     = "#e8d8ff"
-        FG_DIM = "#7a6a9a"
-        ACC    = "#9c5cf5"
-        ACC2   = "#ce93d8"
-        GREEN  = "#81c784"
-        RED    = "#e57373"
-        GOLD   = "#ffd54f"
-        FONT   = ("Consolas", 10)
-        FONT_B = ("Consolas", 10, "bold")
-
-        win = tk.Toplevel(self.root)
-        win.title("🎲 Lanceur de Dés")
-        win.configure(bg=BG)
-        win.resizable(False, False)
-        self._dice_roller_win = win
-        self._track_window("dice_roller", win)
-
-        # Variables d'état
-        dice_count    = tk.IntVar(value=1)
-        dice_bonus    = tk.IntVar(value=0)
-        dice_selected = tk.StringVar(value="d20")
-        dice_to_chat  = tk.BooleanVar(value=True)
-        dice_char     = tk.StringVar(value="MJ")
-        result_var    = tk.StringVar(value="—")
-        detail_var    = tk.StringVar(value="Choisir un dé et lancer")
-        history       = []
-
-        # ── Titre ─────────────────────────────────────────────────────────
-        tk.Label(win, text="⚀  LANCEUR DE DÉS", bg=BG, fg=ACC2,
-                 font=("Arial", 12, "bold")).pack(pady=(10, 4))
-
-        # ── Résultat ──────────────────────────────────────────────────────
-        res_frame = tk.Frame(win, bg=BG2, pady=6)
-        res_frame.pack(fill=tk.X, padx=12, pady=(0, 8))
-        tk.Label(res_frame, textvariable=result_var,
-                 bg=BG2, fg=GOLD, font=("Consolas", 40, "bold"),
-                 width=8, anchor="center").pack()
-        tk.Label(res_frame, textvariable=detail_var,
-                 bg=BG2, fg=FG_DIM, font=("Consolas", 9),
-                 anchor="center", wraplength=280).pack()
-
-        # ── Boutons de dés ────────────────────────────────────────────────
-        dice_types = ["d4", "d6", "d8", "d10", "d12", "d20", "d100"]
-        die_icons  = {"d4":"▲","d6":"■","d8":"◆","d10":"⬟","d12":"⬠","d20":"★","d100":"●"}
-        die_btns   = {}
-
-        dice_row = tk.Frame(win, bg=BG)
-        dice_row.pack(padx=12, pady=(0, 8))
-
-        def _select_die(t):
-            dice_selected.set(t)
-            for d, b in die_btns.items():
-                b.config(bg=ACC if d == t else BG3,
-                         fg="#fff" if d == t else FG)
-
-        for dt in dice_types:
-            b = tk.Button(dice_row, text=f"{die_icons.get(dt,'●')}\n{dt}",
-                          bg=ACC if dt == "d20" else BG3,
-                          fg="#fff" if dt == "d20" else FG,
-                          font=("Consolas", 9, "bold"),
-                          width=4, height=2, relief="flat",
-                          activebackground=ACC, activeforeground="#fff",
-                          command=lambda t=dt: _select_die(t))
-            b.pack(side=tk.LEFT, padx=2)
-            die_btns[dt] = b
-
-        # ── Compteur · Bonus · Personnage ─────────────────────────────────
-        opts = tk.Frame(win, bg=BG)
-        opts.pack(padx=12, pady=(0, 8))
-
-        # Nombre de dés
-        cnt_f = tk.Frame(opts, bg=BG); cnt_f.pack(side=tk.LEFT, padx=(0,14))
-        tk.Label(cnt_f, text="Nombre", bg=BG, fg=FG_DIM, font=FONT).pack()
-        cnt_row = tk.Frame(cnt_f, bg=BG); cnt_row.pack()
-        tk.Button(cnt_row, text="−", bg=BG3, fg=ACC2, font=FONT_B, width=2, relief="flat",
-                  command=lambda: dice_count.set(max(1, dice_count.get()-1))).pack(side=tk.LEFT)
-        tk.Label(cnt_row, textvariable=dice_count, bg=BG, fg=FG,
-                 font=FONT_B, width=3, anchor="center").pack(side=tk.LEFT)
-        tk.Button(cnt_row, text="+", bg=BG3, fg=ACC2, font=FONT_B, width=2, relief="flat",
-                  command=lambda: dice_count.set(min(20, dice_count.get()+1))).pack(side=tk.LEFT)
-
-        # Bonus
-        bon_f = tk.Frame(opts, bg=BG); bon_f.pack(side=tk.LEFT, padx=(0,14))
-        tk.Label(bon_f, text="Bonus", bg=BG, fg=FG_DIM, font=FONT).pack()
-        bon_row = tk.Frame(bon_f, bg=BG); bon_row.pack()
-        tk.Button(bon_row, text="−", bg=BG3, fg=RED, font=FONT_B, width=2, relief="flat",
-                  command=lambda: dice_bonus.set(dice_bonus.get()-1)).pack(side=tk.LEFT)
-        tk.Label(bon_row, textvariable=dice_bonus, bg=BG, fg=FG,
-                 font=FONT_B, width=4, anchor="center").pack(side=tk.LEFT)
-        tk.Button(bon_row, text="+", bg=BG3, fg=GREEN, font=FONT_B, width=2, relief="flat",
-                  command=lambda: dice_bonus.set(dice_bonus.get()+1)).pack(side=tk.LEFT)
-
-        # Personnage
-        char_f = tk.Frame(opts, bg=BG); char_f.pack(side=tk.LEFT)
-        tk.Label(char_f, text="Personnage", bg=BG, fg=FG_DIM, font=FONT).pack()
-        tk.Entry(char_f, textvariable=dice_char,
-                 bg=BG3, fg=FG, font=FONT, width=9,
-                 insertbackground=ACC2, relief="flat").pack()
-
-        # ── Bouton LANCER ─────────────────────────────────────────────────
-        def _do_roll():
-            import random
-            dt    = dice_selected.get()
-            n     = dice_count.get()
-            bonus = dice_bonus.get()
-            char  = dice_char.get().strip() or "MJ"
-            sides = int(dt[1:])
-            rolls = [random.randint(1, sides) for _ in range(n)]
-            total = sum(rolls) + bonus
-
-            # Détection critique d20
-            label = str(total)
-            if dt == "d20" and n == 1:
-                if rolls[0] == 20:  label = "🌟 CRITIQUE!"
-                elif rolls[0] == 1: label = "💀 ÉCHEC CRITIQUE"
-            result_var.set(label)
-
-            bonus_str = (f" +{bonus}" if bonus > 0 else f" {bonus}" if bonus < 0 else "")
-            detail_var.set(f"{char} · {n}{dt}{bonus_str}   dés: {rolls}")
-
-            # Historique
-            history.insert(0, f"{char} · {n}{dt}{bonus_str} = {total}   {rolls}")
-            del history[10:]
-            _refresh_hist()
-
-            # Chat si activé
-            if dice_to_chat.get():
-                result_str = f"[RÉSULTAT SYSTÈME] {char} a lancé {n}{dt} + {bonus}. Dés: {rolls}. Total = {total}"
-                self.msg_queue.put({
-                    "sender": f"🎲 {char}",
-                    "text": result_str,
-                    "color": GOLD,
-                })
-
-        tk.Button(win, text="🎲   LANCER", bg=ACC, fg="#fff",
-                  font=("Arial", 13, "bold"), relief="flat", pady=8,
-                  activebackground="#b07dff", activeforeground="#fff",
-                  command=_do_roll).pack(fill=tk.X, padx=12, pady=(0, 6))
-
-        win.bind("<Return>", lambda e: _do_roll())
-        win.bind("<space>",  lambda e: _do_roll())
-
-        # ── Toggle chat ───────────────────────────────────────────────────
-        toggle_frame = tk.Frame(win, bg=BG)
-        toggle_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
-
-        def _toggle_chat():
-            if dice_to_chat.get():
-                chat_btn.config(text="📢 Envoyer dans le chat  ✓",
-                                bg="#1a2a1a", fg=GREEN)
-            else:
-                chat_btn.config(text="🔇 Fenêtre seulement",
-                                bg=BG3, fg=FG_DIM)
-
-        chat_btn = tk.Button(
-            toggle_frame,
-            text="📢 Envoyer dans le chat  ✓",
-            bg="#1a2a1a", fg=GREEN,
-            font=FONT, relief="flat", anchor="w", padx=8, pady=4,
-            activebackground=BG3, activeforeground=FG,
-            command=lambda: [dice_to_chat.set(not dice_to_chat.get()), _toggle_chat()]
-        )
-        chat_btn.pack(fill=tk.X)
-
-        # ── Historique ────────────────────────────────────────────────────
-        tk.Frame(win, bg="#2a1a40", height=1).pack(fill=tk.X, padx=12, pady=(6, 4))
-        tk.Label(win, text="HISTORIQUE", bg=BG, fg=FG_DIM,
-                 font=("Consolas", 8, "bold")).pack(anchor="w", padx=14)
-
-        hist_frame = tk.Frame(win, bg=BG)
-        hist_frame.pack(fill=tk.X, padx=12, pady=(2, 12))
-
-        def _refresh_hist():
-            for w in hist_frame.winfo_children():
-                w.destroy()
-            for entry in history:
-                tk.Label(hist_frame, text=entry, bg=BG, fg=FG_DIM,
-                         font=("Consolas", 8), anchor="w",
-                         wraplength=290, justify=tk.LEFT).pack(fill=tk.X, pady=1)
 
 
     def open_skill_check_dialog(self):
@@ -2170,6 +2349,7 @@ class PanelsMixin:
         win.grab_set()
         win.resizable(False, False)
         self._track_window("modal_skill_check", win)
+        win.protocol("WM_DELETE_WINDOW", lambda: _ghost_close(win, self.root))
 
         # ── En-tête ──────────────────────────────────────────────────────────
         hdr = tk.Frame(win, bg="#0d2010")
@@ -2318,7 +2498,7 @@ class PanelsMixin:
             dc_raw = dc_var.get().strip()
             dc_val = int(dc_raw) if dc_raw.isdigit() else None
             reason = reason_var.get().strip() or None
-            win.destroy()
+            _ghost_close(win, self.root)
             threading.Thread(
                 target=self._execute_skill_check,
                 args=(char, skill, ability, dc_val, reason),

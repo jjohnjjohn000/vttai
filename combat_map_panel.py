@@ -13,10 +13,15 @@ from combat_map_window import CombatMapWindow
 
 def open_combat_map(parent, win_state, save_fn, track_fn,
                     msg_queue=None, inject_fn=None, update_sys_prompt_fn=None, app=None):
-    return CombatMapWindow(parent, win_state=win_state,
+    import time
+    print(f"[Map] START open_combat_map at {time.time()}")
+    t0 = time.time()
+    res = CombatMapWindow(parent, win_state=win_state,
                            save_fn=save_fn, track_fn=track_fn,
                            msg_queue=msg_queue, inject_fn=inject_fn,
                            update_sys_prompt_fn=update_sys_prompt_fn, app=app)
+    print(f"[Map] END open_combat_map in {time.time() - t0:.2f}s")
+    return res
 
 
 # ─── Export textuel de la carte pour les agents LLM ──────────────────────────
@@ -249,7 +254,7 @@ def get_map_prompt(win_state: dict, for_hero: str = "", in_combat: bool = True) 
                     lines.append(f"  • {_label(h1)} ↔ {_label(h2)} : {breakdown} — {_reach_verdict(h1, h2)}")
 
     if notes:
-        note_texts = [n.get("text", "").strip() for n in notes if n.get("text", "").strip()]
+        note_texts =[n.get("text", "").strip() for n in notes if n.get("text", "").strip() and not n.get("hotlink_data")]
         if note_texts:
             lines.append("\n📌 NOTES SUR LA CARTE :")
             for nt in note_texts[:6]:

@@ -10,11 +10,41 @@ except Exception as _e:
     print(f"[X11] XInitThreads() indisponible: {_e}")
 # ====================================================================
 
+import sys
+from unittest.mock import MagicMock
+# FIX A2 — MOCK MASSIVE GOOGLE CORE DEPS
+# pyautogen imports google.cloud.aiplatform and vertexai by default. On slow systems,
+# these massive C-extensions can lock the Python GIL for multiple minutes while loading,
+# totally freezing the Tkinter mainloop update tasks. Since VTTAI2 connects to Gemini 
+# via the autogen OpenAI HTTP wrapper rather than VertexAI natively, we completely 
+# eliminate the bottleneck by mocking them out.
+sys.modules['google'] = MagicMock()
+sys.modules['google.cloud.aiplatform'] = MagicMock()
+sys.modules['vertexai'] = MagicMock()
+sys.modules['grpc'] = MagicMock()
+
+import subprocess
 import os
-import json
+
+# FIX X11 AT-SPI — Disable Assistive Technology DBus Bridge
+# The dbus-daemon routing AT-SPI accessibility events can randomly hang 
+# for 25-45 seconds on some Linux distros, completely halting the Tkinter 
+# event loop. This bypasses the bridge entirely to guarantee stability.
+os.environ["NO_AT_BRIDGE"] = "1"
+
 import urllib.request
 import time
 import faulthandler as _fh; _fh.enable()
+
+def _restart_ibus():
+    try:
+        subprocess.Popen(
+            ["ibus-daemon", "--xim", "--replace", "-d"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+    except FileNotFoundError:
+        pass  # ibus not installed, no problem
 
 # ====================================================================
 # FIX B — Variables gRPC AVANT tout thread C
@@ -44,6 +74,22 @@ from tkinter import scrolledtext
 from dotenv import load_dotenv
 
 # ====================================================================
+# FIX C — Early Imports to Bypass the Python Global Import Lock
+# When `run_autogen` heavily loads `autogen` in a background thread, the global 
+# import lock freezes the Tkinter UI thread if it encounters ANY lazy `import`.
+# We eagerly import everything VTTAI2 needs right away so sys.modules is primed.
+# ====================================================================
+import spell_data
+import class_data
+import race_data
+import agent_logger
+import app_config
+import llm_config
+import tkinter.messagebox
+import tkinter.simpledialog
+import tkinter.ttk
+import collections
+import random
 # FIX ABSOLU — Anti-Corruption du GC (Garbage Collector)
 # Empêche la destruction asynchrone des objets Tkinter ET des images PIL
 # par les threads en arrière-plan (cause #1 des Segfaults Tcl sous Linux).
@@ -72,8 +118,15 @@ for _cls in _classes_to_patch:
         setattr(_cls, "__del__", _make_safe_del(_orig_del))
 # ====================================================================
 
+_startup_t0 = _time_dbg.time()
 def _dbg(msg):
-    print(f"[STARTUP {_time_dbg.time():.3f}] {msg}", flush=True)
+    elapsed = _time_dbg.time() - _startup_t0
+    line = f"[STARTUP +{elapsed:.3f}s] {msg}"
+    print(line, flush=True)
+    try:
+        with open("/tmp/vttai_startup.log", "a") as f:
+            f.write(line + "\n")
+    except: pass
 
 _dbg("stdlib importé")
 
@@ -81,7 +134,7 @@ _dbg("stdlib importé")
 _dbg("import tk_widgets...")
 from tk_widgets import apply_safe_patches          # FIX C — patches Tk avant tout widget
 _dbg("import llm_config...")
-from llm_config import (build_llm_config, llm_config, _default_model,
+from llm_config import (build_llm_config, _default_model,
                         StopLLMRequested, DND_SKILLS, ABILITY_COLORS)
 _dbg("import app_config...")
 from app_config import (APP_CONFIG, get_agent_config, get_chronicler_config,
@@ -119,6 +172,8 @@ _dbg("import quest_tracker_mixin...")
 from quest_tracker_mixin   import QuestTrackerMixin      # analyse IA des quêtes
 _dbg("import volume_mixin...")
 from volume_mixin          import VolumeControlMixin     # slider volume audio global
+_dbg("import music_mixer...")
+from music_mixer           import MusicMixerMixin        # mixer audio dual-channel
 
 # ── Imports des modules métier ─────────────────────────────────────────────────
 _dbg("import state_manager (big)...")
@@ -184,6 +239,7 @@ class DnDApp(
     CampaignLogMixin,       # campaign_log_mixin.py   — journal long terme
     QuestTrackerMixin,      # quest_tracker_mixin.py  — analyse IA des quêtes
     VolumeControlMixin,     # volume_mixin.py         — slider volume audio global
+    MusicMixerMixin,        # music_mixer.py          — mixer audio dual-channel
 ):
     """Moteur de l'Aube Brisée — Interface du Maître de Jeu."""
 
@@ -328,11 +384,17 @@ class DnDApp(
         threading.Thread(target=self.audio_worker, daemon=True).start()
         self.root.after(100, self.process_queue)
         self.root.after(1000, self.update_stats_panel)
-        self.root.after(3000, self._restore_windows)
-        # FIX D — run_autogen (et donc gRPC/autogen) démarre 500 ms après
-        # la fin de setup_ui, quand mainloop() a déjà rendu tous les widgets.
-        # Démarrer immédiatement créait une race entre les threads C de gRPC
-        # et le notifier Tcl/Tk → segfault Xlib.
+
+        # ── WINDOW RESTORE FIRST ──────────────────────────────────────────────
+        # Windows open at +500ms with moderate stagger (150/300ms).
+        # This MUST finish before autogen starts, because autogen's import
+        # holds the GIL for ~1-2s and blocks all Tk event processing.
+        self.root.after(500, self._restore_windows)
+
+        # ── AUTOGEN LAST ──────────────────────────────────────────────────────
+        # Start autogen well after windows are done constructing (~5s).
+        # autogen's import + gRPC init holds the GIL and would freeze any
+        # concurrent Tk widget construction.
         def _start_autogen():
             _dbg("_start_autogen called")
             t = threading.Thread(target=self.run_autogen, daemon=True, name="autogen-worker")
@@ -359,7 +421,7 @@ class DnDApp(
 
             self.root.after(1500, _wait_and_sync_combat)
 
-        self.root.after(500, _start_autogen)
+        self.root.after(5000, _start_autogen)
         _dbg("_deferred_init END")
 
     # --- Accès thread-safe à user_input ---
@@ -373,72 +435,14 @@ class DnDApp(
         with self._input_lock:
             self._user_input = value
 
-    def _poll_main_geometry(self):
-        """Sauvegarde la géométrie de la fenêtre principale toutes les 2 s."""
-        try:
-            if not self.root.winfo_exists():
-                return
-            g = _get_win_geometry(self.root)
-            if g:
-                self._win_state["main"] = g
-                _save_window_state(self._win_state)
-            self.root.after(2000, self._poll_main_geometry)
-        except Exception:
-            pass
 
-    def _track_window(self, key: str, win):
-        """Attache le suivi géométrie à une Toplevel. Restaure si déjà sauvegardée.
-        Les clés préfixées 'modal_' sauvegardent la géométrie mais ne rouvrent pas
-        la fenêtre automatiquement au démarrage (fenêtres modales bloquantes).
-
-        IMPORTANT : on n'utilise PAS <Configure> pour sauvegarder — cet event
-        se propage depuis tous les widgets enfants (canvas, frames scrollables…)
-        et crée des cascades qui segfaultent les extensions C de Tk.
-        À la place on utilise un polling léger toutes les 2 secondes.
-        """
-        saved = self._win_state.get(key)
-        if saved:
-            _apply_win_geometry(win, saved, "")
-        is_modal = key.startswith("modal_")
-
-        # ── Polling géométrie (toutes les 2 s, seulement si fenêtre vivante) ──
-        def _poll():
-            try:
-                if not win.winfo_exists():
-                    return
-                g = _get_win_geometry(win)
-                if g:
-                    self._win_state[key] = g
-                    _save_window_state(self._win_state)
-                win.after(2000, _poll)
-            except Exception:
-                pass
-
-        win.after(2000, _poll)
-
-        # ── Nettoyage du flag _open_ à la fermeture manuelle ─────────────────
-        def _on_destroy_cleanup(event=None):
-            try:
-                if self.root.winfo_exists():
-                    # Fermeture manuelle : retire le flag
-                    if not is_modal:
-                        self._win_state.pop(f"_open_{key}", None)
-                        _save_window_state(self._win_state)
-            except Exception:
-                pass
-
-        win.bind("<Destroy>", _on_destroy_cleanup)
-
-        if not is_modal:
-            self._win_state[f"_open_{key}"] = True
-            _save_window_state(self._win_state)
-        return win
 
     # ── Reconstruction dynamique des prompts agents ───────────────────────────
 
     def _rebuild_agent_prompts(self):
         """Reconstruit le system_message de chaque agent en incluant :
           - le prompt de base (personnalite + regles)
+          - la composition du groupe (qui est present/absent)
           - la scene active, les quetes, les memoires compactes, le calendrier
           - les memoires contextuelles activees dynamiquement ce tour
           - l etat actuel des emplacements de sort (mis a jour a chaque tour)
@@ -455,12 +459,29 @@ class DnDApp(
         except Exception:
             _scene_context = ""
 
+        # ── Bloc de composition du groupe (qui est présent/absent) ──────────
+        _ALL_PC = ["Kaelen", "Elara", "Thorne", "Lyra"]
+        _active_pcs = set(get_active_characters())
+        _absent_pcs = [n for n in _ALL_PC if n not in _active_pcs]
+        _present_pcs = [n for n in _ALL_PC if n in _active_pcs]
+        if _absent_pcs:
+            _party_block = (
+                "\n[GROUPE PRÉSENT]\n"
+                f"Membres présents dans la scène : {', '.join(_present_pcs)}.\n"
+                f"Membres ABSENTS (ne pas leur parler, ne pas les cibler) : {', '.join(_absent_pcs)}.\n"
+            )
+        else:
+            _party_block = (
+                "\n[GROUPE PRÉSENT]\n"
+                f"Tous les membres du groupe sont présents : {', '.join(_present_pcs)}.\n"
+            )
+
         for name, agent in self._agents.items():
             # Règles dynamiques : HORS COMBAT ou EN COMBAT selon l'état actuel
             from engine_agents import build_regle_outils as _bro
             _rules = _bro(combat_mode=COMBAT_STATE["active"])
             _char_only = getattr(self, "_base_char_msgs", {}).get(name, "")
-            base          = _rules + _char_only
+            base          = _rules + _char_only + _party_block
             combat_block  = combat_block_fn(name)
 
             # Carte de combat : personnalisée par agent (distances propres uniquement)
@@ -522,34 +543,108 @@ class DnDApp(
             print(f'[CombatLLM] Erreur switch : {_e}')
 
     def _restore_windows(self):
-        """Rouvre les fenêtres qui étaient ouvertes lors de la dernière session.
-        Les délais sont échelonnés pour laisser Tk et gRPC se stabiliser."""
-        delay = 0
+        """Rouvre les fenêtres qui étaient ouvertes lors de la dernière session."""
+        _dbg("_restore_windows START")
+        delay = 3000
         if self._win_state.get("_open_combat_tracker"):
             delay += 300
-            self.root.after(delay, self.open_combat_tracker)
+            self.root.after(delay, lambda: (_dbg("RESTORE: CT start"), self.open_combat_tracker(), _dbg("RESTORE: CT end")))
         if self._win_state.get("_open_inventory"):
             delay += 300
-            self.root.after(delay, self.open_inventory_panel)
+            self.root.after(delay, lambda: (_dbg("RESTORE: Inv start"), self.open_inventory_panel(), _dbg("RESTORE: Inv end")))
         if self._win_state.get("_open_quest_journal"):
             delay += 300
-            self.root.after(delay, self.open_quest_journal)
+            self.root.after(delay, lambda: (_dbg("RESTORE: Quest start"), self.open_quest_journal(), _dbg("RESTORE: Quest end")))
         if self._win_state.get("_open_npc_manager"):
             delay += 300
-            self.root.after(delay, self.open_npc_manager)
+            self.root.after(delay, lambda: (_dbg("RESTORE: NPC start"), self.open_npc_manager(), _dbg("RESTORE: NPC end")))
         if self._win_state.get("_open_location_image"):
             delay += 300
-            self.root.after(delay, self.open_location_image_popout)
+            self.root.after(delay, lambda: (_dbg("RESTORE: Loc start"), self.open_location_image_popout(), _dbg("RESTORE: Loc end")))
         if self._win_state.get("_open_calendar"):
             delay += 300
-            self.root.after(delay, self.open_calendar_popout)
+            self.root.after(delay, lambda: (_dbg("RESTORE: Cal start"), self.open_calendar_popout(), _dbg("RESTORE: Cal end")))
         if self._win_state.get("_open_combat_map"):
             delay += 300
-            self.root.after(delay, self.open_combat_map)
+            self.root.after(delay, lambda: (_dbg("RESTORE: Map start"), self.open_combat_map(), _dbg("RESTORE: Map end")))
+        if self._win_state.get("_open_music_mixer"):
+            delay += 300
+            self.root.after(delay, lambda: (_dbg("RESTORE: Music start"), self.open_music_mixer(), _dbg("RESTORE: Music end")))
+        
+        if self._win_state.get("_open_tarokka"):
+            delay += 300
+            self.root.after(delay, lambda: (_dbg("RESTORE: Tarokka start"), self.open_tarokka_window(), _dbg("RESTORE: Tarokka end")))
+        
         for name in["Kaelen", "Elara", "Thorne", "Lyra"]:
             if self._win_state.get(f"_open_char_{name}"):
-                delay += 400   # 400 ms entre chaque popout pour éviter les races gRPC/Tk
-                self.root.after(delay, lambda n=name: self.open_char_popout(n))
+                delay += 500   # each popout is ~1800 lines of synchronous widget code
+                self.root.after(delay, lambda n=name: (_dbg(f"RESTORE: Char {n} start"), self.open_char_popout(n), _dbg(f"RESTORE: Char {n} end")))
+
+    def open_search_window(self, exact_phrase="", search_adv=True, search_book=True):
+        """Ouvre la fenêtre de recherche dans les livres et aventures."""
+        from combat_map_search import AdventureSearchWindow
+        
+        if getattr(self, "_search_win", None) and self._search_win.top.winfo_exists():
+            self._search_win.top.lift()
+        else:
+            map_app = getattr(self, "_combat_map_win", None)
+            self._search_win = AdventureSearchWindow(self.root, adventure_dir="adventure", book_dir="book", map_app=map_app)
+            self._track_window("search", self._search_win.top)
+
+        # Pré-remplissage via la commande /search
+        if exact_phrase:
+            self._search_win.exact_var.set(exact_phrase)
+        self._search_win.search_adv_var.set(search_adv)
+        self._search_win.search_book_var.set(search_book)
+        
+        # Lancer la recherche automatiquement s'il y a un mot clé
+        if exact_phrase:
+            self._search_win._do_search()
+
+    def open_tarokka(self):
+        """Ouvre la fenêtre du tirage de Tarokka avec lecture/écriture via state_manager."""
+        from tarokka_window import TarokkaWindow
+        
+        if getattr(self, "_tarokka_win", None) and self._tarokka_win.top.winfo_exists():
+            self._tarokka_win.top.lift()
+            return
+
+        tarokka_state = {}
+
+        # LECTURE VIA STATE MANAGER
+        try:
+            from state_manager import load_state
+            state_data = load_state()
+            raw_state = state_data.get("tarokka")
+            tarokka_state = raw_state if raw_state is not None else {}
+        except Exception as e:
+            print(f"[Tarokka] Erreur de lecture : {e}")
+
+        # ECRITURE VIA STATE MANAGER
+        def save_tarokka_state(new_state):
+            try:
+                from state_manager import load_state, save_state
+                state_data = load_state()
+                
+                # Si c'est un reset (liste vide), on supprime la clé proprement
+                if not new_state.get("drawn_cards"):
+                    state_data.pop("tarokka", None)
+                else:
+                    state_data["tarokka"] = new_state
+                
+                # Enregistre officiellement via le gestionnaire d'état pour éviter les conflits d'écrasement
+                save_state(state_data)
+                
+            except Exception as e:
+                print(f"[Tarokka] Erreur de sauvegarde : {e}")
+
+        self._tarokka_win = TarokkaWindow(
+            self.root, 
+            self.msg_queue, 
+            initial_state=tarokka_state, 
+            save_callback=save_tarokka_state
+        )
+        self._track_window("tarokka", self._tarokka_win.top)
 
     # ── Callback tour héros (CombatTracker → AutoGen) ────────────────────────
 
@@ -625,22 +720,57 @@ if __name__ == "__main__":
 
     def _on_app_close():
         import copy
-        # 1. Marquer la fermeture applicative pour que _on_destroy_cleanup
-        #    des Toplevels ne supprime pas les flags _open_*.
+        import os
+        # 1. Marquer la fermeture applicative
         app._app_closing = True
-        # 2. Capturer l'état exact AVANT que root.destroy() ne déclenche les
-        #    events <Destroy> des fenêtres enfants (qui peuvent modifier win_state).
+        # 2. Capturer l'état exact AVANT la fermeture
         final_state = copy.deepcopy(app._win_state)
-        # 3. Détruire la fenêtre principale (et toutes ses Toplevels).
-        root.destroy()
-        # 4. Après destroy(), tous les events <Destroy> ont été traités.
-        #    Réécrire le fichier avec le snapshot capturé au point 2 pour
-        #    garantir que c'est bien le dernier write — peu importe ce que
-        #    les handlers <Destroy> ont pu sauvegarder pendant le teardown.
+        
+        # 2b. Rattrapage d'événements : Si l'utilisateur quitte immédiatement après
+        # avoir fermé une fenêtre (via withdraw), l'événement <Unmap> peut ne pas
+        # encore avoir été traité par la boucle Tk avant os._exit().
+        # On va donc inspecter de façon synchrone toutes les fenêtres trackées.
+        with open("/home/wa/VTTAI2/vtt_debug_exit.log", "w") as f:
+            f.write(f"APP CLOSE. TRACKED LIST LENGTH: {len(getattr(app, '_tracked_windows_list', []))}\n")
+            for key, win, is_modal in getattr(app, "_tracked_windows_list", []):
+                try:
+                    exists = win.winfo_exists()
+                    state = win.state() if exists else "N/A"
+                    f.write(f"  checking TRACKED: key={key} | exists={exists} | state={state} | is_modal={is_modal}\n")
+                    if exists and state == "withdrawn" and not is_modal:
+                        f.write(f"    -> POPPING _open_{key} from final_state\n")
+                        final_state.pop(f"_open_{key}", None)
+                except Exception as e:
+                    f.write(f"    -> EXCEPTION: {e}\n")
+
+        # 3. Sauvegarder la position exacte de Windows
         try:
             _save_window_state(final_state)
+            # Debounced save — flush synchronously before os._exit kills the timer
+            from window_state import _flush_window_state
+            _flush_window_state()
         except Exception:
             pass
+        # 4a. Kill music mixer ffplay processes before exit
+        _mixer = getattr(app, "_music_mixer_win", None)
+        if _mixer:
+            try:
+                _mixer.save_state()
+                _mixer._bg_channel.destroy()
+                _mixer._combat_channel.destroy()
+            except Exception:
+                pass
+        # 4. Cleanup TTS audio processes because `os._exit(0)` bypasses `atexit` handlers.
+        try:
+            import voice_interface
+            voice_interface._kill_all_audio()
+        except Exception:
+            pass
+            
+        # 5. Terminate the process immediately, bypassing standard cleanup and Tk/X11 teardown
+        #    This prevents the 5s X11/XWayland freeze and avoids UI-related segmentation faults
+        #    since the OS simply drops the socket and reclaims memory.
+        os._exit(0)
 
     root.protocol("WM_DELETE_WINDOW", _on_app_close)
     _dbg(">>> root.mainloop() ENTRY <<<")

@@ -130,6 +130,13 @@ class LLMControlMixin:
     # ─── Envoi de texte (entrée MJ) ──────────────────────────────────────────
 
     def send_text(self):
+        def _trigger_mj_tts(txt, speaker_name):
+            if getattr(self, "tts_mj_enabled", None) and self.tts_mj_enabled.get():
+                tts_clean = strip_mechanical_blocks(txt)
+                if tts_clean:
+                    log_tts_start(speaker_name, tts_clean)
+                    self.audio_queue.put((tts_clean, speaker_name))
+
         # ── Bloqué pendant la pause — aucun message ne doit atteindre les agents ──
         if getattr(self, '_session_paused', False):
             self.msg_queue.put({
@@ -152,13 +159,25 @@ class LLMControlMixin:
             if not text:
                 self.stop_llms()
                 return
-            npc = self.active_npc
-            if npc:
-                formatted = f"[{npc['name']}] : {text}"
-                display = {"sender": f"🎭 {npc['name']}", "text": text, "color": npc.get("color", "#c77dff")}
+            
+            # --- INTERCEPTION MADAM EVA (Tarokka) ---
+            # Si le texte vient de la fenêtre Tarokka, on force l'identité de Madam Eva
+            # pour l'injection dans le GroupChat sans modifier le sender UI (déjà géré).
+            if getattr(self, "_tarokka_win", None) and text.startswith("🎴 **") and " : " in text:
+                formatted = f"[Madam Eva] : {text}"
+                display = {"sender": "Madam Eva", "text": text, "color": "#9b8fc7"}
+                _trigger_mj_tts(text, "Madam Eva")
             else:
-                formatted = text
-                display = {"sender": "Alexis_Le_MJ", "text": text, "color": "#4CAF50"}
+                npc = self.active_npc
+                if npc:
+                    formatted = f"[{npc['name']}] : {text}"
+                    display = {"sender": f"🎭 {npc['name']}", "text": text, "color": npc.get("color", "#c77dff")}
+                    _trigger_mj_tts(text, npc['name'])
+                else:
+                    formatted = text
+                    display = {"sender": "Alexis_Le_MJ", "text": text, "color": "#4CAF50"}
+                    _trigger_mj_tts(text, "Alexis_Le_MJ")
+                
             # Stocke le message à afficher APRÈS l'arrêt — le except StopLLMRequested le postera
             # Si une interruption est déjà en cours, juste remplacer le message en attente
             if self._pending_interrupt_input is not None:
@@ -214,6 +233,7 @@ class LLMControlMixin:
                 "text": private_text,
                 "color": "#888844"
             })
+            _trigger_mj_tts(private_text, "Alexis_Le_MJ")
             
             # 2. CORRECTIF : Au lieu de bypasser AutoGen en ouvrant un thread parallèle,
             # on transmet la commande brute au moteur principal. 
@@ -235,9 +255,21 @@ class LLMControlMixin:
             self._cmd_heal(_ph.group(1) or "")
             return
 
+        # ── Commande /skill [nom] [compétence] [contexte_optionnel] [dc] ──────
+        _pskill = _re_msg.match(r'^/skill(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
+        if _pskill and _pskill.group(1):
+            self._cmd_skill(_pskill.group(1))
+            return
+
         # ── Commande /round ───────────────────────────────────────────────────
         if _re_msg.match(r'^/round$', text, _re_msg.IGNORECASE):
             self._cmd_round()
+            return
+
+        # ── Commande /search[mots] [book/adventure] ──────────────────────────
+        _psearch = _re_msg.match(r'^/search(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
+        if _psearch:
+            self._cmd_search(_psearch.group(1) or "")
             return
 
         # ── Commande /quest <description de la quête> ─────────────────────────
@@ -274,15 +306,23 @@ class LLMControlMixin:
             self.input_event.set()
             return
 
-        self.user_input = text
-        npc = self.active_npc
-        if npc:
-            display_name = f"🎭 {npc['name']}"
-            color = npc.get("color", "#c77dff")
-            self.msg_queue.put({"sender": display_name, "text": text, "color": color})
-            self.user_input = f"[{npc['name']}] : {text}"
+        # --- INTERCEPTION MADAM EVA (Tarokka) ---
+        if getattr(self, "_tarokka_win", None) and text.startswith("🎴 **") and " : " in text:
+            self.msg_queue.put({"sender": "Madam Eva", "text": text, "color": "#9b8fc7"})
+            self.user_input = f"[Madam Eva] : {text}"
+            _trigger_mj_tts(text, "Madam Eva")
         else:
-            self.msg_queue.put({"sender": "Alexis_Le_MJ", "text": text, "color": "#4CAF50"})
+            self.user_input = text
+            npc = self.active_npc
+            if npc:
+                display_name = f"🎭 {npc['name']}"
+                color = npc.get("color", "#c77dff")
+                self.msg_queue.put({"sender": display_name, "text": text, "color": color})
+                self.user_input = f"[{npc['name']}] : {text}"
+                _trigger_mj_tts(text, npc['name'])
+            else:
+                self.msg_queue.put({"sender": "Alexis_Le_MJ", "text": text, "color": "#4CAF50"})
+                _trigger_mj_tts(text, "Alexis_Le_MJ")
         self.input_event.set()
 
     # ─── Message privé MJ → agent ────────────────────────────────────────────
@@ -861,12 +901,98 @@ class LLMControlMixin:
             mode="heal"
         ))
 
+    def _cmd_skill(self, args: str):
+        """
+        /skill [nom] [compétence] [contexte_optionnel] [dc]
+        Déclenche la boîte de jet de dés UI et injecte le résultat aux agents.
+        """
+        parts = args.strip().split()
+        if len(parts) < 2:
+            self.msg_queue.put({"sender": "⚠️ Système", "text": "Usage : /skill [nom][compétence] [contexte] [dc]", "color": "#FF9800"})
+            return
+
+        _all_names = list(getattr(self, 'CHAR_COLORS', {}).keys())
+        char_name = next((n for n in _all_names if n.lower().startswith(parts[0].lower())), parts[0])
+        skill_label = parts[1]
+        
+        dc = None
+        intention = ""
+        
+        if len(parts) > 2:
+            # Vérifie si le dernier argument est un nombre (DC)
+            try:
+                dc = int(parts[-1])
+                intention = " ".join(parts[2:-1])
+            except ValueError:
+                intention = " ".join(parts[2:])
+
+        char_mods = getattr(self, '_SKILL_MODIFIERS', {}).get(char_name, {})
+        skill_low = skill_label.lower()
+        bonus = (
+            char_mods.get("skills", {}).get(skill_low)
+            or char_mods.get("saves", {}).get(skill_low)
+            or 0
+        )
+
+        def _on_confirm(confirmed: bool, total: int, mj_note: str):
+            if not confirmed:
+                return
+            
+            dc_txt = f" (DC {dc})" if dc else ""
+            res_txt = "✅ Réussite" if dc and total >= dc else "❌ Échec" if dc else ""
+            inject_msg = f"[RÉSULTAT SYSTÈME] {char_name} a fait un jet de {skill_label} : Total {total}{dc_txt}. {res_txt} {mj_note}".strip()
+            
+            if self._llm_running and not self._waiting_for_mj:
+                self._pending_interrupt_input = inject_msg
+                self._pending_interrupt_display = None
+                self._inject_stop()
+            else:
+                self.user_input = inject_msg
+                self.input_event.set()
+
+        self.msg_queue.put({
+            "action": "skill_check_confirm",
+            "char_name": char_name,
+            "skill_label": skill_label,
+            "stat_label": "",
+            "bonus": bonus,
+            "dc": dc,
+            "has_advantage": False,
+            "has_disadvantage": False,
+            "intention": intention,
+            "resume_callback": _on_confirm
+        })
+
     def _cmd_round(self):
         """/round — envoie « Tour de table pour vous tous. » dans le groupchat."""
         msg = "Tour de table pour vous tous."
         self.msg_queue.put({"sender": "Alexis_Le_MJ", "text": msg, "color": "#4CAF50"})
         self.user_input = msg
         self.input_event.set()
+
+    def _cmd_search(self, args: str):
+        """
+        /search [keywords] [book|adventure|both]
+        Ouvre la fenêtre de recherche pré-remplie et filtre selon la source demandée.
+        """
+        args = args.strip()
+        search_adv = True
+        search_book = True
+        
+        lower_args = args.lower()
+        if lower_args.endswith(" book") or lower_args.endswith(" livre"):
+            search_adv = False
+            args = args.rsplit(" ", 1)[0]
+        elif lower_args.endswith(" adventure") or lower_args.endswith(" aventure"):
+            search_book = False
+            args = args.rsplit(" ", 1)[0]
+        elif lower_args.endswith(" both") or lower_args.endswith(" les deux"):
+            args = args.rsplit(" ", 1)[0]
+            if lower_args.endswith(" les deux"):
+                args = args.rsplit(" ", 1)[0]
+                
+        exact_phrase = args.strip()
+        self.open_search_window(exact_phrase=exact_phrase, search_adv=search_adv, search_book=search_book)
 
     # ─── Navigation dans l'historique des entrées chat ────────────────────────
 
@@ -885,7 +1011,8 @@ class LLMControlMixin:
         self._chat_hist_idx = idx
         self.entry.delete(0, tk.END)
         self.entry.insert(0, hist[idx])
-        self.entry.icursor(tk.END)
+        if hasattr(self.entry, "icursor"):
+            self.entry.icursor(tk.END)
         return "break"
 
     def _on_hist_down(self, event=None):
@@ -906,7 +1033,8 @@ class LLMControlMixin:
             draft = getattr(self, '_chat_hist_draft', '')
             if draft:
                 self.entry.insert(0, draft)
-        self.entry.icursor(tk.END)
+        if hasattr(self.entry, "icursor"):
+            self.entry.icursor(tk.END)
         return "break"
 
     # ─── Jet de compétence ───────────────────────────────────────────────────

@@ -313,4 +313,16 @@ class CombatTrackerUtilsMixin:
             self.root.unbind_all("<F3>")
         except Exception:
             pass
-        self.win.destroy()
+        # X11 fix : withdraw + ghost au lieu de destroy()
+        try: self.win.selection_clear()
+        except Exception: pass
+        try:
+            self.win.unbind_all("<MouseWheel>")
+            self.win.unbind_all("<Button-4>")
+            self.win.unbind_all("<Button-5>")
+        except Exception: pass
+        self.win.withdraw()
+        self.win.update_idletasks()
+        if not hasattr(self.root, "_ghosted_panels"):
+            self.root._ghosted_panels = []
+        self.root._ghosted_panels.append(self.win)

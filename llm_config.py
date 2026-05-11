@@ -6,6 +6,7 @@ Préfixes reconnus dans le champ "llm" de campaign_state.json :
   groq/*                 → Groq            (GROQ_API_KEY)    gratuit, très rapide
   openrouter/*           → OpenRouter      (OPENROUTER_API_KEY) modèles :free disponibles
   deepseek/*             → DeepSeek direct (DEEPSEEK_API_KEY)  pas de frais OpenRouter
+  qwen/*                 → Alibaba Cloud   (QWEN_API_KEY) via DashScope
   ollama/*               → Ollama local    (aucune clé requise, localhost:11434)
 
 Exemples de valeurs :
@@ -93,11 +94,12 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
 
     Ordre de fallback (après le modèle principal demandé) :
       1. gemini-3-flash-preview        (toutes les clés)
-      2. gemini-3.1-flash-lite-preview (toutes les clés)
-      3. gemini-2.5-flash              (toutes les clés)
-      4. gemini-2.5-flash-lite         (toutes les clés)
-      5. groq/meta-llama/llama-4-scout-17b-16e-instruct
-      6. OpenRouter (llama + mistral + arcee trinity)
+      2. gemini-3.1-flash-lite         (toutes les clés)
+      3. gemini-3.1-flash-lite-preview (toutes les clés)
+      4. gemini-2.5-flash              (toutes les clés)
+      5. gemini-2.5-flash-lite         (toutes les clés)
+      6. groq/meta-llama/llama-4-scout-17b-16e-instruct
+      7. OpenRouter (llama + mistral + arcee trinity)
 
     Modèles Ollama (préfixe "ollama/") :
       Pas de fallback cloud — Ollama est intentionnellement isolé.
@@ -147,6 +149,17 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
             _groq_keys.append(_k)
     groq_key = _groq_keys[0] if _groq_keys else ""
 
+    # ── Collecte de toutes les clés Qwen disponibles ─────────────────────────
+    _qwen_keys: list =[]
+    _qwen_legacy = os.getenv("QWEN_API_KEY", "")
+    if _qwen_legacy:
+        _qwen_keys.append(_qwen_legacy)
+    for _i in range(1, 10):
+        _k = os.getenv(f"QWEN_API_KEY_{_i}", "")
+        if _k and _k not in _qwen_keys:
+            _qwen_keys.append(_k)
+    qwen_key = _qwen_keys[0] if _qwen_keys else ""
+
     def _gemini(model: str, api_key: str = None) -> dict:
         return {
             "model":       model,
@@ -154,6 +167,12 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
             "base_url":    _GEMINI_OPENAI_BASE,
             "api_type":    "openai",
             "http_client": _make_no_keepalive_http_client(),
+            # Tenter d'imposer un paramètre additionnel géré par l'endpoint (selon la doc OpenAI-compatible de Gemini)
+            #"extra_body": {
+            #    "generationConfig": {
+            #        "thinkingConfig": { "thinking_level": "minimal" }
+            #    }
+            #}
         }
 
     def _gemini_all_keys(model: str) -> list:
@@ -187,6 +206,22 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
             "api_type":    "openai",
             "http_client": _make_no_keepalive_http_client(),
         }
+
+    def _qwen(model: str, api_key: str = None) -> dict:
+        return {
+            "model":       model,
+            "api_key":     api_key or qwen_key,
+            # Les clés créées sur alibabacloud.com (International) requièrent l'endpoint -intl
+            "base_url":    "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            "api_type":    "openai",
+            "http_client": _make_no_keepalive_http_client(),
+        }
+
+    def _qwen_all_keys(model: str) -> list:
+        """Une entrée config_list par clé Qwen dispo pour ce modèle."""
+        if not _qwen_keys:
+            return[]
+        return [_qwen(model, key) for key in _qwen_keys]
 
     def _openrouter(model: str, api_key: str = None) -> dict:
         return {
@@ -254,6 +289,9 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
         if deepseek_key:
             config_list.append(_deepseek(m[len("deepseek/"):]))
 
+    elif m.startswith("qwen/"):
+        config_list.extend(_qwen_all_keys(m[len("qwen/"):]))
+
     else:  # Gemini — une entrée par clé disponible (rotation multi-comptes)
         config_list.extend(_gemini_all_keys(m))
 
@@ -284,6 +322,9 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
     elif m.startswith("deepseek/"):
         pass  # pas de fallback DeepSeek
 
+    elif m.startswith("qwen/"):
+        pass  # pas de fallback Qwen
+
     else:
         # Modèle Gemini : chaîne de fallback configurable avec rotation multi-comptes.
         # L'ordre est défini dans app_config.json → fallback_chain.
@@ -303,6 +344,8 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
                 ds_key = os.getenv("DEEPSEEK_API_KEY", "")
                 if ds_key:
                     config_list.append(_deepseek(fb[len("deepseek/"):]))
+            elif fb.startswith("qwen/"):
+                config_list.extend(_qwen_all_keys(fb[len("qwen/"):]))
             else:
                 config_list.extend(_gemini_all_keys(fb))
 
@@ -334,7 +377,15 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
 
 # Config par défaut (utilisée pour le résumé de session et le GroupChatManager)
 _default_model = os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-flash")
-llm_config = build_llm_config(_default_model)
+
+def get_default_llm_config():
+    """Crée la config LLM _seulement_ lorsqu'on en a besoin pour éviter l'instanciation de multiples httpx.Client au démarrage (~800ms)"""
+    return build_llm_config(_default_model)
+
+def __getattr__(name):
+    if name == 'llm_config':
+        return get_default_llm_config()
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
 # ─── Exception pour interrompre proprement le thread autogen ─────────────────

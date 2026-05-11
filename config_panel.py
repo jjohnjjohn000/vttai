@@ -199,7 +199,7 @@ def _tab_agents(nb, cfg, vars_):
 
     combat_cfg = cfg.get("combat", DEFAULTS.get("combat", {}))
     combat_model_var = tk.StringVar(
-        value=combat_cfg.get("model", "gemini-3.1-flash-lite-preview")
+        value=combat_cfg.get("model", "gemini-3.1-flash-lite")
     )
     _row(scroll_frame, "Modèle LLM Combat", _model_dropdown, var=combat_model_var)
 
@@ -382,6 +382,11 @@ def _tab_groupchat(nb, cfg, vars_):
          var=mr_var, from_=10, to=500,
          label_suffix="  (100 ≈ ~30 minutes de jeu)")
 
+    ams_var = tk.IntVar(value=gc.get("agent_max_sentences", 4))
+    _row(content, "Lim. phrases par rép. (Agents)", _int_slider,
+         var=ams_var, from_=1, to=10,
+         label_suffix="  (Limite max pour la longueur des messages)")
+
     _section(content, "Comportement", PURPLE)
 
     rep_var = tk.BooleanVar(value=gc.get("allow_repeat_speaker", False))
@@ -399,6 +404,7 @@ def _tab_groupchat(nb, cfg, vars_):
         "max_round":            mr_var,
         "allow_repeat_speaker": rep_var,
         "allow_skill_checks":   asc_var,
+        "agent_max_sentences":  ams_var,
     }
     return tab
 
@@ -586,9 +592,10 @@ def _tab_voice_ui(nb, cfg, vars_):
 
     piper_voice_vars: dict[str, tk.StringVar]  = {}
     piper_pitch_vars: dict[str, tk.DoubleVar]  = {}
+    piper_volume_vars: dict[str, tk.IntVar]    = {}
     _row_frames:      dict[str, tk.Frame]      = {}
 
-    CHARS = ["Kaelen", "Elara", "Thorne", "Lyra"]
+    CHARS = ["Kaelen", "Elara", "Thorne", "Lyra", "Alexis_Le_MJ"]
 
     # Textes de test personnalisés par personnage
     _PREVIEW_TEXTS = {
@@ -606,6 +613,7 @@ def _tab_voice_ui(nb, cfg, vars_):
             return
         models_dir   = pdir_var.get().strip() or "piper_models"
         pitch        = piper_pitch_vars.get(char, tk.DoubleVar(value=0.0)).get()
+        volume       = piper_volume_vars.get(char, tk.IntVar(value=100)).get()
         text         = _PREVIEW_TEXTS.get(char, f"Bonjour, je suis {char}.")
 
         def _run():
@@ -616,7 +624,7 @@ def _tab_voice_ui(nb, cfg, vars_):
             try:
                 from piper_tts import play_piper_voice
                 play_piper_voice(text, char, voice_id, models_dir,
-                                 pitch_semitones=pitch)
+                                 pitch_semitones=pitch, volume_percent=volume)
             except Exception as e:
                 print(f"[Preview TTS] Erreur {char} : {e}")
             finally:
@@ -627,8 +635,9 @@ def _tab_voice_ui(nb, cfg, vars_):
 
         threading.Thread(target=_run, daemon=True, name=f"piper-preview-{char}").start()
 
-    # Config pitch sauvegardée
+    # Config pitch et volume sauvegardées
     _pitch_cfg = piper.get("pitch", DEFAULTS["piper"]["pitch"])
+    _vol_cfg   = piper.get("volume", DEFAULTS["piper"]["volume"])
 
     def _rebuild_dropdowns(voices: list[str]):
         """Reconstruit les OptionMenu dans chars_container (position fixe)."""
@@ -702,6 +711,40 @@ def _tab_voice_ui(nb, cfg, vars_):
             tk.Label(pitch_row, text="-8  grave  ←  0  →  aigu  +8",
                      bg=BG2, fg=FG_DIM, font=("Consolas", 7)).pack(side=tk.LEFT, padx=(6, 0))
 
+            # ── Ligne volume : slider + valeur ─────────────────────────────────
+            vol_row = tk.Frame(chars_container, bg=BG2)
+            vol_row.pack(fill=tk.X, padx=12, pady=(0, 4))
+
+            tk.Label(vol_row, text="", bg=BG2, width=8).pack(side=tk.LEFT)  # indent
+            tk.Label(vol_row, text="Volume", bg=BG2, fg=FG_DIM,
+                     font=("Consolas", 8), width=5, anchor="w").pack(side=tk.LEFT)
+
+            pvv = piper_volume_vars.get(char)
+            if pvv is None:
+                default_v = int(_vol_cfg.get(char, _vol_cfg.get("default", 100)))
+                pvv = tk.IntVar(value=default_v)
+                piper_volume_vars[char] = pvv
+
+            vol_val_label = tk.Label(vol_row, text=f"{pvv.get()}%",
+                                     bg=BG2, fg=ACCENT, font=("Consolas", 8), width=7)
+
+            def _on_vol_change(val, lbl=vol_val_label, var=pvv):
+                lbl.config(text=f"{int(float(val))}%")
+
+            scale_vol = tk.Scale(
+                vol_row, variable=pvv,
+                from_=0, to=200, resolution=5,
+                orient=tk.HORIZONTAL, bg=BG2, fg=FG, troughcolor=BG3,
+                activebackground=ACCENT, highlightthickness=0,
+                length=200, showvalue=False, font=("Consolas", 8),
+                command=_on_vol_change,
+            )
+            scale_vol.pack(side=tk.LEFT, padx=(4, 4))
+            vol_val_label.pack(side=tk.LEFT)
+
+            tk.Label(vol_row, text="0%  muet   ← 100% → fort  200%",
+                     bg=BG2, fg=FG_DIM, font=("Consolas", 7)).pack(side=tk.LEFT, padx=(6, 0))
+
     def _refresh_voices(*_):
         """Scanne le dossier et reconstruit tous les menus."""
         models_dir = pdir_var.get().strip() or "piper_models"
@@ -718,12 +761,13 @@ def _tab_voice_ui(nb, cfg, vars_):
               bg=BG3, fg=ACCENT, font=("Arial", 8), relief="flat", padx=8,
               command=_refresh_voices).pack(side=tk.LEFT)
 
-    # Premier rendu initial
-    _rebuild_dropdowns(_scan_installed_voices(piper.get("models_dir", "piper_models")))
+    # Premier rendu initial (un seul scan)
+    _models_dir_init = piper.get("models_dir", "piper_models")
+    _initial_voices = _scan_installed_voices(_models_dir_init)
+    _rebuild_dropdowns(_initial_voices)
 
     # Mise à jour automatique du compteur dès l'ouverture
-    _models_dir_init = piper.get("models_dir", "piper_models")
-    n = sum(1 for v in _scan_installed_voices(_models_dir_init) if not v.startswith("↓"))
+    n = sum(1 for v in _initial_voices if not v.startswith("↓"))
     models_count_var.set(f"({n} installé{'s' if n > 1 else ''})" if n else "(aucun installé)")
 
     # ── Avertissement fr-CA ───────────────────────────────────────────────────
@@ -859,6 +903,7 @@ def _tab_voice_ui(nb, cfg, vars_):
         "models_dir":       pdir_var,
         "voice_vars":       piper_voice_vars,
         "pitch_vars":       piper_pitch_vars,
+        "volume_vars":      piper_volume_vars,
     }
     vars_["ui"] = {
         "poll_geometry_ms": pg_var,
@@ -1411,20 +1456,80 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
         "combat": {}, "fallback_chain": {},
     }
 
-    # Créer les 6 onglets
-    tab_agents  = _tab_agents(nb, cfg, vars_)
-    tab_chron   = _tab_chronicler(nb, cfg, vars_)
-    tab_gc      = _tab_groupchat(nb, cfg, vars_)
-    tab_mem     = _tab_memories(nb, cfg, vars_)
-    tab_voice   = _tab_voice_ui(nb, cfg, vars_)
-    tab_llm     = _tab_llm_resources(nb, cfg)
+    # ── Lazy tab loading ──────────────────────────────────────────────────────
+    # Seul le premier onglet (Agents) est construit immédiatement.
+    # Les autres sont construits au premier clic pour accélérer l'ouverture.
+    tab_agents = _tab_agents(nb, cfg, vars_)
 
-    nb.add(tab_agents, text=" 🧙 Agents ")
-    nb.add(tab_chron,  text=" 📜 Chroniqueur ")
-    nb.add(tab_gc,     text=" ⚙️ GroupChat ")
-    nb.add(tab_mem,    text=" 🧠 Mémoires ")
-    nb.add(tab_voice,  text=" 🎤 Voix & UI ")
-    nb.add(tab_llm,    text=" 🔑 Ressources LLM ")
+    # Placeholders pour les onglets lazy
+    _tab_builders = {
+        1: ("_tab_chronicler",    lambda: _tab_chronicler(nb, cfg, vars_)),
+        2: ("_tab_groupchat",     lambda: _tab_groupchat(nb, cfg, vars_)),
+        3: ("_tab_memories",      lambda: _tab_memories(nb, cfg, vars_)),
+        4: ("_tab_voice_ui",      lambda: _tab_voice_ui(nb, cfg, vars_)),
+        5: ("_tab_llm_resources", lambda: _tab_llm_resources(nb, cfg)),
+    }
+    _built_tabs: set = set()  # indices déjà construits
+
+    def _make_placeholder():
+        """Frame placeholder affiché en attendant la construction réelle."""
+        ph = tk.Frame(nb, bg=BG)
+        tk.Label(ph, text="⏳ Chargement…", bg=BG, fg=FG_DIM,
+                 font=("Arial", 11)).pack(expand=True)
+        return ph
+
+    placeholder_tabs = {}
+    for idx in _tab_builders:
+        placeholder_tabs[idx] = _make_placeholder()
+
+    def _on_tab_changed(event):
+        """Construit l'onglet au premier clic (lazy loading)."""
+        idx = nb.index(nb.select())
+        if idx in _tab_builders and idx not in _built_tabs:
+            _built_tabs.add(idx)
+            _, builder = _tab_builders[idx]
+            real_tab = builder()
+            # Remplacer le placeholder par le vrai contenu
+            old_ph = placeholder_tabs[idx]
+            tab_text = nb.tab(idx, "text")
+            nb.forget(idx)
+            old_ph.destroy()
+            nb.insert(idx, real_tab, text=tab_text)
+            nb.select(idx)
+
+    nb.bind("<<NotebookTabChanged>>", _on_tab_changed)
+
+    def _safe_close():
+        # X11 fix ultime : Le freeze vient du Garbage Collector Python qui 
+        # execute ~500 appels Tcl synchrones (orig_del) pour detruire les variables (tk.StringVar).
+        # On masque completement la fenetre et on la leak (ghost) en memoire
+        # pour empecher le GC de se declencher !
+        
+        try: win.selection_clear()
+        except Exception: pass
+        
+        # Nettoyage des binds globaux qui pourraient "fuir" et s'activer dans le vide
+        try:
+            win.unbind_all("<MouseWheel>")
+            win.unbind_all("<Button-4>")
+            win.unbind_all("<Button-5>")
+        except Exception: pass
+
+        win.withdraw()
+        win.update_idletasks()
+        
+        if not hasattr(root, "_ghosted_configs"):
+            root._ghosted_configs = []
+        root._ghosted_configs.append(win)
+        
+    win.protocol("WM_DELETE_WINDOW", _safe_close)
+
+    nb.add(tab_agents,            text=" 🧙 Agents ")
+    nb.add(placeholder_tabs[1],   text=" 📜 Chroniqueur ")
+    nb.add(placeholder_tabs[2],   text=" 💬 GroupChat ")
+    nb.add(placeholder_tabs[3],   text=" 🧠 Mémoires ")
+    nb.add(placeholder_tabs[4],   text=" 🎤 Voix & UI ")
+    nb.add(placeholder_tabs[5],   text=" 🔑 Ressources LLM ")
 
     # ── Barre du bas ──
     bar = tk.Frame(win, bg="#060d18", pady=8)
@@ -1435,7 +1540,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
              font=("Consolas", 9)).pack(side=tk.LEFT, padx=18)
 
     def _reset_defaults():
-        win.destroy()
+        _safe_close()
         import app_config as _ac
         _ac.APP_CONFIG = dict(_ac.DEFAULTS)
         save_app_config(_ac.APP_CONFIG)
@@ -1443,85 +1548,102 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
 
     def _save():
         # Start with the existing config to preserve keys not managed by this UI (e.g., voice.volume, campaign_name)
+        # Lazy tabs that haven't been visited yet have empty vars_ dicts — skip them to preserve existing config.
         new_cfg = dict(cfg)
 
-        if "agents" not in new_cfg: new_cfg["agents"] = {}
-        for char, cvars in vars_["agents"].items():
-            new_cfg["agents"][char] = {
-                "model":       cvars["model"].get(),
-                "temperature": round(cvars["temperature"].get(), 2),
-            }
+        if vars_["agents"]:
+            if "agents" not in new_cfg: new_cfg["agents"] = {}
+            for char, cvars in vars_["agents"].items():
+                new_cfg["agents"][char] = {
+                    "model":       cvars["model"].get(),
+                    "temperature": round(cvars["temperature"].get(), 2),
+                }
 
         cv = vars_["chronicler"]
-        if "chronicler" not in new_cfg: new_cfg["chronicler"] = {}
-        new_cfg["chronicler"].update({
-            "model":               cv["model"].get(),
-            "temperature":         round(cv["temperature"].get(), 2),
-            "memories_importance": cv["memories_importance"].get(),
-            "system_prompt":       cv["system_prompt_box"].get("1.0", tk.END).strip(),
-        })
+        if cv:
+            if "chronicler" not in new_cfg: new_cfg["chronicler"] = {}
+            new_cfg["chronicler"].update({
+                "model":               cv["model"].get(),
+                "temperature":         round(cv["temperature"].get(), 2),
+                "memories_importance": cv["memories_importance"].get(),
+                "system_prompt":       cv["system_prompt_box"].get("1.0", tk.END).strip(),
+            })
 
         gv = vars_["groupchat"]
-        if "groupchat" not in new_cfg: new_cfg["groupchat"] = {}
-        new_cfg["groupchat"].update({
-            "max_round":            gv["max_round"].get(),
-            "allow_repeat_speaker": gv["allow_repeat_speaker"].get(),
-            "allow_skill_checks":   gv["allow_skill_checks"].get(),
-        })
+        if gv:
+            if "groupchat" not in new_cfg: new_cfg["groupchat"] = {}
+            new_cfg["groupchat"].update({
+                "max_round":            gv["max_round"].get(),
+                "allow_repeat_speaker": gv["allow_repeat_speaker"].get(),
+                "allow_skill_checks":   gv["allow_skill_checks"].get(),
+                "agent_max_sentences":  gv["agent_max_sentences"].get(),
+            })
 
         mv = vars_["memories"]
-        if "memories" not in new_cfg: new_cfg["memories"] = {}
-        new_cfg["memories"].update({
-            "compact_importance_min":    mv["compact_importance_min"].get(),
-            "contextual_tag_min_length": mv["contextual_tag_min_length"].get(),
-        })
+        if mv:
+            if "memories" not in new_cfg: new_cfg["memories"] = {}
+            new_cfg["memories"].update({
+                "compact_importance_min":    mv["compact_importance_min"].get(),
+                "contextual_tag_min_length": mv["contextual_tag_min_length"].get(),
+            })
 
         vv = vars_["voice"]
-        if "voice" not in new_cfg: new_cfg["voice"] = {}
-        new_cfg["voice"].update({
-            "enabled": vv["enabled"].get(),
-            "backend": vv["backend"].get(),
-        })
+        if vv:
+            if "voice" not in new_cfg: new_cfg["voice"] = {}
+            new_cfg["voice"].update({
+                "enabled": vv["enabled"].get(),
+                "backend": vv["backend"].get(),
+            })
 
         pv = vars_["piper"]
-        if "piper" not in new_cfg: new_cfg["piper"] = {}
-        new_cfg["piper"].update({
-            "models_dir": pv["models_dir"].get().strip() or "piper_models",
-            "voices": {
-                char: sv.get().strip()
-                for char, sv in pv["voice_vars"].items()
-            },
-            "pitch": {
-                char: round(dv.get(), 1)
-                for char, dv in pv["pitch_vars"].items()
-            },
-        })
-        # Conserver la voix default si absente
-        if "default" not in new_cfg["piper"]["voices"]:
-            new_cfg["piper"]["voices"]["default"] = (
-                new_cfg["piper"]["voices"].get("Kaelen", "fr_FR-upmc-medium")
-            )
-        if "default" not in new_cfg["piper"]["pitch"]:
-            new_cfg["piper"]["pitch"]["default"] = 0.0
+        if pv:
+            if "piper" not in new_cfg: new_cfg["piper"] = {}
+            new_cfg["piper"].update({
+                "models_dir": pv["models_dir"].get().strip() or "piper_models",
+                "voices": {
+                    char: sv.get().strip()
+                    for char, sv in pv["voice_vars"].items()
+                },
+                "pitch": {
+                    char: round(dv.get(), 1)
+                    for char, dv in pv["pitch_vars"].items()
+                },
+                "volume": {
+                    char: int(vv_.get())
+                    for char, vv_ in pv["volume_vars"].items()
+                },
+            })
+            # Conserver la voix default si absente
+            if "default" not in new_cfg["piper"]["voices"]:
+                new_cfg["piper"]["voices"]["default"] = (
+                    new_cfg["piper"]["voices"].get("Kaelen", "fr_FR-upmc-medium")
+                )
+            if "default" not in new_cfg["piper"]["pitch"]:
+                new_cfg["piper"]["pitch"]["default"] = 0.0
+            if "default" not in new_cfg["piper"]["volume"]:
+                new_cfg["piper"]["volume"]["default"] = 100
 
         uv = vars_["ui"]
-        if "ui" not in new_cfg: new_cfg["ui"] = {}
-        new_cfg["ui"].update({
-            "poll_geometry_ms":  uv["poll_geometry_ms"].get(),
-            "stats_refresh_ms":  uv["stats_refresh_ms"].get(),
-        })
+        if uv:
+            if "ui" not in new_cfg: new_cfg["ui"] = {}
+            new_cfg["ui"].update({
+                "poll_geometry_ms":  uv["poll_geometry_ms"].get(),
+                "stats_refresh_ms":  uv["stats_refresh_ms"].get(),
+            })
 
         ptt_v = vars_.get("ptt", {})
-        if "ptt" not in new_cfg: new_cfg["ptt"] = {}
-        new_cfg["ptt"].update({
-            "hotkey": ptt_v.get("hotkey", tk.StringVar(value="F12")).get(),
-        })
+        if ptt_v:
+            if "ptt" not in new_cfg: new_cfg["ptt"] = {}
+            new_cfg["ptt"].update({
+                "hotkey": ptt_v.get("hotkey", tk.StringVar(value="F12")).get(),
+            })
 
         combat_v = vars_.get("combat", {})
-        if "combat" not in new_cfg: new_cfg["combat"] = {}
-        new_cfg["combat"].update({
-            "model": combat_v.get("model", tk.StringVar(value="gemini-3.1-flash-lite-preview")).get(),
-        })
+        if combat_v:
+            if "combat" not in new_cfg: new_cfg["combat"] = {}
+            new_cfg["combat"].update({
+                "model": combat_v.get("model", tk.StringVar(value="gemini-3.1-flash-lite")).get(),
+            })
 
         fb_v = vars_.get("fallback_chain", {})
         fb_lb = fb_v.get("listbox")
@@ -1542,7 +1664,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
 
     tk.Button(bar, text="✕ Annuler",
               bg=BG2, fg=RED, font=("Arial", 9, "bold"), relief="flat",
-              padx=14, command=win.destroy).pack(side=tk.RIGHT, padx=18)
+              padx=14, command=_safe_close).pack(side=tk.RIGHT, padx=18)
 
     tk.Button(bar, text="💾 Sauvegarder",
               bg="#1a3a2a", fg=GREEN, font=("Arial", 10, "bold"), relief="flat",

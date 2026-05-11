@@ -133,6 +133,14 @@ class ChatMixin:
                 action = msg.get("action")
                 if action == "relay_button":
                     self._append_relay_button(msg["char_name"], msg["reply_text"])
+                elif action == "ui_callback":
+                    cb = msg.get("callback")
+                    delay = msg.get("delay", 0)
+                    if callable(cb):
+                        if delay > 0:
+                            self.root.after(delay, cb)
+                        else:
+                            cb()
                 elif action == "map_pointer":
                     self._append_map_pointer(
                         msg.get("img_bytes"),
@@ -317,6 +325,8 @@ class ChatMixin:
                     self._handle_damage_link(msg)
                 elif action == "npc_speak":
                     self._append_npc_speak(msg)
+                elif action == "tarokka_speak":
+                    self._append_tarokka_speak(msg)
                 else:
                     self.append_message(msg["sender"], msg["text"], msg["color"])
         except queue.Empty:
@@ -341,7 +351,32 @@ class ChatMixin:
             return
             
         formatted = f"[{npc_name}] : {text}"
-        if self._llm_running and not self._waiting_for_mj:
+
+    def _append_tarokka_speak(self, msg: dict):
+        text = msg["text"]
+        color = msg.get("color", "#9b8fc7")
+        
+        # 1. Update UI
+        self.append_message("Madam Eva", text, color)
+        
+        # 2. Audio TTS (si activé)
+        try:
+            from agent_logger import log_tts_start
+            tts_text = strip_mechanical_blocks(text)
+            if tts_text:
+                log_tts_start("Madam Eva", tts_text)
+                self.audio_queue.put((tts_text, "Madam Eva"))
+        except Exception:
+            pass
+
+        # 3. Feed to agents (bypass if paused)
+        if getattr(self, '_session_paused', False):
+            return
+            
+        formatted = f"[Madam Eva] : {text}"
+        
+        # Interrompt les agents s'ils parlent pour forcer la prophétie, ou l'envoie de suite
+        if getattr(self, "_llm_running", False) and not getattr(self, "_waiting_for_mj", False):
             self._pending_interrupt_input = formatted
             self._pending_interrupt_display = None
             self._inject_stop()
@@ -352,16 +387,21 @@ class ChatMixin:
     # ─── Ajout de messages taggés ─────────────────────────────────────────────
 
     def append_message(self, sender: str, text: str, color: str):
-        """Ajoute un message taggé dans le chat (pour pouvoir l'éditer/supprimer)."""
+        """Ajoute un message taggé dans le chat. Utilise des tags partagés pour la performance."""
         self.msg_counter += 1
         msg_id   = self.msg_counter
+        
+        # Tags partagés pour prévenir l'explosion des tags Tk
+        tag_color = f"color_{color.replace('#', '')}"
+        tag_sender = f"sender_{color.replace('#', '')}"
+        
+        # Ce tag sert à identifier tout le bloc du message pour la suppression (pas de config visuelle)
         tag_name = f"msg_{msg_id}"
-        tag_sender = f"sender_{msg_id}"
 
         self.chat_display.config(state=tk.NORMAL)
 
         self.chat_display.insert(tk.END, "\n[", tag_name)
-        self.chat_display.insert(tk.END, sender, tag_sender)
+        self.chat_display.insert(tk.END, sender, (tag_name, tag_sender))
         if (text.strip().startswith("[MISE À JOUR CARTE") 
             or "═══ CARTE DE COMBAT" in text.strip()
             or text.strip().startswith("[RÉSULTAT SYSTÈME")
@@ -408,9 +448,9 @@ class ChatMixin:
             self.chat_display.tag_bind(tag_col_btn, "<Enter>", lambda e: self.chat_display.config(cursor="hand2"))
             self.chat_display.tag_bind(tag_col_btn, "<Leave>", lambda e: self.chat_display.config(cursor=""))
         else:
-            self.chat_display.insert(tk.END, f"]: {text}\n", tag_name)
+            self.chat_display.insert(tk.END, f"]: {text}\n", (tag_name, tag_color))
 
-        self.chat_display.tag_config(tag_name,   foreground=color)
+        self.chat_display.tag_config(tag_color,   foreground=color)
         self.chat_display.tag_config(tag_sender, foreground=color,
                                      font=("Consolas", 11, "bold"),
                                      underline=False)
@@ -615,12 +655,12 @@ class ChatMixin:
                     except tk.TclError:
                         break
 
-                    # Tag unique par position
-                    spell_tag = f"clickspell_{idx.replace('.', '_')}"
+                    # Tag unique par NOM DE SORT (réutilisé pour toutes les occurrences)
+                    spell_safe = "".join(c for c in spell_name if c.isalnum() or c == "_")
+                    spell_tag = f"clickspell_{spell_safe}"
 
-                    # Ne pas re-créer un tag déjà existant (pas de doublons de binding)
+                    # Ne pas re-créer un tag ou dupliquer les bindings si le sort a déjà été taggé avant
                     if spell_tag not in _existing_tags:
-                        self.chat_display.tag_add(spell_tag, idx, end_idx)
                         self.chat_display.tag_config(
                             spell_tag,
                             foreground="#e8c84a",
@@ -639,7 +679,9 @@ class ChatMixin:
                             lambda e: self.chat_display.config(cursor=""),
                         )
                         _existing_tags.add(spell_tag)
-                        _total_tagged += 1
+
+                    self.chat_display.tag_add(spell_tag, idx, end_idx)
+                    _total_tagged += 1
 
                     search_from = end_idx
                     _occurrences += 1
@@ -676,21 +718,26 @@ class ChatMixin:
 
         # ── Commentaire header ────────────────────────────────────────────────
         self.chat_display.insert(tk.END, "\n", tag_name)
+        
+        tag_color = "color_ff8a80"
+        tag_sender = "sender_ff8a80"
+        
         self.chat_display.insert(
             tk.END,
             f"[{sender}]",
-            (tag_name, f"sender_{self.msg_counter}"))
+            (tag_name, tag_sender))
+            
         self.chat_display.tag_config(
-            f"sender_{self.msg_counter}",
+            tag_sender,
             foreground="#ff8a80",
             font=("Consolas", 11, "bold"))
 
         if comment:
-            self.chat_display.insert(tk.END, f"\n{comment}\n", tag_name)
+            self.chat_display.insert(tk.END, f"\n{comment}\n", (tag_name, tag_color))
         else:
             self.chat_display.insert(tk.END, "\n", tag_name)
 
-        self.chat_display.tag_config(tag_name, foreground="#ff8a80")
+        self.chat_display.tag_config(tag_color, foreground="#ff8a80")
 
         # ── Image inline ──────────────────────────────────────────────────────
         if img_bytes:

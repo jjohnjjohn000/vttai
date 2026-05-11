@@ -10,8 +10,16 @@ Fournit :
 import os
 import json
 import re
+import threading
 
 WINDOW_STATE_FILE = "window_state.json"
+
+# ─── Debounced save mechanism ──────────────────────────────────────────────────
+# Multiple rapid _save_window_state calls (e.g. during startup when 8+ windows
+# fire Map events) collapse into a single disk write after a 500ms quiet period.
+_save_timer: threading.Timer | None = None
+_save_lock = threading.Lock()
+_pending_state: dict | None = None
 
 
 # ─── Fonctions bas-niveau ──────────────────────────────────────────────────────
@@ -25,16 +33,32 @@ def _load_window_state() -> dict:
         print(f"[WinState] Erreur chargement : {e}")
     return {}
 
+def _flush_window_state():
+    """Actually write the pending state to disk. Called by the debounce timer."""
+    global _pending_state
+    with _save_lock:
+        state = _pending_state
+        _pending_state = None
+    if state is not None:
+        try:
+            with open(WINDOW_STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[WinState] Erreur sauvegarde : {e}")
+
 def _save_window_state(state: dict):
-    try:
-        with open(WINDOW_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        print(f"[WinState] Erreur sauvegarde : {e}")
+    """Debounced save: batches rapid calls into one disk write after 500ms."""
+    global _save_timer, _pending_state
+    with _save_lock:
+        _pending_state = state
+        if _save_timer is not None:
+            _save_timer.cancel()
+        _save_timer = threading.Timer(0.5, _flush_window_state)
+        _save_timer.daemon = True
+        _save_timer.start()
 
 def _get_win_geometry(win) -> dict | None:
     try:
-        win.update_idletasks()
         # Lecture hybride pour éviter deux types de dérive différents sur X11 :
         #
         # — Axe Y : geometry() getter retourne le hint passé au WM (référentiel
@@ -168,14 +192,18 @@ class WindowManagerMixin:
             # 150 ms : laisse le WM reparenter + tous les widgets être créés
             win.after(150, _deferred_position)
 
-        # ── Polling géométrie (toutes les 2 s, seulement si fenêtre vivante) ──
+        # ── Polling géométrie (toutes les 2 s) ──
         def _poll():
             try:
                 if not win.winfo_exists():
                     return
                 g = _get_win_geometry(win)
-                if g:
+                dirty = False
+                if g and self._win_state.get(key) != g:
                     self._win_state[key] = g
+                    dirty = True
+
+                if dirty:
                     _save_window_state(self._win_state)
                 win.after(2000, _poll)
             except Exception:
@@ -183,16 +211,33 @@ class WindowManagerMixin:
 
         win.after(2000, _poll)
 
-        # ── Nettoyage du flag _open_ à la fermeture manuelle ─────────────────
+        # ── Nettoyage synchrone du flag _open_ ─────────────────────────────────
+        def _on_map(event):
+            try:
+                if getattr(self, "_app_closing", False) or not self.root.winfo_exists():
+                    return
+                if event.widget == win and not is_modal:
+                    self._win_state[f"_open_{key}"] = True
+                    _save_window_state(self._win_state)
+            except Exception:
+                pass
+
+        def _on_unmap(event):
+            try:
+                if getattr(self, "_app_closing", False) or not self.root.winfo_exists():
+                    return
+                if event.widget == win and not is_modal:
+                    self._win_state.pop(f"_open_{key}", None)
+                    _save_window_state(self._win_state)
+            except Exception:
+                pass
+
+        win.bind("<Map>", _on_map)
+        win.bind("<Unmap>", _on_unmap)
+
+        # Conserver la protection sur Destroy (bien que rare si withdraw est utilisé)
         def _on_destroy_cleanup(event=None):
             try:
-                # Ne pas effacer le flag si l'application est en train de se
-                # fermer : pendant le teardown de root, toutes les Toplevels
-                # reçoivent <Destroy> alors que root.winfo_exists() retourne
-                # encore True — ce qui effacerait _open_* et sauvegarderait
-                # l'état sans les fenêtres ouvertes.
-                # _app_closing est positionné par le handler WM_DELETE_WINDOW
-                # de root AVANT que root soit détruit.
                 if getattr(self, "_app_closing", False):
                     return
                 if not is_modal and self.root.winfo_exists():
@@ -202,6 +247,10 @@ class WindowManagerMixin:
                 pass
 
         win.bind("<Destroy>", _on_destroy_cleanup)
+
+        if not hasattr(self, "_tracked_windows_list"):
+            self._tracked_windows_list = []
+        self._tracked_windows_list.append((key, win, is_modal))
 
         if not is_modal:
             self._win_state[f"_open_{key}"] = True
@@ -258,7 +307,6 @@ class WindowManagerMixin:
             ("_inventory_win",       True),   # InventoryPanel → .win
             ("_quest_journal_win",   False),
             ("_combat_map_win",      True),   # CombatMapWindow → .win
-            ("_dice_roller_win",     False),
         ]
         for attr, has_win in _tracked:
             obj = getattr(self, attr, None)

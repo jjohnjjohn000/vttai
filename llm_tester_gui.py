@@ -18,12 +18,13 @@ from tkinter import ttk
 from dotenv import load_dotenv
 
 # ─── Configuration des modèles (tirée de app_config.py) ───────────────────────
+from app_config import get_agent_max_sentences
 KNOWN_MODELS =[
     # Ollama
     "ollama/gemma4:e4b", "ollama/gemma4:e2b", "ollama/gemma4:27b",
     "ollama/llama3.3:latest", "ollama/mistral:latest", "ollama/deepseek-r1:8b", "ollama/qwen3.5:9b",
     # Gemini
-    "gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", 
+    "gemini-3.1-flash-lite", "gemini-3.1-flash-lite-preview", "gemini-3-flash-preview", 
     "gemma-4-31b-it", "gemma-4-26b-a4b-it",
     "gemini-2.5-flash", "gemini-2.5-flash-lite",
     # DeepSeek
@@ -38,7 +39,9 @@ KNOWN_MODELS =[
 ]
 
 # ─── Prompt de Test (Kaelen Roleplay) ─────────────────────────────────────────
-KAELEN_PROMPT = """=== SYSTEM MESSAGE (Kaelen) ===
+def _get_kaelen_prompt():
+    max_s = get_agent_max_sentences()
+    return f"""=== SYSTEM MESSAGE (Kaelen) ===
 
 
 ═══════════════════════════════════════════
@@ -52,8 +55,9 @@ KAELEN_PROMPT = """=== SYSTEM MESSAGE (Kaelen) ===
 • Si tu t'adresses à un PNJ, pose ta question en une phrase et arrête-toi net. Le MJ répondra.
 
 2. NARRATION ET SYSTÈME
+• RÈGLE DE LONGUEUR : Tes réponses roleplay et tes narrations doivent OBLIGATOIREMENT être concises (MAXIMUM {max_s} PHRASES).
 • Le système (MJ) lance les dés et gère les PV. N'invente jamais un résultat de ton côté.
-• Après un[RÉSULTAT SYSTÈME] ou des dégâts reçus, narre UNIQUEMENT ta réaction physique ou mentale (douleur, effort, doute) en 1 ou 2 phrases. Pas de chiffres dans ton roleplay.
+• Après un[RÉSULTAT SYSTÈME] ou des dégâts reçus, narre UNIQUEMENT ta réaction physique ou mentale (douleur, effort, doute). Pas de chiffres dans ton roleplay.
 • INTERDICTION DE COPIE : Ne paraphrase jamais le message d'un autre joueur. Sois unique.
 
 3. MÉCANIQUES ET SORTS
@@ -366,7 +370,7 @@ class LLMTesterApp:
         }
         
         if use_long:
-            payload["messages"] =[{"role": "user", "content": KAELEN_PROMPT}]
+            payload["messages"] =[{"role": "user", "content": _get_kaelen_prompt()}]
             payload["max_tokens"] = 800
         else:
             payload["messages"] =[{"role": "user", "content": "Respond with 'OK'."}]

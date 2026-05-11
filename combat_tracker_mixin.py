@@ -195,6 +195,7 @@ class CombatTrackerNPCMixin:
             try:
                 # tracker est l'objet Python, tracker.win est le widget Tkinter
                 if tracker.win.winfo_exists():
+                    tracker.win.deiconify()
                     tracker.win.lift()
                     tracker.win.focus_force()
                     return tracker

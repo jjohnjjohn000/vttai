@@ -1,5 +1,5 @@
 {
-    "session_summary": "### Chroniques de la Barovie : L’Ascension du Mont Ghakis\n\n**La Marche vers l'Abîme**\nLe groupe a quitté la sécurité relative d'Argynvostholt pour entamer l'ascension périlleuse du **Mont Ghakis**. Accompagnés par **Ezmerelda d'Avenir**, les compagnons se dirigent vers le **Pont de Tsolenka**, passage obligé vers le Temple d'Ambre. L'objectif est clair : infiltrer le foyer de la faille planaire qui déchire la réalité et neutraliser sa source avant que l'invasion entropique ne submerge totalement la vallée.\n\n**La Sentinelle des Cimes**\nAlors que le groupe s'enfonçait dans les hauteurs glaciales de la montagne, la nature elle-même a manifesté son hostilité. Un cri d'une résonance surnaturelle, défiant les lois de la biologie, a brisé le silence des cimes. Peu après, une créature massive — un aigle aux proportions et à l'aura dénaturées — a fondu sur eux depuis les flancs du Mont Ghakis, signalant que le chemin vers le Temple est gardé par des forces qui ne tolèrent aucune intrusion. Face à cette menace imminente, le groupe a resserré sa formation, refusant de se laisser distraire par les assauts de cette sentinelle corrompue.\n\n**État de la Situation**\nLe groupe est désormais en terrain hostile, à proximité immédiate du Pont de Tsolenka. La vigilance est à son comble : chaque membre est conscient que le Temple d'Ambre, cœur battant du mal cosmique, est tout proche et que l'intégrité de la Barovie dépend de leur succès.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Incursion au Temple d'Ambre** : **En cours.** Le groupe est en phase d'approche et affronte les premières défenses de la montagne.\n*   🗺️ **[Principale] Stopper la brèche planaire / Sanctuaire d'Ambre** : **Priorité.** L'objectif est d'atteindre le Temple pour identifier et sceller l'épicentre de l'instabilité.\n*   🗺️ **[Principale] Défendre Argynvostholt** : **En attente.** Les travaux de restauration sous la direction de Gil et Mart continuent en l'absence des héros.\n*   🗺️ **[Spirituelle] Retrouver les restes d'Argynvost** : **En attente.** Toujours nécessaire pour restaurer la pleine puissance du Fanal.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (En cours d'analyse par Elara).\n*   *Lettre cachetée* (Inchangée).\n\n*Note du Chroniqueur : Le voyage vers le Temple d'Ambre ne sera pas qu'une lutte contre des entités, mais un affrontement contre la réalité elle-même. Alors que le groupe entame le combat contre l'aigle monstrueux, le voile de la Barovie semble plus fin que jamais. La réussite de cette incursion déterminera si la terre maudite sera sauvée ou définitivement dévorée par les plans inférieurs.*",
+    "session_summary": "### Chroniques de la Barovie : L'Incursion au Temple d'Ambre\n\n**L'Ascension et l'Éveil du Temple**\nL'expédition vers le **Mont Ghakis** a atteint son paroxysme. Après avoir bravé les hauteurs glaciales et survécu à une attaque dévastatrice d'un **Roc** colossal, le groupe — accompagné par **Ezmerelda d'Avenir** — est parvenu devant les portes monumentales du **Temple d'Ambre**. L'atmosphère y est insoutenable, imprégnée d'une aura de corruption primordiale. Dès leur entrée, le groupe a été confronté à une architecture cyclopéenne où le silence n'est rompu que par le sifflement du vent, révélant une série de salles jonchées de statues d'ambre et des mécanismes de défense arcaniques redoutables.\n\n**La Bataille des Cimes**\nL'incursion a viré au chaos tactique. En atteignant la salle principale, le groupe a été brutalement pris pour cible par une **statue animée** (un Arcanaloth dissimulé) qui, depuis les hauteurs, a déclenché une série de dévastatrices *Boules de feu*. La violence des assauts magiques a mis le groupe à rude épreuve : **Lyra**, **Elara** et **Kaelen** ont tous subi des blessures critiques, frôlant la mort à plusieurs reprises. Malgré une coordination arcanique acharnée — incluant l'utilisation salvatrice d'un *Contresort* par Elara et la ténacité de Kaelen — l'ennemi, retranché derrière des meurtrières inaccessibles, a forcé une retraite tactique.\n\n**Retraite sous le Feu**\nFace à l'impossibilité de percer la défense du gardien dans cette configuration, le groupe a dû se résoudre à une extraction d'urgence. Sous le couvert des tirs, **Ezmerelda** a héroïquement extrait **Kaelen** inconscient, tandis qu'**Elara** et **Thorne** tentaient de maintenir un périmètre de sécurité. **Lyra**, bien que sauvée de justesse par les soins prodigués par Kaelen et Elara dans le tumulte, est restée prostrée au sol durant l'évacuation, laissant le groupe meurtri aux portes du hall principal. \n\n**État de la Situation**\nLe Temple d'Ambre s'est révélé être un piège mortel, bien plus complexe qu'une simple forteresse. Les défenseurs disposent d'un avantage topographique total. Le groupe est actuellement replié à l'entrée du complexe, en état de choc et physiquement épuisé.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Incursion au Temple d'Ambre** : **Critique.** L'infiltration a échoué à franchir le premier palier. La force de frappe du Temple dépasse les capacités actuelles du groupe.\n*   🗺️ **[Principale] La Brèche Planaire** : **En pause.** La source est localisée, mais le gardien arcanique bloque l'accès à l'épicentre.\n\n**Objets Majeurs en possession :**\n*   *Échantillon de liane cristalline* (Toujours en analyse par Elara).\n\n*Note du Chroniqueur : Le Temple d'Ambre ne cherche pas à repousser ses intrus, il cherche à les consumer. La retraite a été achetée au prix de presque toutes les ressources du groupe. La prochaine incursion ne pourra tolérer aucune erreur sous peine d'anéantissement définitif.*",
     "defense_argynvostholt": 10,
     "characters": {
         "Kaelen": {
@@ -8,11 +8,11 @@
                 "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
             ],
             "llm": "gemini-3.1-flash-lite-preview",
-            "hp": 104,
-            "max_hp": 104,
+            "hp": 0,
+            "max_hp": 105,
             "spell_slots": {
-                "1": 4,
-                "2": 3,
+                "1": 0,
+                "2": 2,
                 "3": 3
             },
             "hit_dice_used": 0,
@@ -98,22 +98,23 @@
             "race": "Human",
             "subrace": "Variant",
             "features": {
-                "lay_on_hands": 55,
+                "lay_on_hands": 0,
                 "max_lay_on_hands": 55
-            }
+            },
+            "unconscious_state": "stable"
         },
         "Elara": {
             "alt_context_too_large": "openrouter/google/gemini-3.1-pro-preview",
-            "llm": "gemini-3.1-flash-lite-preview",
-            "hp": 71,
+            "llm": "gemini-3.1-flash-lite",
+            "hp": 2,
             "max_hp": 71,
             "spell_slots": {
-                "1": 4,
+                "1": 2,
                 "2": 3,
-                "3": 3,
+                "3": 0,
                 "4": 3,
                 "5": 2,
-                "6": 1
+                "6": 0
             },
             "hit_dice_used": 0,
             "active": true,
@@ -277,7 +278,7 @@
                 "ollama/gemma4:e4b"
             ],
             "llm": "groq/meta-llama/llama-4-scout-17b-16e-instruct",
-            "hp": 83,
+            "hp": 35,
             "max_hp": 83,
             "spell_slots": {},
             "hit_dice_used": 0,
@@ -301,18 +302,22 @@
             "ac": 18,
             "llm_session_override": "",
             "race": "Tiefling",
-            "subrace": "Dispater"
+            "subrace": "Dispater",
+            "spells_prepared": [
+                "Hellish Rebuke",
+                "Thaumaturgy"
+            ]
         },
         "Lyra": {
-            "llm": "gemini-3.1-flash-lite-preview",
-            "hp": 82,
+            "llm": "gemini-3-flash-preview",
+            "hp": 0,
             "max_hp": 82,
             "spell_slots": {
-                "1": 4,
-                "2": 3,
-                "3": 3,
-                "4": 3,
-                "5": 2,
+                "1": 0,
+                "2": 0,
+                "3": 2,
+                "4": 2,
+                "5": 1,
                 "6": 1
             },
             "hit_dice_used": 0,
@@ -460,7 +465,9 @@
             "ac": 17,
             "llm_session_override": "",
             "race": "Half-Elf",
-            "subrace": "Variant; Wood Elf Descent"
+            "subrace": "Variant; Wood Elf Descent",
+            "unconscious_state": "stable",
+            "unconscious": true
         }
     },
     "npcs": [
@@ -486,7 +493,7 @@
             "name": "Madam Eva",
             "color": "#e9c46a",
             "voice": "fr_FR-siwis-low",
-            "speed": "-10%",
+            "speed": "-50%",
             "bestiary_name": "Madam Eva",
             "hp_current": 88,
             "notes": ""
@@ -796,7 +803,7 @@
             "objectives": [
                 {
                     "text": "Voyager jusqu'au Temple d'Ambre",
-                    "done": false
+                    "done": true
                 },
                 {
                     "text": "Infiltrer le Temple",
@@ -877,15 +884,15 @@
         }
     ],
     "scene_context": {
-        "lieu": "Au pied du Mont Ghakis",
-        "heure": "Apres-midi",
-        "meteo": "Brume barovienne habituelle, refoulée par la lueur du phare",
-        "ambiance": "",
+        "lieu": "Le Temple d'Ambre",
+        "heure": "Début de soirée.",
+        "meteo": "Froid glacial et air chargé de poussière d'ambre, lumiere du phare argynvostholt omnipresente.",
+        "ambiance": "Une structure cyclopéenne taillée dans la roche orangée, exsudant une aura de corruption primordiale. Le silence n'est rompu que par le sifflement du vent de montagne s'engouffrant dans les fissures.",
         "npcs_presents": [],
         "objets_notables": [],
-        "menaces": "",
-        "notes_mj": "",
-        "location_image": ""
+        "menaces": "Froid extrême, gardiens magiques et l'influence corruptrice des Puissances Sombres.",
+        "notes_mj": "Lieu d'origine du pacte de Strahd. Le temple était autrefois surveillé par l'Ordre du Dragon d'Argent pour empêcher le mal de s'échapper.",
+        "location_image": "/home/wa/Downloads/Temple d'Ambre.jpg"
     },
     "memories": [
         {
@@ -923,14 +930,15 @@
             "id": "mem_argynvostholt",
             "categorie": "lieu",
             "titre": "Argynvostholt",
-            "contenu": "Manoir autrefois hanté et siège de l'Ordre du Dragon d'Argent, servant désormais de bastion de résistance. Le phare, une fois réactivé, purifie l'atmosphère et neutralise la compulsion des revenants. Malgré les réparations entreprises par les artisans Gil et Mart, sa défense physique reste fragile et corrélée au succès de la mission au Temple d'Ambre. Score de défense actuel : 10/100.",
+            "contenu": "Manoir autrefois hanté et siège de l'Ordre du Dragon d'Argent, servant de bastion de résistance. Le phare purifie l'atmosphère et neutralise la compulsion des revenants, bien que son activation soit cruciale pour maintenir la défense dimensionnelle. Malgré les travaux des artisans Gil et Mart, la protection physique reste précaire et corrélée au succès de la mission au Temple d'Ambre. Le manoir demeure le sanctuaire des réfugiés sous la protection d'Ireena, son intégrité étant vitale pour la survie de la vallée.",
             "tags": [
                 "Argynvostholt",
                 "bastion",
+                "sanctuaire",
                 "phare",
-                "défense"
+                "réfugiés"
             ],
-            "importance": 2,
+            "importance": 1,
             "session_ajout": 1,
             "visible": true
         },
@@ -985,14 +993,14 @@
             "id": "mem_ireena",
             "categorie": "personnage",
             "titre": "Ireena Kolyana",
-            "contenu": "Sœur d'Ismark, portant les marques de morsures vampiriques de Strahd. Elle est en proie à un conflit intérieur avec l'âme de Tatyana. La Détection du Bien et du Mal n'a révélé aucune influence externe — conflit purement spirituel. A refusé de se rendre à la mare sacrée lors d'une session précédente.\n\nElle a éveillé un charme et une confiance inébranlable, presque surnaturel.",
+            "contenu": "Sœur d'Ismark marquée par Strahd, Ireena est en conflit spirituel avec l'âme de Tatyana, sans influence externe détectée. Elle possède un charme surnaturel et a pris un rôle de leader, galvanisant les survivants à Argynvostholt. Elle a toutefois récemment commis une méprise sur le fonctionnement du phare, privant temporairement la Barovie de la lumière éternelle.",
             "tags": [
-                "Ireena",
-                "morsure",
-                "Tatyana",
-                "conflit spirituel"
+                "Ireena Kolyana",
+                "Ismark",
+                "Argynvostholt",
+                "Conflit spirituel"
             ],
-            "importance": 3,
+            "importance": 2,
             "session_ajout": 1,
             "visible": true
         },
@@ -1000,12 +1008,12 @@
             "id": "mem_ismark",
             "categorie": "personnage",
             "titre": "Ismark Kolyanovich",
-            "contenu": "Frère aîné d'Ireena, noble de Barovia. A chargé le groupe de protéger sa sœur. S'est montré furieux quand Elara lui a demandé de convaincre Ireena d'aller à la mare malgré son état fragile. Est reparti seul vers le camp à l'entrée de Krezk.\n\nIl est présentement le maître d'arme à Argynvostholt pour former les villageois établis au manoir.",
+            "contenu": "Frère d'Ireena, il a été chargé de la protéger. Bien qu'initialement guide du groupe, une profonde méfiance s'est installée suite à ses récits contestés sur l'Ordre du Dragon d'Argent. Il est actuellement cantonné à la gestion interne et à la formation des villageois au premier étage d'Argynvostholt. Il a récemment commis une erreur critique en condamnant temporairement le phare du manoir.",
             "tags": [
                 "Ismark",
-                "noble",
-                "Barovia",
-                "frère d'Ireena"
+                "Ireena",
+                "Argynvostholt",
+                "Allié"
             ],
             "importance": 2,
             "session_ajout": 1,
@@ -1029,12 +1037,12 @@
             "id": "mem_madam_eva",
             "categorie": "personnage",
             "titre": "Madam Eva",
-            "contenu": "Vieille diseuse de bonne aventure Vistani, probablement liée à des forces cosmiques. A tiré les cartes du Tarot de Barovie pour les Héros de l'Aube Brisée, avant l'arrivée de nos héros.",
+            "contenu": "Vieille diseuse de bonne aventure Vistani, probablement liée à des forces cosmiques. Elle a tiré les cartes du Tarot de Barovie pour les Héros de l'Aube Brisée avant l'arrivée du groupe. Récemment, son campement a été englouti par une faille planaire: le Mur Noir.",
             "tags": [
-                "Madam Eva",
                 "Vistani",
-                "tarot",
-                "prophétie"
+                "Madam Eva",
+                "Prophétie",
+                "Faille planaire"
             ],
             "importance": 2,
             "session_ajout": 1,
@@ -1164,14 +1172,14 @@
             "id": "mem_ffca80cf",
             "categorie": "relation",
             "titre": "Avis d'Ezmerelda d'Avenir sur le groupe",
-            "contenu": "Ezmerelda reconnaît l'efficacité des aventuriers en combat, tout en exprimant une inquiétude pragmatique concernant leur état de santé critique. Elle les incite à cesser de prendre des risques inconsidérés alors que la situation s'aggrave.",
+            "contenu": "Ezmerelda reconnaît l'efficacité des aventuriers au combat, bien qu'elle note leur vulnérabilité physique après les épreuves sur le Mont Ghakis. Elle s'est formellement engagée à accompagner le groupe, scellant une alliance cruciale pour l'incursion au Temple d'Ambre. Elle reste toutefois perplexe face aux nouvelles défenses occultes, comme le sceau du Pont de Tsolenka, dont la nature dépasse ses connaissances et celles de Van Richten.",
             "tags": [
-                "Ezmerelda d'Avenir",
-                "alliés",
-                "état de santé",
-                "méfiance"
+                "Ezmerelda",
+                "Temple d'Ambre",
+                "Pont de Tsolenka",
+                "Alliance"
             ],
-            "importance": 2,
+            "importance": 3,
             "session_ajout": 0,
             "visible": true
         },
@@ -1179,11 +1187,12 @@
             "id": "mem_0ef844d8",
             "categorie": "lieu",
             "titre": "Le Mur Noir",
-            "contenu": "Une structure monolithique d'obsidienne impénétrable qui sépare les terres civilisées des contrées corrompues. Il est réputé indestructible et dégage une aura de froid surnaturel qui décourage toute tentative d'escalade.\n\nLe groupe a commencé à l'investiguer fortement, Van Richten a presque terminé la triangulation du déclencheur.",
+            "contenu": "Le Mur Noir est une structure monolithique d'obsidienne impénétrable séparant les terres civilisées des contrées corrompues. Il agit comme une brèche planaire active et une cicatrice d'obsidienne liquide, se révélant être l'épicentre d'une instabilité cosmique. Son aura de froid surnaturel décourage toute escalade, tandis qu'il déverse une entropie menaçant de dissoudre le réel. Van Richten et le groupe ont découvert que le Temple d'Ambre est le lieu où le déclencheur de la faille à pris place.",
             "tags": [
-                "frontière",
+                "Mur Noir",
+                "faille planaire",
                 "obsidienne",
-                "mystère"
+                "entropie"
             ],
             "importance": 3,
             "session_ajout": 0,
@@ -1222,13 +1231,14 @@
             "id": "mem_53d1cbb8",
             "categorie": "lieu",
             "titre": "Mont Ghakis",
-            "contenu": "Le Mont Ghakis abrite le Temple d'Ambre, source de l'instabilité planaire dévorant la Barovie. Le groupe y mène une incursion périlleuse pour infiltrer le temple et sceller la brèche entropique. L'ascension est marquée par une faune hostile et corrompue, agissant comme sentinelles du site. Le passage obligé du Pont de Tsolenka mène désormais au cœur de ce fléau cosmique.",
+            "contenu": "Le Mont Ghakis abrite le Temple d'Ambre, épicentre de l'instabilité planaire. Le Roc du Mont Ghakis, une créature massive et corrompue agissant comme sentinelle, surveille l'ascension périlleuse vers le Temple. Le passage obligé du Pont de Tsolenka mène désormais au cœur de ce fléau cosmique, où le groupe tente de sceller la brèche entropique.",
             "tags": [
                 "Mont Ghakis",
-                "Incursion",
+                "Temple d'Ambre",
+                "Roc",
                 "Brèche"
             ],
-            "importance": 3,
+            "importance": 2,
             "session_ajout": 0,
             "visible": true
         },
@@ -1236,11 +1246,160 @@
             "id": "mem_7df2e2db",
             "categorie": "lieu",
             "titre": "Temple d'Ambre",
-            "contenu": "Identifié comme la source de la corruption et de l'instabilité planaire qui déchire la réalité en Barovie. Il est décrit comme une prison cosmique abritant des entités immortelles qui monnaient des pouvoirs corrompus. Le groupe le considère comme l'épicentre du mal et la priorité absolue pour stopper l'invasion entropique.",
+            "contenu": "Le Temple d'Ambre est une prison cosmique située au sommet du Mont Ghakis, identifiée comme la source de la corruption, de l'instabilité planaire et de l'invasion entropique menaçant la Barovie. Il abrite des entités immortelles monnayant des pouvoirs corrompus et est défendu par des mécanismes arcaniques redoutables. Le groupe le considère comme sa priorité absolue, malgré une incursion initiale éprouvante ayant mené à une retraite stratégique.",
             "tags": [
-                "mont-ghakis",
-                "source-corruption",
-                "faille-planaire"
+                "Temple d'Ambre",
+                "Ghakis",
+                "corruption",
+                "invasion",
+                "prison"
+            ],
+            "importance": 3,
+            "session_ajout": 0,
+            "visible": true
+        },
+        {
+            "id": "mem_9e06a7de",
+            "categorie": "lieu",
+            "titre": "Le Vieux Moulin",
+            "contenu": "Situé sur la route menant à Vallaki, ce moulin isolé possède un aspect macabre et sinistre. Il a été identifié comme le lieu où étaient conduits les enfants disparus du village de Barovie par des guenaudes. Le groupe y a mené un assaut, sauvant deux enfants, mais deux des sorcières qui y résidaient ont réussi à s'enfuir et demeurent une menace active.",
+            "tags": [
+                "Barovie",
+                "guenaudes",
+                "enfants",
+                "Vallaki"
+            ],
+            "importance": 2,
+            "session_ajout": 0,
+            "visible": true
+        },
+        {
+            "id": "mem_1c14958d",
+            "categorie": "lieu",
+            "titre": "Ravenloft",
+            "contenu": "Ravenloft est le château de Strahd. Le groupe a appris que les Héros de l'Aube auraient prétendument tué Strahd en ce lieu il y a quelques jours. Cette information s'ajoute à la liste des lieux mystérieux de la Barovie.",
+            "tags": [
+                "Ravenloft",
+                "Strahd",
+                "Lieux",
+                "Héros de l'Aube"
+            ],
+            "importance": 3,
+            "session_ajout": 0,
+            "visible": true
+        },
+        {
+            "id": "mem_9ae0fa8d",
+            "categorie": "legende",
+            "titre": "Les Paroles de Séluné",
+            "contenu": "Il s'agit de la voix de la divinité Séluné elle-même qui a accueilli le groupe lors de son arrivée en Barovie. Cette voix leur a révélé qu'ils avaient été choisis pour achever la purification de la terre maudite et terrasser le mal qui la ronge depuis des siècles.",
+            "tags": [
+                "Selune",
+                "mission",
+                "divinite",
+                "prologue"
+            ],
+            "importance": 3,
+            "session_ajout": 0,
+            "visible": true
+        },
+        {
+            "id": "mem_04b5a565",
+            "categorie": "personnage",
+            "titre": "Vex'sira",
+            "contenu": "Vex'sira est une Érinye commandée par le Général Haruman. Elle a mené des assauts brutaux contre le groupe au Gué de la Tser avec des chiens de l'enfer, avant d'être contrainte à la fuite vers le nord-ouest lors d'une confrontation acharnée.",
+            "tags": [
+                "Vex'sira",
+                "Gué de la Tser",
+                "Érinye"
+            ],
+            "importance": 2,
+            "session_ajout": 0,
+            "visible": true
+        },
+        {
+            "id": "mem_12e3535a",
+            "categorie": "menace",
+            "titre": "Général Haruman",
+            "contenu": "Il s'agit d'une entité commandant des forces hostiles, dont l'Érinye Vex'sira est l'une des subordonnées. Ses troupes ont mené des assauts agressifs contre le groupe, notamment au Gué de la Tser, dans le but de transformer la Barovie en une forteresse infernale.",
+            "tags": [
+                "menace",
+                "antagoniste",
+                "forces infernales"
+            ],
+            "importance": 3,
+            "session_ajout": 0,
+            "visible": true
+        },
+        {
+            "id": "mem_a5ddd59c",
+            "categorie": "personnage",
+            "titre": "Lady Fiona Wachter",
+            "contenu": "Lady Fiona Wachter est une figure influente de la ville de Vallaki dont l'influence politique ne cesse de s'étendre. Ses activités et ses desseins représentent une menace directe pour la stabilité politique et sécuritaire de la région barovienne.",
+            "tags": [
+                "Vallaki",
+                "politique",
+                "menace"
+            ],
+            "importance": 2,
+            "session_ajout": 0,
+            "visible": true
+        },
+        {
+            "id": "mem_cad0bd5b",
+            "categorie": "personnage",
+            "titre": "Gil, le maçon de Krezk",
+            "contenu": "Gil est un maçon renommé originaire de Krezk, recruté par le groupe auprès du Maire Krezkov. Il a été engagé pour réaliser les travaux de restauration structurelle indispensables à la survie d'Argynvostholt, bastion du groupe. Il travaille sur le manoir accompagné de son jeune apprenti, Mart.",
+            "tags": [
+                "Krezk",
+                "Argynvostholt",
+                "Allié",
+                "Artisan"
+            ],
+            "importance": 2,
+            "session_ajout": 0,
+            "visible": true
+        },
+        {
+            "id": "mem_1414fc77",
+            "categorie": "personnage",
+            "titre": "Mart",
+            "contenu": "Mart est un jeune apprenti maçon originaire de Krezk. Il a été recruté par le groupe, en compagnie de son maître Gil, pour aider à la restauration physique du bastion d'Argynvostholt. Il participe activement aux travaux de réparation du manoir.",
+            "tags": [
+                "Krezk",
+                "Argynvostholt",
+                "Artisan",
+                "Allié"
+            ],
+            "importance": 2,
+            "session_ajout": 0,
+            "visible": true
+        },
+        {
+            "id": "mem_7c015681",
+            "categorie": "personnage",
+            "titre": "Père Donavitch",
+            "contenu": "Prêtre du village de Barovie, il a été trouvé par le groupe, ivre et en pleurs, devant l'autel de son église. Il retenait son propre fils, devenu un mort-vivant, enfermé dans la cave de l'église. Après que le groupe a purgé la créature, le prêtre est entré dans une rage violente et a dû être endormi par les aventuriers. Le groupe ignore actuellement son sort, mais il reste en possession d'objets ou poches non examinés.",
+            "tags": [
+                "prêtre",
+                "église",
+                "village de Barovie",
+                "mort-vivant"
+            ],
+            "importance": 1,
+            "session_ajout": 0,
+            "visible": true
+        },
+        {
+            "id": "mem_8e7a126a",
+            "categorie": "lieu",
+            "titre": "Tsolenka Pass",
+            "contenu": "Le Tsolenka Pass est un passage stratégique et géographique situé en haute altitude, sur le chemin menant au Mont Ghakis et au Temple d'Ambre. Le groupe sait que cet accès est un point de passage incontournable pour atteindre l'épicentre de la faille planaire. Il est protégé par des verrous occultes, notamment une herse en fer et un rideau de flammes vertes surnaturelles qui barrent le passage vers les sommets. Une Dissipation de la Magie peut éteindre les flammes pendant 1 minute. La herse de fer s'ouvre seul quand on approche d'elle.",
+            "tags": [
+                "Mont Ghakis",
+                "Temple d'Ambre",
+                "Passage",
+                "Verrou"
             ],
             "importance": 3,
             "session_ajout": 0,
@@ -1264,24 +1423,24 @@
     ],
     "session_logs": [
         {
-            "session": 13,
-            "date": "2026-04-12 21:36",
-            "resume": "### Chroniques de la Barovie : L'Agonie au Gué de la Tser\n\n**La Confrontation Fatidique**\nLe groupe, mené par **Kaelen, Elara, Thorne et Lyra**, s'est retrouvé piégé dans une spirale de violence brutale au Gué de la Tser. Tandis que la faille planaire déversait ses horreurs, le combat s'est transformé en un massacre contre une meute de chiens de l'enfer et l'implacable **Érinye Vex'sira**. Malgré les tentatives d'**Elara** de contenir les bêtes dans un dôme de force et la pugnacité de **Thorne**, la menace aérienne de l'Érinye a submergé les défenses du groupe. **Kaelen**, après avoir tenté désespérément de se soigner par lui-même face au déchaînement de flèches empoisonnées, a succombé, s'effondrant sous les railleries de Vex'sira. Seule l'intervention divine de **Lyra**, canalisant ses dernières forces pour ramener le guerrier à la conscience, a empêché une issue fatale immédiate.\n\n**État de la Situation**\nLe groupe est exsangue. Bien que la zone ait été temporairement purgée des serviteurs canins, le moral est au plus bas et les ressources arcaniques et divines sont cruellement éprouvées. La présence de **Rudolph van Richten** et d'**Ezmerelda d'Avenir** à leurs côtés demeure le seul atout face à la menace persistante de Vex'sira, qui survole toujours le champ de bataille. L'objectif d'atteindre le Temple d'Ambre reste la priorité absolue, mais le groupe doit désormais se remettre de ce traumatisme physique et psychologique intense avant toute progression.\n\n**Progression des Quêtes** :\n*   🗺️ **[Principale] Stopper la brèche planaire** : En attente. L'accès au Temple d'Ambre est retardé par le conflit actif contre Vex'sira.\n*   🗺️ **[Principale] Affrontement au Gué de la Tser** : Combat toujours en cours. Érinye Vex'sira reste une cible prioritaire et active.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : Priorité délaissée en raison de l'urgence vitale au Gué.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Toujours en possession du groupe).\n*   *Lettre cachetée* (Inchangée).\n\n*Note du Chroniqueur : Le sang a coulé au Gué de la Tser. Le groupe a frôlé la défaite totale, et le poids du serment de Kaelen est plus lourd que jamais. Le Temple d'Ambre les attend, mais le coût de l'ascension a déjà commencé à se payer en chair et en foi.*"
+            "session": 19,
+            "date": "2026-04-29 21:45",
+            "resume": "### Chroniques de la Barovie : L’Ascension du Mont Ghakis\n\n**La Rescousse au Bord du Vide**\nL’incursion vers le **Mont Ghakis** a frôlé la catastrophe lorsque le Roc colossal a brutalement arraché **Elara** à ses compagnons, l'abandonnant sur une corniche escarpée après une chute traumatique. Dans un élan de bravoure coordonné, **Kaelen**, **Lyra** et **Thorne** ont entrepris une périlleuse ascension de secours. Grâce à une synchronisation rigoureuse, **Kaelen** a atteint la magicienne blessée pour la stabiliser, tandis que **Lyra** canalisait la protection de Séluné pour renforcer sa résistance. Une fois le groupe réuni, la descente en rappel a permis de sécuriser l'ensemble de l'équipe, confirmant que chaque mètre gagné sur cette montagne est une lutte contre le terrain lui-même.\n\n**Le Verrou du Pont de Tsolenka**\nPoursuivant l'ascension vers le **Temple d'Ambre**, le groupe est parvenu jusqu'au **Pont de Tsolenka**, dont l'accès est désormais barré par une muraille impénétrable. La structure, ornée de vautours démoniaques, est scellée par une herse en fer derrière laquelle rugit un rideau de flammes vertes surnaturelles. **Ezmerelda d'Avenir** a admis son ignorance face à cette manifestation occulte, soulignant que même les archives de **Van Richten** ne mentionnent pas ce sceau. **Elara** a identifié ces flammes comme une signature énergétique provenant d'un plan inférieur, marquant une barrière bien plus complexe qu'un simple obstacle physique.\n\n**État de la Situation**\nLe groupe se trouve face à une impasse stratégique aux portes du Temple. La menace planaire se cristallise ici, au cœur de la montagne. Si l'intégrité physique d'Elara a été temporairement rétablie, l'épuisement des forces est palpable, rendant la franchissement du Pont de Tsolenka une épreuve critique pour la suite de l'incursion.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Incursion au Temple d'Ambre** : **En cours.** Le groupe est bloqué devant le Pont de Tsolenka, ultime verrou avant le cœur de la corruption.\n*   🗺️ **[Principale] Stopper la brèche planaire / Sanctuaire d'Ambre** : **Priorité.** Les flammes vertes du pont confirment la nature infernale des défenses entourant la source de la faille.\n*   🗺️ **[Principale] Défendre Argynvostholt** : **En attente.** Le bastion demeure une lueur d'espoir dans la vallée, mais la mission actuelle prime sur sa fortification physique.\n*   🗺️ **[Spirituelle] Retrouver les restes d'Argynvost** : **En attente.** Quête essentielle pour la restauration énergétique de la Barovie.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (En cours d'analyse).\n*   *Lettre cachetée* (Inchangée).\n\n*Note du Chroniqueur : Le Pont de Tsolenka est une frontière qui sépare les vivants de l'abîme. Derrière ce feu spectral se cache sans doute la clé pour sceller la plaie qui déchire le ciel de la Barovie, ou le tombeau de ceux qui ont osé y faire face.*"
         },
         {
-            "session": 14,
-            "date": "2026-04-12 22:24",
-            "resume": "### Chroniques de la Barovie : Le Crépuscule de l'Érinye\n\n**La Chute de Vex'sira**\nLe Gué de la Tser, théâtre d'une déchirure planaire menaçante, a été le lieu d'une confrontation brutale. Le groupe, épuisé et physiquement meurtri par les traits empoisonnés, a dû faire face à la dernière résistance de la commandante **Vex'sira**. Après avoir repoussé la meute de chiens de l'enfer — appuyés par l'efficacité tactique de **Rudolph van Richten** et la férocité d'**Ezmerelda d'Avenir** — les compagnons ont réussi à contraindre l'Érinye à descendre de son perchoir aérien. Malgré la détresse physique de **Kaelen**, un temps tombé sous le feu nourri de l'ennemie, et la fatigue accumulée d'**Elara**, le groupe a maintenu un verrou tactique inébranlable. **Vex'sira** s'est finalement enfuit vers le nord-ouest, mettant un terme au combat.\n\n**État de la Situation**\nLa menace immédiate des chiens de l'enfer est éliminée, Vex'sira s'est enfuit et le groupe est exsangue. **Elara** a procédé à la dissipation des barrières de force, permettant de sécuriser la zone, tandis que **Lyra** et **Kaelen** demeurent en état d'alerte, conscients que cette victoire n'est qu'un répit dans la lutte contre la corruption entropique qui ronge la Barovie. Le Temple d'Ambre, source de la brèche, reste l'objectif ultime et inévitable pour sceller définitivement le tissu de la réalité.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Affrontement au Gué de la Tser** : **Accompli.** Vex'sira et ses serviteurs ont été neutralisés.\n*   🗺️ **[Principale] Stopper la brèche planaire** : **En cours.** L'incursion au Temple d'Ambre demeure la priorité absolue pour éradiquer la source du mal.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : **En attente.** Les travaux de fortification sont suspendus à la résolution de la crise planaire.\n*   🗺️ **[Spirituelle] Retrouver les restes d'Argynvost** : **En attente.** La quête reste cruciale pour restaurer la pleine puissance du Fanal.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Toujours en possession du groupe).\n*   *Lettre cachetée* (Inchangée).\n\n*Note du Chroniqueur : Le sang versé au Gué de la Tser marque le prix de la survie. Si la menace de Vex'sira est écartée, le groupe comprend désormais que le véritable ennemi est l'instabilité même du monde qui s'effrite. L'ascension vers le Temple d'Ambre sera le prochain, et peut-être le plus périlleux, des chapitres de cette agonie barovienne.*"
+            "session": 20,
+            "date": "2026-05-09 21:31",
+            "resume": "### Chroniques de la Barovie : Le Seuil de l’Ambre\n\n**L’Ascension et le Verrou de Tsolenka**\nL’incursion vers le **Mont Ghakis**, marquée par la chute traumatique d'**Elara** et son sauvetage héroïque par **Kaelen**, **Lyra** et **Thorne**, a mené le groupe jusqu’au redoutable **Pont de Tsolenka**. Ce passage stratégique était scellé par une herse massive et un rideau de flammes vertes surnaturelles. Sous les conseils d'**Ezmerelda d'Avenir**, la magicienne **Elara** a déployé ses arts pour dissiper le voile énergétique, permettant ainsi au groupe de franchir ce verrou planaire. Une fois les compagnons passés, le feu spectral s'est refermé brutalement derrière eux, marquant un point de non-retour dans cette ascension glacée.\n\n**La Façade du Temple d'Ambre**\nDéfiant les vents hurlants et le froid mordant de la gorge, les héros ont finalement atteint leur destination : le **Temple d'Ambre**. Taillée à même la paroi rocheuse, la structure cyclopéenne impose le silence. Six statues colossales d'ambre, représentant des figures encapuchonnées sans visage en prière, gardent une entrée béante. Malgré l'aura de corruption primordiale qui s'en dégage, les premières analyses d'**Elara** n'ont révélé aucun mécanisme magique actif sur ces idoles, bien que le matériau lui-même semble absorber la lumière ambiante.\n\n**L’Entrée dans l’Abîme**\nAcculés par le sceau de flammes qui leur barre désormais toute retraite, les compagnons se tiennent devant l’escalier descendant de l’arche centrale. **Kaelen**, fidèle à son serment, a pris la tête de la formation, bouclier levé contre l'obscurité. Le groupe s'apprête désormais à s'enfoncer dans les entrailles du temple, là où bat le cœur de l'instabilité planaire et où les Puissances Sombres murmurent leurs promesses corrompues.\n\n---\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Incursion au Temple d'Ambre** : **En cours (Phase d'infiltration).** Le groupe a atteint l'entrée et se prépare à descendre.\n*   🗺️ **[Principale] La Brèche Planaire / Sanctuaire d'Ambre** : **Priorité.** L'épicentre de la faille est désormais à portée de main, au sein des profondeurs du temple.\n*   🗺️ **[Principale] Défendre Argynvostholt** : **En attente.** La survie du bastion dépend de la réussite de cette incursion.\n*   🗺️ **[Spirituelle] Retrouver les restes d'Argynvost** : **En attente.** La lumière du phare guide toujours le groupe, mais la restauration complète attend leur retour.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (Utilisé pour la triangulation).\n*   *Lettre cachetée* (Inchangée).\n\n*Note du Chroniqueur : Les flammes vertes ont agi comme un couperet. Il n'y a plus de repli possible vers Argynvostholt. Le destin de la Barovie se jouera désormais dans le silence de l'ambre et l'obscurité des caveaux sous le Mont Ghakis.*"
         },
         {
-            "session": 15,
-            "date": "2026-04-27 21:28",
-            "resume": "### Chroniques de la Barovie : Le Crépuscule de l'Érinye\n\n**La Fuite de Vex'sira et l'Appel du Temple**\nLa confrontation au Gué de la Tser a laissé le groupe exsangue mais victorieux. Malgré la férocité des diables à épines et l'assaut de la commandante **Vex'sira**, le groupe a réussi à forcer l'Érinye à la fuite vers le nord-ouest. Cependant, cette escarmouche a révélé une vérité plus sombre : le \"Mur Noir\" qui lacère la réalité est alimenté par une instabilité planaire dont le **Temple d'Ambre** est le cœur battant. **Rudolph van Richten** a confirmé que ce lieu n'est rien de moins qu'une prison cosmique où des entités immortelles monnayent des pouvoirs corrompus.\n\n**Le Sanctuaire en Sursis**\nAprès s'être regroupés et avoir reçu les soins de Van Richten, les compagnons ont regagné **Argynvostholt**. Ils y ont découvert une situation déconcertante : **Ireena** et **Ismark**, par méprise sur les besoins de la faune locale, avaient condamné la tour du phare, privant le manoir de sa sentinelle dimensionnelle. Grâce à l'intervention ferme du groupe, la lumière a été rétablie, purifiant à nouveau la vallée. **Van Richten** a pris congé pour calibrer ses outils de confinement, tandis qu'**Ezmerelda** s'est engagée à accompagner les héros dans leur incursion périlleuse.\n\n**État de la Situation**\nArgynvostholt est de nouveau sous la protection du Fanal. Le groupe a passé une nuit de repos cruciale pour préparer l'ascension du Mont Ghakis. La mission est désormais claire : le Temple d'Ambre doit être infiltré et la brèche scellée avant que l'entropie ne dissolve définitivement le tissu de la Barovie.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Affrontement au Gué de la Tser** : **Accompli.**\n*   🗺️ **[Principale] Stopper la brèche planaire / Incursion au Temple d'Ambre** : **Priorité Absolue.** Départ immédiat vers le Mont Ghakis.\n*   🗺️ **[Principale] Défendre et restaurer Argynvostholt** : **En cours.** Le phare est rétabli, mais la défense physique du bastion dépend désormais de leur succès au Temple.\n*   🗺️ **[Secondaire] Retrouver Ezmerelda d'Avenir** : **Accompli.** Elle rejoint le groupe pour l'ascension.\n*   🗺️ **[Spirituelle] Retrouver les restes d'Argynvost** : **En attente.** Toujours nécessaire pour la pleine puissance du Fanal.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (En cours d'analyse par Elara).\n*   *Lettre cachetée* (Inchangée).\n\n*Note du Chroniqueur : La lumière est revenue sur Argynvostholt, mais le vrai combat commence maintenant. En acceptant d'affronter le Temple d'Ambre, le groupe ne cherche plus seulement à survivre, mais à refermer la plaie béante du monde. Le prix de leur réussite pourrait bien être leur propre intégrité face aux promesses corrompues du Temple.*"
+            "session": 21,
+            "date": "2026-05-09 21:31",
+            "resume": "### Chroniques de la Barovie : Les Portes de l’Ambre\n\n**Le Franchissement du Seuil**\nL'ascension du **Mont Ghakis** a atteint un point de non-retour au **Pont de Tsolenka**. Face au rideau de flammes vertes — une barrière planaire d'une intensité rare — le groupe a dû faire preuve de résolution. Sous les conseils de **Van Richten** relayés par **Ezmerelda**, **Elara** a canalisé ses énergies arcaniques pour dissiper temporairement le brasier. Alors que le groupe franchissait la herse, le feu s'est refermé brutalement derrière eux, scellant leur destin et interdisant toute retraite vers la vallée.\n\n**La Traversée de la Gorge**\nLe groupe a progressé sur un pont de pierre cyclopéen, bravant un froid glacial et des vents hurlants. Gardé par des statues de chevaliers en armure dont l'une gît en ruine, ce passage stratégique n'était que le prélude à la découverte de l'épicentre du mal. Malgré la fatigue et les blessures passées d'**Elara**, soignées par la ferveur de **Lyra**, les compagnons ont maintenu une formation serrée sous la vigilance de **Kaelen** et le pragmatisme de **Thorne**.\n\n**Le Sanctuaire d'Ambre**\nL'incursion a finalement mené les héros devant la façade monumentale du **Temple d'Ambre**. Taillée à même la paroi rocheuse, la structure impose sa dévotion pervertie à travers six statues de six mètres de haut, sculptées dans un ambre sombre et représentant des figures encapuchonnées sans visage. Bien qu'**Elara** n'ait détecté aucune signature magique immédiate émanant des idoles, l'aura de corruption qui s'échappe de l'arche centrale est palpable. Le groupe se tient désormais au sommet des escaliers plongeant dans les profondeurs de la montagne, là où réside la source de la brèche planaire.\n\n---\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Incursion au Temple d'Ambre** : **En cours (Étape cruciale).** Le groupe a atteint l'entrée du temple. L'infiltration commence.\n*   🗺️ **[Principale] La Brèche Planaire** : **En cours.** La source est identifiée, mais le mécanisme de scellement reste à découvrir dans les profondeurs.\n*   🗺️ **[Principale] Défendre Argynvostholt** : **En pause.** Le bastion est désormais isolé par le rideau de flammes de Tsolenka. Son salut dépend entièrement du succès de l'incursion.\n*   🗺️ **[Spirituelle] Les restes d'Argynvost** : **En attente.** La réponse à cette quête pourrait se trouver parmi les secrets enfouis sous l'ambre.\n\n**Objets Majeurs en possession :**\n*   *Échantillon de liane cristalline* (Témoin de la dégradation planaire).\n*   *Lettre cachetée* (Origine inconnue).\n\n*Note du Chroniqueur : Le silence des statues sans visage est plus terrifiant que le fracas des tempêtes de neige. En entrant dans ce temple, les héros ne quittent pas seulement la lumière du jour, ils pénètrent dans le vestige d'une époque où les dieux eux-mêmes craignaient ce qui était emprisonné ici.*"
         },
         {
-            "session": 16,
-            "date": "2026-04-27 21:50",
-            "resume": "### Chroniques de la Barovie : L’Ascension du Mont Ghakis\n\n**La Marche vers l'Abîme**\nLe groupe a quitté la sécurité relative d'Argynvostholt pour entamer l'ascension périlleuse du **Mont Ghakis**. Accompagnés par **Ezmerelda d'Avenir**, les compagnons se dirigent vers le **Pont de Tsolenka**, passage obligé vers le Temple d'Ambre. L'objectif est clair : infiltrer le foyer de la faille planaire qui déchire la réalité et neutraliser sa source avant que l'invasion entropique ne submerge totalement la vallée.\n\n**La Sentinelle des Cimes**\nAlors que le groupe s'enfonçait dans les hauteurs glaciales de la montagne, la nature elle-même a manifesté son hostilité. Un cri d'une résonance surnaturelle, défiant les lois de la biologie, a brisé le silence des cimes. Peu après, une créature massive — un aigle aux proportions et à l'aura dénaturées — a fondu sur eux depuis les flancs du Mont Ghakis, signalant que le chemin vers le Temple est gardé par des forces qui ne tolèrent aucune intrusion. Face à cette menace imminente, le groupe a resserré sa formation, refusant de se laisser distraire par les assauts de cette sentinelle corrompue.\n\n**État de la Situation**\nLe groupe est désormais en terrain hostile, à proximité immédiate du Pont de Tsolenka. La vigilance est à son comble : chaque membre est conscient que le Temple d'Ambre, cœur battant du mal cosmique, est tout proche et que l'intégrité de la Barovie dépend de leur succès.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Incursion au Temple d'Ambre** : **En cours.** Le groupe est en phase d'approche et affronte les premières défenses de la montagne.\n*   🗺️ **[Principale] Stopper la brèche planaire / Sanctuaire d'Ambre** : **Priorité.** L'objectif est d'atteindre le Temple pour identifier et sceller l'épicentre de l'instabilité.\n*   🗺️ **[Principale] Défendre Argynvostholt** : **En attente.** Les travaux de restauration sous la direction de Gil et Mart continuent en l'absence des héros.\n*   🗺️ **[Spirituelle] Retrouver les restes d'Argynvost** : **En attente.** Toujours nécessaire pour restaurer la pleine puissance du Fanal.\n\n**Objets Majeurs :**\n*   *Échantillon de liane cristalline* (En cours d'analyse par Elara).\n*   *Lettre cachetée* (Inchangée).\n\n*Note du Chroniqueur : Le voyage vers le Temple d'Ambre ne sera pas qu'une lutte contre des entités, mais un affrontement contre la réalité elle-même. Alors que le groupe entame le combat contre l'aigle monstrueux, le voile de la Barovie semble plus fin que jamais. La réussite de cette incursion déterminera si la terre maudite sera sauvée ou définitivement dévorée par les plans inférieurs.*"
+            "session": 22,
+            "date": "2026-05-09 23:45",
+            "resume": "### Chroniques de la Barovie : L'Incursion au Temple d'Ambre\n\n**L'Ascension et l'Éveil du Temple**\nL'expédition vers le **Mont Ghakis** a atteint son paroxysme. Après avoir bravé les hauteurs glaciales et survécu à une attaque dévastatrice d'un **Roc** colossal, le groupe — accompagné par **Ezmerelda d'Avenir** — est parvenu devant les portes monumentales du **Temple d'Ambre**. L'atmosphère y est insoutenable, imprégnée d'une aura de corruption primordiale. Dès leur entrée, le groupe a été confronté à une architecture cyclopéenne où le silence n'est rompu que par le sifflement du vent, révélant une série de salles jonchées de statues d'ambre et des mécanismes de défense arcaniques redoutables.\n\n**La Bataille des Cimes**\nL'incursion a viré au chaos tactique. En atteignant la salle principale, le groupe a été brutalement pris pour cible par une **statue animée** (un Arcanaloth dissimulé) qui, depuis les hauteurs, a déclenché une série de dévastatrices *Boules de feu*. La violence des assauts magiques a mis le groupe à rude épreuve : **Lyra**, **Elara** et **Kaelen** ont tous subi des blessures critiques, frôlant la mort à plusieurs reprises. Malgré une coordination arcanique acharnée — incluant l'utilisation salvatrice d'un *Contresort* par Elara et la ténacité de Kaelen — l'ennemi, retranché derrière des meurtrières inaccessibles, a forcé une retraite tactique.\n\n**Retraite sous le Feu**\nFace à l'impossibilité de percer la défense du gardien dans cette configuration, le groupe a dû se résoudre à une extraction d'urgence. Sous le couvert des tirs, **Ezmerelda** a héroïquement extrait **Kaelen** inconscient, tandis qu'**Elara** et **Thorne** tentaient de maintenir un périmètre de sécurité. **Lyra**, bien que sauvée de justesse par les soins prodigués par Kaelen et Elara dans le tumulte, est restée prostrée au sol durant l'évacuation, laissant le groupe meurtri aux portes du hall principal. \n\n**État de la Situation**\nLe Temple d'Ambre s'est révélé être un piège mortel, bien plus complexe qu'une simple forteresse. Les défenseurs disposent d'un avantage topographique total. Le groupe est actuellement replié à l'entrée du complexe, en état de choc et physiquement épuisé.\n\n**Progression des Quêtes :**\n*   🗺️ **[Principale] Incursion au Temple d'Ambre** : **Critique.** L'infiltration a échoué à franchir le premier palier. La force de frappe du Temple dépasse les capacités actuelles du groupe.\n*   🗺️ **[Principale] La Brèche Planaire** : **En pause.** La source est localisée, mais le gardien arcanique bloque l'accès à l'épicentre.\n\n**Objets Majeurs en possession :**\n*   *Échantillon de liane cristalline* (Toujours en analyse par Elara).\n\n*Note du Chroniqueur : Le Temple d'Ambre ne cherche pas à repousser ses intrus, il cherche à les consumer. La retraite a été achetée au prix de presque toutes les ressources du groupe. La prochaine incursion ne pourra tolérer aucune erreur sous peine d'anéantissement définitif.*"
         }
     ],
     "combat_tracker": {
@@ -1292,40 +1451,25 @@
         "speech_used": [],
         "combatants": [
             {
-                "name": "Ezmerelda d'Av",
-                "is_pc": false,
-                "max_hp": 82,
-                "hp": 30,
-                "temp_hp": 0,
-                "ac": 17,
-                "initiative": 21,
-                "dex_bonus": 4,
-                "color": "#ff99bb",
-                "concentration": false,
-                "conc_spell": "",
-                "conc_rounds_left": 0,
-                "conc_total_rounds": 0,
-                "bestiary_name": "Ezmerelda d'Avenir",
-                "portrait": "/home/wa/VTTAI2/images/portraits/CoS/Ezmerelda d'Avenir.webp",
-                "alignment": "ally",
-                "conditions": [],
-                "tactics": [],
-                "notes": "",
-                "death_saves_success": 0,
-                "death_saves_fail": 0,
-                "action_used": false,
-                "bonus_used": false,
-                "reaction_used": false
-            },
-            {
                 "name": "Elara",
                 "is_pc": true,
                 "max_hp": 71,
-                "hp": 56,
+                "hp": 2,
                 "temp_hp": 0,
                 "ac": 16,
-                "initiative": 21,
+                "initiative": 23,
                 "dex_bonus": 3,
+                "hit_bonus": 0,
+                "dmg_bonus": 0,
+                "upgrade_level": 0,
+                "stats": {
+                    "str": 10,
+                    "dex": 10,
+                    "con": 10,
+                    "int": 10,
+                    "wis": 10,
+                    "cha": 10
+                },
                 "color": "#c8b8ff",
                 "concentration": false,
                 "conc_spell": "",
@@ -1344,47 +1488,32 @@
                 "reaction_used": false
             },
             {
-                "name": "VexSira",
+                "name": "Flameskull 2",
                 "is_pc": false,
-                "max_hp": 153,
-                "hp": 64,
+                "max_hp": 40,
+                "hp": 40,
                 "temp_hp": 0,
-                "ac": 18,
-                "initiative": 18,
+                "ac": 13,
+                "initiative": 19,
                 "dex_bonus": 3,
+                "hit_bonus": 0,
+                "dmg_bonus": 0,
+                "upgrade_level": 0,
+                "stats": {
+                    "str": 10,
+                    "dex": 10,
+                    "con": 10,
+                    "int": 10,
+                    "wis": 10,
+                    "cha": 10
+                },
                 "color": "#ddbbff",
                 "concentration": false,
                 "conc_spell": "",
                 "conc_rounds_left": 0,
                 "conc_total_rounds": 0,
-                "bestiary_name": "Commandantes Vex (Érinyes)",
-                "portrait": "",
-                "alignment": "hostile",
-                "conditions": [],
-                "tactics": [],
-                "notes": "",
-                "death_saves_success": 0,
-                "death_saves_fail": 0,
-                "action_used": false,
-                "bonus_used": false,
-                "reaction_used": false
-            },
-            {
-                "name": "Ireena Kolyana",
-                "is_pc": false,
-                "max_hp": 14,
-                "hp": 14,
-                "temp_hp": 0,
-                "ac": 15,
-                "initiative": 16,
-                "dex_bonus": 1,
-                "color": "#aaffaa",
-                "concentration": false,
-                "conc_spell": "",
-                "conc_rounds_left": 0,
-                "conc_total_rounds": 0,
-                "bestiary_name": "Ireena Kolyana",
-                "portrait": "/home/wa/VTTAI2/images/portraits/CoS/Ireena Kolyana.webp",
+                "bestiary_name": "Flameskull",
+                "portrait": "/home/wa/VTTAI2/images/portraits/MM/Flameskull.webp",
                 "alignment": "hostile",
                 "conditions": [],
                 "tactics": [],
@@ -1399,11 +1528,22 @@
                 "name": "Thorne",
                 "is_pc": true,
                 "max_hp": 83,
-                "hp": 83,
+                "hp": 35,
                 "temp_hp": 0,
                 "ac": 16,
                 "initiative": 14,
                 "dex_bonus": 6,
+                "hit_bonus": 0,
+                "dmg_bonus": 0,
+                "upgrade_level": 0,
+                "stats": {
+                    "str": 10,
+                    "dex": 10,
+                    "con": 10,
+                    "int": 10,
+                    "wis": 10,
+                    "cha": 10
+                },
                 "color": "#ff9999",
                 "concentration": false,
                 "conc_spell": "",
@@ -1422,40 +1562,25 @@
                 "reaction_used": false
             },
             {
-                "name": "Van Richten",
-                "is_pc": false,
-                "max_hp": 77,
-                "hp": 77,
-                "temp_hp": 0,
-                "ac": 12,
-                "initiative": 7,
-                "dex_bonus": 1,
-                "color": "#ddbbff",
-                "concentration": false,
-                "conc_spell": "",
-                "conc_rounds_left": 0,
-                "conc_total_rounds": 0,
-                "bestiary_name": "Rictavio",
-                "portrait": "/home/wa/VTTAI2/images/portraits/CoS/Rictavio.webp",
-                "alignment": "ally",
-                "conditions": [],
-                "tactics": [],
-                "notes": "",
-                "death_saves_success": 0,
-                "death_saves_fail": 0,
-                "action_used": false,
-                "bonus_used": false,
-                "reaction_used": false
-            },
-            {
                 "name": "Kaelen",
                 "is_pc": true,
-                "max_hp": 104,
-                "hp": 69,
+                "max_hp": 50,
+                "hp": 0,
                 "temp_hp": 0,
-                "ac": 16,
-                "initiative": 3,
+                "ac": -1,
+                "initiative": 12,
                 "dex_bonus": 2,
+                "hit_bonus": 0,
+                "dmg_bonus": 0,
+                "upgrade_level": 0,
+                "stats": {
+                    "str": 10,
+                    "dex": 10,
+                    "con": 10,
+                    "int": 10,
+                    "wis": 10,
+                    "cha": 10
+                },
                 "color": "#a0c4ff",
                 "concentration": false,
                 "conc_spell": "",
@@ -1474,21 +1599,106 @@
                 "reaction_used": false
             },
             {
-                "name": "Ismark Kolyanovich",
-                "is_pc": false,
-                "max_hp": 58,
-                "hp": 58,
+                "name": "Lyra",
+                "is_pc": true,
+                "max_hp": 0,
+                "hp": 0,
                 "temp_hp": 0,
-                "ac": 17,
-                "initiative": 3,
+                "ac": -1,
+                "initiative": 10,
                 "dex_bonus": 1,
-                "color": "#ff9966",
+                "hit_bonus": 0,
+                "dmg_bonus": 0,
+                "upgrade_level": 0,
+                "stats": {
+                    "str": 10,
+                    "dex": 10,
+                    "con": 10,
+                    "int": 10,
+                    "wis": 10,
+                    "cha": 10
+                },
+                "color": "#a8f0a8",
                 "concentration": false,
                 "conc_spell": "",
                 "conc_rounds_left": 0,
                 "conc_total_rounds": 0,
-                "bestiary_name": "Ismark Kolyanovich",
-                "portrait": "/home/wa/VTTAI2/images/portraits/CoS/Ismark Kolyanovich.webp",
+                "bestiary_name": "",
+                "portrait": "",
+                "alignment": "ally",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Ezmerelda",
+                "is_pc": false,
+                "max_hp": 82,
+                "hp": 21,
+                "temp_hp": 0,
+                "ac": 17,
+                "initiative": 10,
+                "dex_bonus": 4,
+                "hit_bonus": 0,
+                "dmg_bonus": 0,
+                "upgrade_level": 0,
+                "stats": {
+                    "str": 10,
+                    "dex": 10,
+                    "con": 10,
+                    "int": 10,
+                    "wis": 10,
+                    "cha": 10
+                },
+                "color": "#99ffcc",
+                "concentration": false,
+                "conc_spell": "",
+                "conc_rounds_left": 0,
+                "conc_total_rounds": 0,
+                "bestiary_name": "Ezmerelda d'Avenir",
+                "portrait": "/home/wa/VTTAI2/images/portraits/CoS/Ezmerelda d'Avenir.webp",
+                "alignment": "ally",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Arcanaloth",
+                "is_pc": false,
+                "max_hp": 104,
+                "hp": 18,
+                "temp_hp": 0,
+                "ac": 17,
+                "initiative": 9,
+                "dex_bonus": 1,
+                "hit_bonus": 9,
+                "dmg_bonus": 0,
+                "upgrade_level": 0,
+                "stats": {
+                    "str": 17,
+                    "dex": 12,
+                    "con": 14,
+                    "int": 20,
+                    "wis": 16,
+                    "cha": 17
+                },
+                "color": "#aaffaa",
+                "concentration": false,
+                "conc_spell": "",
+                "conc_rounds_left": 0,
+                "conc_total_rounds": 0,
+                "bestiary_name": "Arcanaloth",
+                "portrait": "/home/wa/VTTAI2/images/portraits/MM/Arcanaloth.webp",
                 "alignment": "hostile",
                 "conditions": [],
                 "tactics": [],
@@ -1500,22 +1710,70 @@
                 "reaction_used": false
             },
             {
-                "name": "Lyra",
-                "is_pc": true,
-                "max_hp": 82,
-                "hp": 65,
+                "name": "Flameskull 3",
+                "is_pc": false,
+                "max_hp": 40,
+                "hp": 40,
                 "temp_hp": 0,
-                "ac": 16,
-                "initiative": 2,
-                "dex_bonus": 1,
-                "color": "#a8f0a8",
+                "ac": 13,
+                "initiative": 5,
+                "dex_bonus": 3,
+                "hit_bonus": 0,
+                "dmg_bonus": 0,
+                "upgrade_level": 0,
+                "stats": {
+                    "str": 10,
+                    "dex": 10,
+                    "con": 10,
+                    "int": 10,
+                    "wis": 10,
+                    "cha": 10
+                },
+                "color": "#ff9966",
                 "concentration": false,
                 "conc_spell": "",
                 "conc_rounds_left": 0,
                 "conc_total_rounds": 0,
-                "bestiary_name": "",
-                "portrait": "",
-                "alignment": "ally",
+                "bestiary_name": "Flameskull",
+                "portrait": "/home/wa/VTTAI2/images/portraits/MM/Flameskull.webp",
+                "alignment": "hostile",
+                "conditions": [],
+                "tactics": [],
+                "notes": "",
+                "death_saves_success": 0,
+                "death_saves_fail": 0,
+                "action_used": false,
+                "bonus_used": false,
+                "reaction_used": false
+            },
+            {
+                "name": "Flameskull 1",
+                "is_pc": false,
+                "max_hp": 40,
+                "hp": 40,
+                "temp_hp": 0,
+                "ac": 13,
+                "initiative": 4,
+                "dex_bonus": 3,
+                "hit_bonus": 0,
+                "dmg_bonus": 0,
+                "upgrade_level": 0,
+                "stats": {
+                    "str": 10,
+                    "dex": 10,
+                    "con": 10,
+                    "int": 10,
+                    "wis": 10,
+                    "cha": 10
+                },
+                "color": "#aaffaa",
+                "concentration": false,
+                "conc_spell": "",
+                "conc_rounds_left": 0,
+                "conc_total_rounds": 0,
+                "bestiary_name": "Flameskull",
+                "portrait": "/home/wa/VTTAI2/images/portraits/MM/Flameskull.webp",
+                "alignment": "hostile",
                 "conditions": [],
                 "tactics": [],
                 "notes": "",
@@ -1574,6 +1832,24 @@
         "Hell Hound 4": {
             "Fire Breath (Recharge 5-6)": true,
             "Bite": true
+        }
+    },
+    "monster_upgrades": {
+        "Vrock": 2,
+        "Arcanaloth": 0
+    },
+    "music_mixer": {
+        "bg": {
+            "volume": 11,
+            "index": 5,
+            "elapsed": 0.0,
+            "playing": false
+        },
+        "combat": {
+            "volume": 11,
+            "index": 0,
+            "elapsed": 0.0,
+            "playing": false
         }
     }
 }

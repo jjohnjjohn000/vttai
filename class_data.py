@@ -127,6 +127,7 @@ def _parse_feature_level(feature) -> tuple:
     return (name, level)
 
 
+@lru_cache(maxsize=32)
 def get_class_features(class_name: str, level: int) -> list:
     """
     Retourne la liste des noms de capacités de classe jusqu'au niveau donné.
@@ -155,6 +156,7 @@ def _find_subclass(class_name: str, subclass_short: str) -> Optional[dict]:
     return None
 
 
+@lru_cache(maxsize=32)
 def get_subclass_features(class_name: str, subclass_short: str, level: int) -> list:
     """
     Retourne les noms de capacités de sous-classe jusqu'au niveau donné.
@@ -181,6 +183,7 @@ def get_subclass_features(class_name: str, subclass_short: str, level: int) -> l
 
 # ─── Proficiencies ────────────────────────────────────────────────────────────
 
+@lru_cache(maxsize=32)
 def get_proficiencies(class_name: str) -> dict:
     """
     Retourne les maîtrises de départ de la classe.
@@ -215,6 +218,7 @@ def get_proficiencies(class_name: str) -> dict:
 
 # ─── Subclass Domain Spells ──────────────────────────────────────────────────
 
+@lru_cache(maxsize=32)
 def get_subclass_spells(class_name: str, subclass_short: str, level: int) -> list:
     """
     Retourne les sorts de domaine/serment débloqués jusqu'au niveau donné.
@@ -403,6 +407,7 @@ def _entries_to_text(entries, indent=0) -> str:
 
 # ─── Feature Detail Retrieval ─────────────────────────────────────────────────
 
+@lru_cache(maxsize=32)
 def get_feature_details(class_name: str, feature_name: str,
                         subclass_short: str = "") -> Optional[dict]:
     """
@@ -444,6 +449,7 @@ def get_feature_details(class_name: str, feature_name: str,
     return None
 
 
+@lru_cache(maxsize=32)
 def get_all_feature_details(class_name: str, subclass_short: str = "",
                             level: int = 20) -> list:
     """

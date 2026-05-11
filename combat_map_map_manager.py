@@ -90,14 +90,18 @@ class MapManagerMixin:
             tok.setdefault("altitude_ft",  0)   # 0 = au sol, >0 = en vol (pieds D&D)
             self.tokens.append(tok)
 
-        for n in data.get("notes", []):
-            self._notes.append({
+        for n in data.get("notes",[]):
+            note = {
                 "px":   float(n.get("px", 0)),
                 "py":   float(n.get("py", 0)),
                 "text": n.get("text", ""),
                 "color": n.get("color", "#ffe082"),
-                "canvas_ids": [],
-            })
+                "canvas_ids":[],
+            }
+            # Restaure les données du lien et la traduction si c'est un hotlink
+            if "hotlink_data" in n and n["hotlink_data"] is not None:
+                note["hotlink_data"] = n["hotlink_data"]
+            self._notes.append(note)
 
         for d in data.get("doors", []):
             self._doors.append({
@@ -235,9 +239,10 @@ class MapManagerMixin:
                                  for l in self.map_layers],
             "active_layer_idx": self._active_layer_idx,
             "notes":            [{"px": n["px"], "py": n["py"],
-                                  "text": n["text"], "color": n["color"]}
+                                  "text": n["text"], "color": n["color"],
+                                  "hotlink_data": n.get("hotlink_data")}
                                  for n in self._notes],
-            "doors":            [{"col": d["col"], "row": d["row"],
+            "doors":[{"col": d["col"], "row": d["row"],
                                   "open": d["open"], "label": d["label"]}
                                  for d in self._doors],
             "obstacles":        [{"pts": obs["pts"], "color": obs["color"],

@@ -211,6 +211,7 @@ def get_all_llm_config_models() -> list:
         _add("gemini-3.1-pro-preview")
         _add("gemma-4-31b-it")
         _add("gemma-4-26b-a4b-it")
+        _add("gemini-3.1-flash-lite")
         _add("gemini-3.1-flash-lite-preview")
         _add("gemini-2.5-flash")
         _add("gemini-2.5-flash-lite")

@@ -77,10 +77,18 @@ class CombatTracker(
         self._restore_combat_state()
 
         # Préchauffage du bestiary en arrière-plan pour éviter le freeze
-        # au premier _ct_pick() (chargement du JSON ~2–5 MB)
+        # au premier _ct_pick() (chargement du JSON ~2–5 MB).
+        # On le retarde de 1.5s pour laisser le temps à la fenêtre de s'afficher 
+        # (le parsing s'approprie le GIL et bloque la boucle Tkinter).
         if _BESTIARY_OK:
-            threading.Thread(target=_bestiary_load, daemon=True,
-                             name="bestiary-preload").start()
+            def _start_preload():
+                threading.Thread(target=_bestiary_load, daemon=True,
+                                 name="bestiary-preload").start()
+            # Si on a self.win, on utilise son .after, sinon fallback sur daemon direct (tests)
+            if hasattr(self, "win") and self.win:
+                self.win.after(1500, _start_preload)
+            else:
+                _start_preload()
 
 # Re-exportation propre des éléments utilisés par l'application
 __all__ =[

@@ -171,6 +171,32 @@ class UIToolbarMixin:
         tk.Label(row2, text="Case :", bg="#13131f", fg="#9999bb",
                  font=("Consolas", 8)).pack(side=tk.RIGHT, padx=(8, 2))
 
+        _sep(row2)
+        
+        tk.Button(
+            row2, text="📖 Bibliothèque", bg="#1e3a5f", fg="#81d4fa",
+            font=("Consolas", 8, "bold"), relief="flat", padx=8, pady=3,
+            activebackground="#0d2035", activeforeground="#b3e5fc",
+            command=self._open_adventure_search,
+        ).pack(side=tk.LEFT, padx=2)
+
+    def _open_adventure_search(self):
+        """Ouvre l'interface de recherche d'aventure dans une fenêtre indépendante."""
+        try:
+            from combat_map_search import AdventureSearchWindow
+            # Si vous avez une hiérarchie différente, le chemin "adventure" 
+            # peut être récupéré via la configuration
+            AdventureSearchWindow(self.win, adventure_dir="adventure", map_app=self)
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            from tkinter import messagebox
+            messagebox.showerror(
+                "Erreur Moteur de Recherche", 
+                f"Impossible de charger le module de recherche : {e}", 
+                parent=self.win
+            )
+
     # ─── Actions toolbar ─────────────────────────────────────────────────────
 
     def _toggle_dm_view(self):
@@ -877,6 +903,9 @@ class UIToolbarMixin:
         z = self.zoom
         hw, hh = self.NOTE_W / 2, self.NOTE_H / 3
         for n in self._notes:
+            if n.get("hotlink_data"):
+                continue
+            
             cx = int(n["px"] * z) - vx0
             cy = int(n["py"] * z) - vy0
             if cx < -hw or cx > W + hw or cy < -hh or cy > H + hh:

@@ -50,6 +50,7 @@ class CharacterMixin:
         color  = self.CHAR_COLORS.get(char_name, "#aaaaaa")
 
         win = tk.Toplevel(self.root)
+        win.withdraw()  # Fix XWayland mapping freeze
         win.title(f"📋 {char_name}")
         win.configure(bg="#1e1e2e")
         win.resizable(True, True)
@@ -72,8 +73,20 @@ class CharacterMixin:
             if face:
                 face._alive = False
                 self.face_windows.pop(char_name, None)
-            setattr(self, attr, None)
-            win.destroy()
+            
+            # X11 fix : withdraw + ghost au lieu de destroy()
+            try: win.selection_clear()
+            except Exception: pass
+            try:
+                win.unbind_all("<MouseWheel>")
+                win.unbind_all("<Button-4>")
+                win.unbind_all("<Button-5>")
+            except Exception: pass
+            win.withdraw()
+            win.update_idletasks()
+            if not hasattr(self.root, "_ghosted_panels"):
+                self.root._ghosted_panels = []
+            self.root._ghosted_panels.append(win)
 
         self._win_state[f"_open_{_key}"] = True
         _save_window_state(self._win_state)
@@ -88,13 +101,45 @@ class CharacterMixin:
                 if not win.winfo_exists():
                     return
                 g = _get_win_geometry(win)
-                if g:
+                dirty = False
+                if g and self._win_state.get(_key) != g:
                     self._win_state[_key] = g
+                    dirty = True
+                    
+                if dirty:
                     _save_window_state(self._win_state)
                 win.after(2000, _poll_geom)
             except Exception:
                 pass
         win.after(2000, _poll_geom)
+
+        # ── Nettoyage synchrone du flag _open_ ─────────────────────────────────
+        def _on_map(event):
+            try:
+                if getattr(self, "_app_closing", False) or not self.root.winfo_exists():
+                    return
+                if event.widget == win:
+                    self._win_state[f"_open_{_key}"] = True
+                    _save_window_state(self._win_state)
+            except Exception:
+                pass
+
+        def _on_unmap(event):
+            try:
+                if getattr(self, "_app_closing", False) or not self.root.winfo_exists():
+                    return
+                if event.widget == win:
+                    self._win_state.pop(f"_open_{_key}", None)
+                    _save_window_state(self._win_state)
+            except Exception:
+                pass
+
+        win.bind("<Map>", _on_map)
+        win.bind("<Unmap>", _on_unmap)
+
+        if not hasattr(self, "_tracked_windows_list"):
+            self._tracked_windows_list = []
+        self._tracked_windows_list.append((_key, win, False))
 
         # ── Données de classe depuis class_data.py ────────────────────────────
         # hit_die et max_slots sont dérivés de la classe D&D 5e.
@@ -156,15 +201,17 @@ class CharacterMixin:
             hint = speak_entry.get().strip()
             if hint == "Prends la parole...":
                 hint = ""
+            from app_config import get_agent_max_sentences
+            max_p = get_agent_max_sentences()
             if hint:
                 msg = (
                     f"{char_name}, le MJ t'invite à prendre la parole sur ce sujet : {hint}. "
-                    f"Exprime-toi en roleplay, en 1-3 phrases."
+                    f"Exprime-toi en roleplay, au maximum en {max_p} phrases."
                 )
             else:
                 msg = (
                     f"{char_name}, prends la parole spontanément. "
-                    f"Dis quelque chose d'intéressant en roleplay, en 1-3 phrases, "
+                    f"Dis quelque chose d'intéressant en roleplay, au maximum en {max_p} phrases, "
                     f"en réagissant au contexte actuel."
                 )
             # Injection dans le groupchat normal — AutoGen gère le contexte complet
@@ -389,11 +436,26 @@ class CharacterMixin:
         class_frame  = tk.Frame(win, bg="#1e1e2e")
         race_frame   = tk.Frame(win, bg="#1e1e2e")
 
+        _rendered_tabs = set()
         def _show_tab(name):
             for f in (stats_frame, spells_frame, class_frame, race_frame):
                 f.pack_forget()
             for b in (btn_stats, btn_spells, btn_class, btn_race):
                 b.config(bg="#12121e", fg="#555566")
+
+            # ── Initialisation paresseuse ──
+            if name not in _rendered_tabs:
+                _rendered_tabs.add(name)
+                # Appeler explicitement le moteur de rendu au premier affichage
+                if name == "stats":
+                    _render_stats()
+                elif name == "class":
+                    _render_class()
+                elif name == "spells":
+                    _render_spells()
+                elif name == "race":
+                    _build_race_tab(char_race, char_subrace)
+
             if name == "stats":
                 stats_frame.pack(fill=tk.BOTH, expand=True)
                 btn_stats.config(bg=color, fg="#0d0d0d")
@@ -427,698 +489,739 @@ class CharacterMixin:
         # ════════════════════════════════════════════════════════════════════
         # ── ONGLET CLASSE ───────────────────────────────────────────────────
         # ════════════════════════════════════════════════════════════════════
-        from class_data import (
-            get_class_features, get_subclass_features, get_subclass_spells,
-            get_proficiencies, get_caster_progression, get_hit_die, get_spell_slots,
-            get_all_feature_details, get_feature_details,
-        )
-
-        cls_canvas = tk.Canvas(class_frame, bg="#1e1e2e", highlightthickness=0)
-        cls_scroll = tk.Scrollbar(class_frame, orient="vertical", command=cls_canvas.yview)
-        cls_inner  = tk.Frame(cls_canvas, bg="#1e1e2e")
-        cls_canvas.create_window((0, 0), window=cls_inner, anchor="nw")
-        cls_canvas.configure(yscrollcommand=cls_scroll.set)
-        cls_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        cls_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        cls_inner.bind("<Configure>", lambda e: cls_canvas.configure(scrollregion=cls_canvas.bbox("all")))
-        # Mousewheel
-        def _cls_mousewheel(e):
-            cls_canvas.yview_scroll(int(-1*(e.delta or (1 if e.num == 4 else -1))*3), "units")
-        cls_canvas.bind("<Button-4>", _cls_mousewheel)
-        cls_canvas.bind("<Button-5>", _cls_mousewheel)
-        cls_canvas.bind("<MouseWheel>", _cls_mousewheel)
-
-        char_class    = data.get("class", "fighter")
-        char_subclass = data.get("subclass", "")
-        char_level    = data.get("level", 1)
-
-        _cls_bg = "#1e1e2e"
-        _sec_bg = "#252535"
-
-        # ── Popup de détail de capacité ───────────────────────────────────
-        def _open_feature_popup(feat_name, feat_data):
-            """Ouvre une fenêtre indépendante avec la description complète."""
-            popup = tk.Toplevel(win)
-            popup.title(f"{feat_name} — {char_class.title()}")
-            popup.geometry("520x480")
-            popup.configure(bg="#1a1a2e")
-            popup.attributes("-topmost", True)
-
-            # Header
-            phdr = tk.Frame(popup, bg=color, pady=6)
-            phdr.pack(fill=tk.X)
-            tk.Label(phdr, text=feat_name, bg=color, fg="#0d0d0d",
-                     font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=12)
-            _badges =[]
-            if feat_data.get("level"):
-                _badges.append(f"Niv. {feat_data['level']}")
-            if feat_data.get("source"):
-                _badges.append(feat_data["source"])
-            if feat_data.get("type") == "subclass":
-                _badges.append(char_subclass)
-            tk.Label(phdr, text=" | ".join(_badges), bg=color, fg="#333333",
-                     font=("Consolas", 9)).pack(side=tk.RIGHT, padx=12)
-
-            # Body — scrollable text
-            txt_frame = tk.Frame(popup, bg="#1a1a2e")
-            txt_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-
-            txt_scroll = tk.Scrollbar(txt_frame)
-            txt_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-            txt_widget = tk.Text(
-                txt_frame, wrap=tk.WORD, bg="#1a1a2e", fg="#cccccc",
-                font=("Consolas", 10), padx=12, pady=8,
-                relief="flat", highlightthickness=0,
-                yscrollcommand=txt_scroll.set,
-                state=tk.NORMAL, cursor="arrow",
+        def _render_class():
+            from class_data import (
+                get_class_features, get_subclass_features, get_subclass_spells,
+                get_proficiencies, get_caster_progression, get_hit_die, get_spell_slots,
+                get_all_feature_details, get_feature_details,
             )
-            txt_widget.pack(fill=tk.BOTH, expand=True)
-            txt_scroll.config(command=txt_widget.yview)
 
-            # Insérer texte avec formatting
-            description = feat_data.get("text", "(Aucune description disponible)")
-            lines = description.split("\n")
-            txt_widget.tag_configure("heading", font=("Arial", 10, "bold"), foreground=color)
-            txt_widget.tag_configure("body", font=("Consolas", 10), foreground="#cccccc")
-            txt_widget.tag_configure("bullet", font=("Consolas", 10), foreground="#aabbcc")
+            cls_canvas = tk.Canvas(class_frame, bg="#1e1e2e", highlightthickness=0)
+            cls_scroll = tk.Scrollbar(class_frame, orient="vertical", command=cls_canvas.yview)
+            cls_inner  = tk.Frame(cls_canvas, bg="#1e1e2e")
+            cls_canvas.create_window((0, 0), window=cls_inner, anchor="nw")
+            cls_canvas.configure(yscrollcommand=cls_scroll.set)
+            cls_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+            cls_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            cls_inner.bind("<Configure>", lambda e: cls_canvas.configure(scrollregion=cls_canvas.bbox("all")))
+            # Mousewheel
+            def _cls_mousewheel(e):
+                cls_canvas.yview_scroll(int(-1*(e.delta or (1 if e.num == 4 else -1))*3), "units")
+            cls_canvas.bind("<Button-4>", _cls_mousewheel)
+            cls_canvas.bind("<Button-5>", _cls_mousewheel)
+            cls_canvas.bind("<MouseWheel>", _cls_mousewheel)
 
-            for line in lines:
-                stripped = line.strip()
-                if stripped.startswith("▸ "):
-                    txt_widget.insert(tk.END, stripped + "\n", "heading")
-                elif stripped.startswith("• "):
-                    txt_widget.insert(tk.END, "  " + stripped + "\n", "bullet")
-                else:
-                    txt_widget.insert(tk.END, stripped + "\n\n", "body")
+            char_class    = data.get("class", "fighter")
+            char_subclass = data.get("subclass", "")
+            char_level    = data.get("level", 1)
 
-            txt_widget.config(state=tk.DISABLED)
+            _cls_bg = "#1e1e2e"
+            _sec_bg = "#252535"
 
-            # Bouton fermer
-            tk.Button(popup, text="Fermer", bg="#333344", fg="#cccccc",
-                      font=("Arial", 9), relief="flat", padx=12, pady=4,
-                      command=popup.destroy).pack(pady=(0, 8))
+            # ── Popup de détail de capacité ───────────────────────────────────
+            def _open_feature_popup(feat_name, feat_data):
+                """Ouvre une fenêtre indépendante avec la description complète."""
+                popup = tk.Toplevel(win)
+                popup.title(f"{feat_name} — {char_class.title()}")
+                popup.geometry("520x480")
+                popup.configure(bg="#1a1a2e")
+                popup.attributes("-topmost", True)
 
-        # ── En-tête : Classe + Niveau + Sous-classe ──────────────────────────
-        hdr_cls = tk.Frame(cls_inner, bg=color, pady=6)
-        hdr_cls.pack(fill=tk.X, padx=8, pady=(8, 4))
-        _cls_title = char_class.title()
-        if char_subclass:
-            _cls_title += f" — {char_subclass}"
-        tk.Label(hdr_cls, text=f"⚔ {_cls_title}", bg=color, fg="#0d0d0d",
-                 font=("Arial", 11, "bold")).pack(side=tk.LEFT, padx=8)
-        tk.Label(hdr_cls, text=f"Niv. {char_level}", bg=color, fg="#333333",
-                 font=("Consolas", 10, "bold")).pack(side=tk.RIGHT, padx=8)
+                # Header
+                phdr = tk.Frame(popup, bg=color, pady=6)
+                phdr.pack(fill=tk.X)
+                tk.Label(phdr, text=feat_name, bg=color, fg="#0d0d0d",
+                         font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=12)
+                _badges =[]
+                if feat_data.get("level"):
+                    _badges.append(f"Niv. {feat_data['level']}")
+                if feat_data.get("source"):
+                    _badges.append(feat_data["source"])
+                if feat_data.get("type") == "subclass":
+                    _badges.append(char_subclass)
+                tk.Label(phdr, text=" | ".join(_badges), bg=color, fg="#333333",
+                         font=("Consolas", 9)).pack(side=tk.RIGHT, padx=12)
 
-        # ── Dé de vie & Caster Info ──────────────────────────────────────
-        info_fr = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
-        info_fr.pack(fill=tk.X, padx=8, pady=(4, 2))
-        try:
-            _hd = get_hit_die(char_class)
-        except Exception:
-            _hd = 8
-        tk.Label(info_fr, text=f"🎲 Dé de vie : d{_hd}", bg=_sec_bg, fg="#cccccc",
-                 font=("Arial", 10)).pack(anchor="w")
-        _caster = get_caster_progression(char_class)
-        if _caster:
-            _caster_labels = {"full": "Lanceur complet", "1/2": "Demi-lanceur", "1/3": "Tiers-lanceur"}
-            _caster_str = _caster_labels.get(_caster, _caster)
-            try:
-                _slots = get_spell_slots(char_class, char_level)
-                _slots_str = " / ".join(str(v) for v in _slots.values()) if _slots else "—"
-            except Exception:
-                _slots_str = "?"
-            tk.Label(info_fr, text=f"\u2728 {_caster_str} — Emplacements : {_slots_str}",
-                     bg=_sec_bg, fg="#aabbdd", font=("Arial", 9)).pack(anchor="w", pady=(2, 0))
-        else:
-            tk.Label(info_fr, text="\u2694 Pas de sorts (classe martiale)",
-                     bg=_sec_bg, fg="#666677", font=("Arial", 9, "italic")).pack(anchor="w", pady=(2, 0))
+                # Body — scrollable text
+                txt_frame = tk.Frame(popup, bg="#1a1a2e")
+                txt_frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
-        # ── Maîtrises (Armor, Weapons, Saves) ─────────────────────────────
-        try:
-            _profs = get_proficiencies(char_class)
-        except Exception:
-            _profs = {"armor": [], "weapons": [], "saves":[]}
+                txt_scroll = tk.Scrollbar(txt_frame)
+                txt_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        if any(_profs.values()):
-            prof_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
-            prof_sec.pack(fill=tk.X, padx=8, pady=(2, 2))
-            tk.Label(prof_sec, text="\U0001f6e1 Maîtrises", bg=_sec_bg, fg=color,
-                     font=("Arial", 10, "bold")).pack(anchor="w")
-
-            _save_names = {"str": "FOR", "dex": "DEX", "con": "CON",
-                           "int": "INT", "wis": "SAG", "cha": "CHA"}
-            _prof_items =[
-                ("Armures",    ", ".join(a.title() for a in _profs.get("armor", []))),
-                ("Armes",      ", ".join(w.title() for w in _profs.get("weapons",[]))),
-                ("Sauvegardes", ", ".join(_save_names.get(s, s.upper()) for s in _profs.get("saves",[]))),
-            ]
-            for _lbl, _val in _prof_items:
-                if _val:
-                    _row = tk.Frame(prof_sec, bg=_sec_bg)
-                    _row.pack(fill=tk.X, pady=1)
-                    tk.Label(_row, text=f"  {_lbl} :", bg=_sec_bg, fg="#888899",
-                             font=("Arial", 9), anchor="w").pack(side=tk.LEFT)
-                    tk.Label(_row, text=_val, bg=_sec_bg, fg="#cccccc",
-                             font=("Arial", 9), wraplength=220, justify=tk.LEFT).pack(side=tk.LEFT, padx=(4, 0))
-
-        # ── Capacités (classe + sous-classe) — CLIQUABLES ─────────────────
-        try:
-            _all_feats = get_all_feature_details(char_class, char_subclass, char_level)
-        except Exception:
-            _all_feats =[]
-
-        if _all_feats:
-            feat_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
-            feat_sec.pack(fill=tk.X, padx=8, pady=(2, 2))
-
-            _n_class = sum(1 for f in _all_feats if f["type"] == "class")
-            _n_sub   = sum(1 for f in _all_feats if f["type"] == "subclass")
-            _title_parts =[]
-            if _n_class:
-                _title_parts.append(f"{_n_class} classe")
-            if _n_sub:
-                _title_parts.append(f"{_n_sub} {char_subclass}")
-            tk.Label(feat_sec, text=f"\u2b50 Capacités ({' + '.join(_title_parts)})",
-                     bg=_sec_bg, fg=color, font=("Arial", 10, "bold")).pack(anchor="w")
-            tk.Label(feat_sec, text="Cliquer pour voir les détails", bg=_sec_bg,
-                     fg="#555566", font=("Arial", 8, "italic")).pack(anchor="w")
-
-            _current_level = None
-            for _idx, _feat in enumerate(_all_feats):
-                # Séparateur de niveau
-                if _feat["level"] != _current_level:
-                    _current_level = _feat["level"]
-                    _lvl_sep = tk.Frame(feat_sec, bg=_sec_bg)
-                    _lvl_sep.pack(fill=tk.X, pady=(6, 2))
-                    tk.Label(_lvl_sep, text=f"── Niveau {_current_level} ──",
-                             bg=_sec_bg, fg="#555566",
-                             font=("Consolas", 8)).pack(anchor="w")
-
-                _is_sub = (_feat["type"] == "subclass")
-                _feat_fg = "#ddbbaa" if _is_sub else "#ccddee"
-                _feat_icon = "🔥" if _is_sub else "⭐"
-
-                _fr = tk.Frame(feat_sec, bg=_sec_bg)
-                _fr.pack(fill=tk.X, pady=1)
-                _name_lbl = tk.Label(
-                    _fr, text=f"  {_feat_icon}  {_feat['name']}",
-                    bg=_sec_bg, fg=_feat_fg,
-                    font=("Arial", 9), cursor="hand2",
-                    anchor="w",
+                txt_widget = tk.Text(
+                    txt_frame, wrap=tk.WORD, bg="#1a1a2e", fg="#cccccc",
+                    font=("Consolas", 10), padx=12, pady=8,
+                    relief="flat", highlightthickness=0,
+                    yscrollcommand=txt_scroll.set,
+                    state=tk.NORMAL, cursor="arrow",
                 )
-                _name_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
-                # Source badge
-                tk.Label(_fr, text=_feat.get("source", ""),
-                         bg=_sec_bg, fg="#444455",
-                         font=("Consolas", 7)).pack(side=tk.RIGHT)
+                txt_widget.pack(fill=tk.BOTH, expand=True)
+                txt_scroll.config(command=txt_widget.yview)
 
-                # Bind click — closure capture
-                def _on_click(e, fd=_feat):
-                    _open_feature_popup(fd["name"], fd)
-                _name_lbl.bind("<Button-1>", _on_click)
+                # Insérer texte avec formatting
+                description = feat_data.get("text", "(Aucune description disponible)")
+                lines = description.split("\n")
+                txt_widget.tag_configure("heading", font=("Arial", 10, "bold"), foreground=color)
+                txt_widget.tag_configure("body", font=("Consolas", 10), foreground="#cccccc")
+                txt_widget.tag_configure("bullet", font=("Consolas", 10), foreground="#aabbcc")
 
-                # Hover effect
-                def _on_enter(e, lbl=_name_lbl, fg=_feat_fg):
-                    lbl.config(fg=color, font=("Arial", 9, "bold"))
-                def _on_leave(e, lbl=_name_lbl, fg=_feat_fg):
-                    lbl.config(fg=fg, font=("Arial", 9))
-                _name_lbl.bind("<Enter>", _on_enter)
-                _name_lbl.bind("<Leave>", _on_leave)
+                for line in lines:
+                    stripped = line.strip()
+                    if stripped.startswith("▸ "):
+                        txt_widget.insert(tk.END, stripped + "\n", "heading")
+                    elif stripped.startswith("• "):
+                        txt_widget.insert(tk.END, "  " + stripped + "\n", "bullet")
+                    else:
+                        txt_widget.insert(tk.END, stripped + "\n\n", "body")
 
-        # ── Sorts de domaine / serment ─────────────────────────────────
-        if char_subclass:
+                txt_widget.config(state=tk.DISABLED)
+
+                # Bouton fermer
+                tk.Button(popup, text="Fermer", bg="#333344", fg="#cccccc",
+                          font=("Arial", 9), relief="flat", padx=12, pady=4,
+                          command=popup.destroy).pack(pady=(0, 8))
+
+            # ── En-tête : Classe + Niveau + Sous-classe ──────────────────────────
+            hdr_cls = tk.Frame(cls_inner, bg=color, pady=6)
+            hdr_cls.pack(fill=tk.X, padx=8, pady=(8, 4))
+            _cls_title = char_class.title()
+            if char_subclass:
+                _cls_title += f" — {char_subclass}"
+            tk.Label(hdr_cls, text=f"⚔ {_cls_title}", bg=color, fg="#0d0d0d",
+                     font=("Arial", 11, "bold")).pack(side=tk.LEFT, padx=8)
+            tk.Label(hdr_cls, text=f"Niv. {char_level}", bg=color, fg="#333333",
+                     font=("Consolas", 10, "bold")).pack(side=tk.RIGHT, padx=8)
+
+            # ── Dé de vie & Caster Info ──────────────────────────────────────
+            info_fr = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
+            info_fr.pack(fill=tk.X, padx=8, pady=(4, 2))
             try:
-                _dom_spells = get_subclass_spells(char_class, char_subclass, char_level)
+                _hd = get_hit_die(char_class)
             except Exception:
-                _dom_spells =[]
-            if _dom_spells:
-                dom_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
-                dom_sec.pack(fill=tk.X, padx=8, pady=(2, 2))
-                _domain_label = "Sorts de Serment" if char_class == "paladin" else "Sorts de Domaine"
-                tk.Label(dom_sec, text=f"\U0001f4d6 {_domain_label}",
-                         bg=_sec_bg, fg=color, font=("Arial", 10, "bold")).pack(anchor="w")
-                # Afficher en grille 2 par ligne
-                _spell_row = None
-                for i, _sp in enumerate(_dom_spells):
-                    if i % 2 == 0:
-                        _spell_row = tk.Frame(dom_sec, bg=_sec_bg)
-                        _spell_row.pack(fill=tk.X, pady=1)
-                    tk.Label(_spell_row, text=f"  \u2022 {_sp}", bg=_sec_bg, fg="#aaddbb",
-                             font=("Arial", 9), anchor="w", width=22).pack(side=tk.LEFT)
-
-        # ── Emplacements de sort (table complète) ───────────────────────
-        if _caster:
-            slots_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
-            slots_sec.pack(fill=tk.X, padx=8, pady=(2, 8))
-            tk.Label(slots_sec, text="\U0001f4ca Table de progression",
-                     bg=_sec_bg, fg=color, font=("Arial", 10, "bold")).pack(anchor="w")
-            # Compact table : show spell slots at levels 1-20
-            _tbl_hdr = tk.Frame(slots_sec, bg=_sec_bg)
-            _tbl_hdr.pack(fill=tk.X, pady=(4, 2))
-            tk.Label(_tbl_hdr, text="Niv", bg=_sec_bg, fg="#666677",
-                     font=("Consolas", 8, "bold"), width=4, anchor="w").pack(side=tk.LEFT)
-            for sp_lvl in range(1, 10):
-                tk.Label(_tbl_hdr, text=str(sp_lvl), bg=_sec_bg, fg="#666677",
-                         font=("Consolas", 8, "bold"), width=3, anchor="center").pack(side=tk.LEFT)
-
-            for _clvl in range(1, 21):
+                _hd = 8
+            tk.Label(info_fr, text=f"🎲 Dé de vie : d{_hd}", bg=_sec_bg, fg="#cccccc",
+                     font=("Arial", 10)).pack(anchor="w")
+            _caster = get_caster_progression(char_class)
+            if _caster:
+                _caster_labels = {"full": "Lanceur complet", "1/2": "Demi-lanceur", "1/3": "Tiers-lanceur"}
+                _caster_str = _caster_labels.get(_caster, _caster)
                 try:
-                    _row_slots = get_spell_slots(char_class, _clvl)
+                    _slots = get_spell_slots(char_class, char_level)
+                    _slots_str = " / ".join(str(v) for v in _slots.values()) if _slots else "—"
                 except Exception:
-                    _row_slots = {}
-                if not _row_slots and _clvl > 1:
-                    continue  # Skip rows with no slots for non-caster early levels
-                _tbl_row = tk.Frame(slots_sec, bg=_sec_bg)
-                _tbl_row.pack(fill=tk.X)
-                _is_current = (_clvl == char_level)
-                _niv_fg = color if _is_current else "#888899"
-                _niv_font = ("Consolas", 8, "bold") if _is_current else ("Consolas", 8)
-                tk.Label(_tbl_row, text=f"{_clvl:>2}", bg=_sec_bg, fg=_niv_fg,
-                         font=_niv_font, width=4, anchor="w").pack(side=tk.LEFT)
-                for sp_lvl in range(1, 10):
-                    val = _row_slots.get(str(sp_lvl), 0)
-                    _val_fg = "#cccccc" if val > 0 else "#333344"
-                    if _is_current and val > 0:
-                        _val_fg = color
-                    tk.Label(_tbl_row, text=str(val) if val > 0 else "\u2014", bg=_sec_bg, fg=_val_fg,
-                             font=_niv_font, width=3, anchor="center").pack(side=tk.LEFT)
+                    _slots_str = "?"
+                tk.Label(info_fr, text=f"\u2728 {_caster_str} — Emplacements : {_slots_str}",
+                         bg=_sec_bg, fg="#aabbdd", font=("Arial", 9)).pack(anchor="w", pady=(2, 0))
+            else:
+                tk.Label(info_fr, text="\u2694 Pas de sorts (classe martiale)",
+                         bg=_sec_bg, fg="#666677", font=("Arial", 9, "italic")).pack(anchor="w", pady=(2, 0))
 
-        # Bas de page spacer
-        tk.Frame(cls_inner, bg=_cls_bg, height=20).pack(fill=tk.X)
+            # ── Maîtrises (Armor, Weapons, Saves) ─────────────────────────────
+            try:
+                _profs = get_proficiencies(char_class)
+            except Exception:
+                _profs = {"armor": [], "weapons": [], "saves":[]}
 
-        # ════════════════════════════════════════════════════════════════════
-        # ── ONGLET STATS ────────────────────────────────────────────────────
-        # ════════════════════════════════════════════════════════════════════
-        body = tk.Frame(stats_frame, bg="#1e1e2e")
-        body.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
+            if any(_profs.values()):
+                prof_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
+                prof_sec.pack(fill=tk.X, padx=8, pady=(2, 2))
+                tk.Label(prof_sec, text="\U0001f6e1 Maîtrises", bg=_sec_bg, fg=color,
+                         font=("Arial", 10, "bold")).pack(anchor="w")
 
-        def _make_editable(row_frame, get_fn, set_fn,
-                           min_v=0, max_v=999, fg_fn=None, font=("Consolas", 10, "bold")):
-            """Label cliquable → spinbox inline. Retourne (lbl, spx)."""
-            c = fg_fn(get_fn()) if fg_fn else color
-            lbl = tk.Label(row_frame, text=str(get_fn()), bg="#1e1e2e",
-                           fg=c, font=font, cursor="hand2")
-            lbl.pack(side=tk.RIGHT)
-            spx = tk.Spinbox(row_frame, from_=min_v, to=max_v, width=6,
-                             bg="#252535", fg=c, font=font,
-                             buttonbackground="#252535", relief="flat",
-                             highlightthickness=1, highlightcolor=color)
+                _save_names = {"str": "FOR", "dex": "DEX", "con": "CON",
+                               "int": "INT", "wis": "SAG", "cha": "CHA"}
+                _prof_items =[
+                    ("Armures",    ", ".join(a.title() for a in _profs.get("armor", []))),
+                    ("Armes",      ", ".join(w.title() for w in _profs.get("weapons",[]))),
+                    ("Sauvegardes", ", ".join(_save_names.get(s, s.upper()) for s in _profs.get("saves",[]))),
+                ]
+                for _lbl, _val in _prof_items:
+                    if _val:
+                        _row = tk.Frame(prof_sec, bg=_sec_bg)
+                        _row.pack(fill=tk.X, pady=1)
+                        tk.Label(_row, text=f"  {_lbl} :", bg=_sec_bg, fg="#888899",
+                                 font=("Arial", 9), anchor="w").pack(side=tk.LEFT)
+                        tk.Label(_row, text=_val, bg=_sec_bg, fg="#cccccc",
+                                 font=("Arial", 9), wraplength=220, justify=tk.LEFT).pack(side=tk.LEFT, padx=(4, 0))
 
-            def _start(e=None):
-                lbl.pack_forget()
-                spx.config(fg=fg_fn(get_fn()) if fg_fn else color)
-                spx.delete(0, tk.END); spx.insert(0, str(get_fn()))
-                spx.pack(side=tk.RIGHT); spx.focus_set(); spx.selection_range(0, tk.END)
+            # ── Capacités (classe + sous-classe) — CLIQUABLES ─────────────────
+            try:
+                _all_feats = get_all_feature_details(char_class, char_subclass, char_level)
+            except Exception:
+                _all_feats =[]
 
-            def _end(e=None):
+            if _all_feats:
+                feat_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
+                feat_sec.pack(fill=tk.X, padx=8, pady=(2, 2))
+
+                _n_class = sum(1 for f in _all_feats if f["type"] == "class")
+                _n_sub   = sum(1 for f in _all_feats if f["type"] == "subclass")
+                _title_parts =[]
+                if _n_class:
+                    _title_parts.append(f"{_n_class} classe")
+                if _n_sub:
+                    _title_parts.append(f"{_n_sub} {char_subclass}")
+                tk.Label(feat_sec, text=f"\u2b50 Capacités ({' + '.join(_title_parts)})",
+                         bg=_sec_bg, fg=color, font=("Arial", 10, "bold")).pack(anchor="w")
+                tk.Label(feat_sec, text="Cliquer pour voir les détails", bg=_sec_bg,
+                         fg="#555566", font=("Arial", 8, "italic")).pack(anchor="w")
+
+                _current_level = None
+                for _idx, _feat in enumerate(_all_feats):
+                    # Séparateur de niveau
+                    if _feat["level"] != _current_level:
+                        _current_level = _feat["level"]
+                        _lvl_sep = tk.Frame(feat_sec, bg=_sec_bg)
+                        _lvl_sep.pack(fill=tk.X, pady=(6, 2))
+                        tk.Label(_lvl_sep, text=f"── Niveau {_current_level} ──",
+                                 bg=_sec_bg, fg="#555566",
+                                 font=("Consolas", 8)).pack(anchor="w")
+
+                    _is_sub = (_feat["type"] == "subclass")
+                    _feat_fg = "#ddbbaa" if _is_sub else "#ccddee"
+                    _feat_icon = "🔥" if _is_sub else "⭐"
+
+                    _fr = tk.Frame(feat_sec, bg=_sec_bg)
+                    _fr.pack(fill=tk.X, pady=1)
+                    _name_lbl = tk.Label(
+                        _fr, text=f"  {_feat_icon}  {_feat['name']}",
+                        bg=_sec_bg, fg=_feat_fg,
+                        font=("Arial", 9), cursor="hand2",
+                        anchor="w",
+                    )
+                    _name_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                    # Source badge
+                    tk.Label(_fr, text=_feat.get("source", ""),
+                             bg=_sec_bg, fg="#444455",
+                             font=("Consolas", 7)).pack(side=tk.RIGHT)
+
+                    # Bind click — closure capture
+                    def _on_click(e, fd=_feat):
+                        _open_feature_popup(fd["name"], fd)
+                    _name_lbl.bind("<Button-1>", _on_click)
+
+                    # Hover effect
+                    def _on_enter(e, lbl=_name_lbl, fg=_feat_fg):
+                        lbl.config(fg=color, font=("Arial", 9, "bold"))
+                    def _on_leave(e, lbl=_name_lbl, fg=_feat_fg):
+                        lbl.config(fg=fg, font=("Arial", 9))
+                    _name_lbl.bind("<Enter>", _on_enter)
+                    _name_lbl.bind("<Leave>", _on_leave)
+
+            # ── Sorts de domaine / serment ─────────────────────────────────
+            if char_subclass:
                 try:
-                    v = max(min_v, min(max_v, int(spx.get())))
-                    set_fn(v)
-                except ValueError:
-                    pass
-                spx.pack_forget()
-                v2 = get_fn()
-                lbl.config(text=str(v2), fg=fg_fn(v2) if fg_fn else color)
-                lbl.pack(side=tk.RIGHT)
+                    _dom_spells = get_subclass_spells(char_class, char_subclass, char_level)
+                except Exception:
+                    _dom_spells =[]
+                if _dom_spells:
+                    dom_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
+                    dom_sec.pack(fill=tk.X, padx=8, pady=(2, 2))
+                    _domain_label = "Sorts de Serment" if char_class == "paladin" else "Sorts de Domaine"
+                    tk.Label(dom_sec, text=f"\U0001f4d6 {_domain_label}",
+                             bg=_sec_bg, fg=color, font=("Arial", 10, "bold")).pack(anchor="w")
+                    # Afficher en grille 2 par ligne
+                    _spell_row = None
+                    for i, _sp in enumerate(_dom_spells):
+                        if i % 2 == 0:
+                            _spell_row = tk.Frame(dom_sec, bg=_sec_bg)
+                            _spell_row.pack(fill=tk.X, pady=1)
+                        tk.Label(_spell_row, text=f"  \u2022 {_sp}", bg=_sec_bg, fg="#aaddbb",
+                                 font=("Arial", 9), anchor="w", width=22).pack(side=tk.LEFT)
 
-            lbl.bind("<Button-1>", _start)
-            spx.bind("<Return>",   _end)
-            spx.bind("<FocusOut>", _end)
-            spx.bind("<Escape>",   lambda e: (_end(),))
-            return lbl, spx
+            # ── Emplacements de sort (table complète) ───────────────────────
+            if _caster:
+                slots_sec = tk.Frame(cls_inner, bg=_sec_bg, padx=8, pady=6)
+                slots_sec.pack(fill=tk.X, padx=8, pady=(2, 8))
+                tk.Label(slots_sec, text="\U0001f4ca Table de progression",
+                         bg=_sec_bg, fg=color, font=("Arial", 10, "bold")).pack(anchor="w")
+                # Compact table : show spell slots at levels 1-20
+                _tbl_hdr = tk.Frame(slots_sec, bg=_sec_bg)
+                _tbl_hdr.pack(fill=tk.X, pady=(4, 2))
+                tk.Label(_tbl_hdr, text="Niv", bg=_sec_bg, fg="#666677",
+                         font=("Consolas", 8, "bold"), width=4, anchor="w").pack(side=tk.LEFT)
+                for sp_lvl in range(1, 10):
+                    tk.Label(_tbl_hdr, text=str(sp_lvl), bg=_sec_bg, fg="#666677",
+                             font=("Consolas", 8, "bold"), width=3, anchor="center").pack(side=tk.LEFT)
 
-        # ── Points de vie ─────────────────────────────────────────────────
-        hp_row = tk.Frame(body, bg="#1e1e2e")
-        hp_row.pack(fill=tk.X, pady=(0, 2))
-        tk.Label(hp_row, text="❤️ PV", bg="#1e1e2e", fg="#aaaaaa",
-                 font=("Arial", 9)).pack(side=tk.LEFT)
-
-        def get_hp():     return load_state().get("characters",{}).get(char_name,{}).get("hp", 0)
-        def get_max_hp(): return load_state().get("characters",{}).get(char_name,{}).get("max_hp", 0)
-        def set_hp(v):
-            s = load_state(); s["characters"][char_name]["hp"] = max(0, min(v, get_max_hp())); save_state(s)
-        def set_max_hp(v):
-            s = load_state(); s["characters"][char_name]["max_hp"] = max(1, v); save_state(s)
-
-        slash_lbl = tk.Label(hp_row, text=" / ", bg="#1e1e2e", fg="#444455",
-                              font=("Consolas", 10))
-        slash_lbl.pack(side=tk.RIGHT)
-        maxhp_lbl, maxhp_spx = _make_editable(
-            hp_row, get_max_hp, set_max_hp, min_v=1, max_v=999,
-            font=("Consolas", 9)
-        )
-        maxhp_lbl.config(fg="#888888"); maxhp_spx.config(fg="#888888")
-
-        hp_lbl, hp_spx = _make_editable(
-            hp_row, get_hp, set_hp, min_v=0, max_v=999,
-            fg_fn=lambda v: self._hp_color(v / max(get_max_hp(), 1))
-        )
-
-        bar_bg   = tk.Frame(body, bg="#3a3a3a", height=8)
-        bar_bg.pack(fill=tk.X, pady=(0, 6))
-        pct_init = max(0, min(1, get_hp() / max(get_max_hp(), 1)))
-        bar_fill = tk.Frame(bar_bg, bg=self._hp_color(pct_init), height=8)
-        bar_fill.place(relx=0, rely=0, relwidth=pct_init, relheight=1)
-
-        # ── Classe d'Armure ───────────────────────────────────────────────
-        ac_row = tk.Frame(body, bg="#1e1e2e")
-        ac_row.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(ac_row, text="🛡 CA", bg="#1e1e2e", fg="#aaaaaa",
-                 font=("Arial", 9)).pack(side=tk.LEFT)
-
-        def get_ac():
-            return load_state().get("characters", {}).get(char_name, {}).get("ac", ac)
-        def set_ac(v):
-            s = load_state(); s["characters"][char_name]["ac"] = max(0, min(v, 30)); save_state(s)
-
-        ac_lbl, ac_spx = _make_editable(
-            ac_row, get_ac, set_ac, min_v=0, max_v=30,
-            font=("Consolas", 11, "bold")
-        )
-        ac_lbl.config(fg=color)
-        ac_spx.config(fg=color)
-
-        # ── Capacités (Features) ──────────────────────────────────────────────
-        def get_lay_on_hands():
-            return load_state().get("characters", {}).get(char_name, {}).get("features", {}).get("lay_on_hands", 0)
-        def set_lay_on_hands(v):
-            s = load_state()
-            if "features" not in s["characters"][char_name]:
-                s["characters"][char_name]["features"] = {}
-            s["characters"][char_name]["features"]["lay_on_hands"] = max(0, min(v, s["characters"][char_name]["features"].get("max_lay_on_hands", 55)))
-            save_state(s)
-
-        state_now = load_state()
-        if "lay_on_hands" in state_now.get("characters", {}).get(char_name, {}).get("features", {}):
-            loh_row = tk.Frame(body, bg="#1e1e2e")
-            loh_row.pack(fill=tk.X, pady=(0, 6))
-            tk.Label(loh_row, text="🤲 Imposition", bg="#1e1e2e", fg="#e57373", font=("Arial", 9)).pack(side=tk.LEFT)
-            slash_lbl2 = tk.Label(loh_row, text=f" / {state_now['characters'][char_name]['features'].get('max_lay_on_hands', 55)}", bg="#1e1e2e", fg="#444455", font=("Consolas", 10))
-            slash_lbl2.pack(side=tk.RIGHT)
-            loh_lbl, loh_spx = _make_editable(loh_row, get_lay_on_hands, set_lay_on_hands, min_v=0, max_v=state_now['characters'][char_name]['features'].get('max_lay_on_hands', 55), font=("Consolas", 11, "bold"))
-            loh_lbl.config(fg="#e57373")
-            loh_spx.config(fg="#e57373")
-
-        # ── Hit Dice ──────────────────────────────────────────────────────
-        hd_row = tk.Frame(body, bg="#1e1e2e")
-        hd_row.pack(fill=tk.X, pady=(0, 6))
-        tk.Label(hd_row, text=f"🎲 Hit Dice (d{hit_die})", bg="#1e1e2e", fg="#aaaaaa",
-                 font=("Arial", 9)).pack(side=tk.LEFT)
-        tk.Label(hd_row, text=f"/{level}", bg="#1e1e2e", fg="#444455",
-                 font=("Consolas", 9)).pack(side=tk.RIGHT)
-
-        def get_hd_avail():
-            used = load_state().get("characters",{}).get(char_name,{}).get("hit_dice_used", 0)
-            return max(0, level - used)
-        def set_hd_avail(v):
-            used = max(0, level - v)
-            s = load_state(); s["characters"][char_name]["hit_dice_used"] = used; save_state(s)
-
-        hd_lbl, hd_spx = _make_editable(
-            hd_row, get_hd_avail, set_hd_avail, min_v=0, max_v=level,
-            font=("Consolas", 9, "bold")
-        )
-
-        # ── Emplacements de sort ──────────────────────────────────────────
-        slots        = data.get("spell_slots", {})
-        slot_widgets = {}  # lvl → (lbl, pip_frame, spx, maxi)
-
-        if slots or max_slots:
-            tk.Label(body, text="✨ Emplacements de Sort", bg="#1e1e2e", fg="#aaaaaa",
-                     font=("Arial", 9)).pack(anchor="w", pady=(0, 3))
-            slots_frame = tk.Frame(body, bg="#1e1e2e")
-            slots_frame.pack(fill=tk.X)
-            all_levels = sorted(set(list(slots.keys()) + list(max_slots.keys())), key=int)
-
-            for lvl in all_levels:
-                cur  = slots.get(lvl, 0)
-                maxi = max_slots.get(lvl, cur)
-
-                def _get_slot(l=lvl):
-                    return load_state().get("characters",{}).get(char_name,{}).get("spell_slots",{}).get(l, 0)
-                def _set_slot(v, l=lvl, mx=maxi):
-                    s = load_state()
-                    s["characters"][char_name].setdefault("spell_slots",{})[l] = max(0, min(v, mx))
-                    save_state(s)
-
-                row = tk.Frame(slots_frame, bg="#1e1e2e")
-                row.pack(fill=tk.X, pady=1)
-                tk.Label(row, text=f"Niv {lvl}", bg="#1e1e2e", fg="#888888",
-                         font=("Consolas", 9), width=5, anchor="w").pack(side=tk.LEFT)
-
-                pip_frame = tk.Frame(row, bg="#1e1e2e")
-                pip_frame.pack(side=tk.LEFT, padx=4)
-                for i in range(maxi):
-                    pip_bg = color if i < cur else "#333344"
-                    tk.Frame(pip_frame, bg=pip_bg, width=10, height=10).pack(
-                        side=tk.LEFT, padx=1)
-
-                sl_lbl = tk.Label(row, text=f"{cur}/{maxi}", bg="#1e1e2e", fg=color,
-                                  font=("Consolas", 9, "bold"), cursor="hand2")
-                sl_lbl.pack(side=tk.RIGHT, padx=4)
-
-                sl_spx = tk.Spinbox(row, from_=0, to=maxi, width=4, bg="#252535", fg=color,
-                                    font=("Consolas", 9, "bold"), buttonbackground="#252535",
-                                    relief="flat", highlightthickness=1, highlightcolor=color)
-
-                def _start_slot(e=None, _l=sl_lbl, _s=sl_spx, _g=_get_slot):
-                    _l.pack_forget()
-                    _s.delete(0, tk.END); _s.insert(0, str(_g()))
-                    _s.pack(side=tk.RIGHT); _s.focus_set()
-
-                def _end_slot(e=None, _l=sl_lbl, _s=sl_spx, _g=_get_slot, _set=_set_slot,
-                               _mx=maxi, _p=pip_frame):
+                for _clvl in range(1, 21):
                     try:
-                        v = max(0, min(int(_s.get()), _mx))
-                        _set(v)
+                        _row_slots = get_spell_slots(char_class, _clvl)
+                    except Exception:
+                        _row_slots = {}
+                    if not _row_slots and _clvl > 1:
+                        continue  # Skip rows with no slots for non-caster early levels
+                    _tbl_row = tk.Frame(slots_sec, bg=_sec_bg)
+                    _tbl_row.pack(fill=tk.X)
+                    _is_current = (_clvl == char_level)
+                    _niv_fg = color if _is_current else "#888899"
+                    _niv_font = ("Consolas", 8, "bold") if _is_current else ("Consolas", 8)
+                    tk.Label(_tbl_row, text=f"{_clvl:>2}", bg=_sec_bg, fg=_niv_fg,
+                             font=_niv_font, width=4, anchor="w").pack(side=tk.LEFT)
+                    for sp_lvl in range(1, 10):
+                        val = _row_slots.get(str(sp_lvl), 0)
+                        _val_fg = "#cccccc" if val > 0 else "#333344"
+                        if _is_current and val > 0:
+                            _val_fg = color
+                        tk.Label(_tbl_row, text=str(val) if val > 0 else "\u2014", bg=_sec_bg, fg=_val_fg,
+                                 font=_niv_font, width=3, anchor="center").pack(side=tk.LEFT)
+
+                # Bas de page spacer
+                tk.Frame(cls_inner, bg=_cls_bg, height=20).pack(fill=tk.X)
+
+            # ════════════════════════════════════════════════════════════════════
+            # ── ONGLET STATS ────────────────────────────────────────────────────
+            # ════════════════════════════════════════════════════════════════════
+        def _render_stats():
+            body = tk.Frame(stats_frame, bg="#1e1e2e")
+            body.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
+
+            def _make_editable(row_frame, get_fn, set_fn,
+                               min_v=0, max_v=999, fg_fn=None, font=("Consolas", 10, "bold")):
+                """Label cliquable → spinbox inline. Retourne (lbl, spx)."""
+                c = fg_fn(get_fn()) if fg_fn else color
+                lbl = tk.Label(row_frame, text=str(get_fn()), bg="#1e1e2e",
+                               fg=c, font=font, cursor="hand2")
+                lbl.pack(side=tk.RIGHT)
+                spx = tk.Spinbox(row_frame, from_=min_v, to=max_v, width=6,
+                                 bg="#252535", fg=c, font=font,
+                                 buttonbackground="#252535", relief="flat",
+                                 highlightthickness=1, highlightcolor=color)
+
+                def _start(e=None):
+                    lbl.pack_forget()
+                    spx.config(fg=fg_fn(get_fn()) if fg_fn else color)
+                    spx.delete(0, tk.END); spx.insert(0, str(get_fn()))
+                    spx.pack(side=tk.RIGHT); spx.focus_set(); spx.selection_range(0, tk.END)
+
+                def _end(e=None):
+                    try:
+                        v = max(min_v, min(max_v, int(spx.get())))
+                        set_fn(v)
                     except ValueError:
                         pass
-                    _s.pack_forget()
-                    cur2 = _g()
-                    _l.config(text=f"{cur2}/{_mx}")
-                    _l.pack(side=tk.RIGHT)
-                    for i, pip in enumerate(_p.winfo_children()):
-                        pip.config(bg=color if i < cur2 else "#333344")
+                    spx.pack_forget()
+                    v2 = get_fn()
+                    lbl.config(text=str(v2), fg=fg_fn(v2) if fg_fn else color)
+                    lbl.pack(side=tk.RIGHT)
 
-                sl_lbl.bind("<Button-1>", _start_slot)
-                sl_spx.bind("<Return>",   _end_slot)
-                sl_spx.bind("<FocusOut>", _end_slot)
-                sl_spx.bind("<Escape>",   lambda e, _end=_end_slot: _end())
-                slot_widgets[lvl] = (sl_lbl, pip_frame, sl_spx, maxi)
-        else:
-            tk.Label(body, text="(Pas d'emplacements de sort)", bg="#1e1e2e",
-                     fg="#444455", font=("Arial", 8, "italic")).pack(anchor="w")
+                lbl.bind("<Button-1>", _start)
+                spx.bind("<Return>",   _end)
+                spx.bind("<FocusOut>", _end)
+                spx.bind("<Escape>",   lambda e: (_end(),))
+                return lbl, spx
 
-        # ── Refresh global ────────────────────────────────────────────────
-        def _rebuild_slots():
-            d2 = load_state().get("characters", {}).get(char_name, {})
-            sl = d2.get("spell_slots", {})
-            for lvl, (lbl, pip_frame, spx, maxi) in slot_widgets.items():
-                cur = sl.get(lvl, 0)
-                lbl.config(text=f"{cur}/{maxi}")
-                for i, pip in enumerate(pip_frame.winfo_children()):
-                    pip.config(bg=color if i < cur else "#333344")
+            # ── Points de vie ─────────────────────────────────────────────────
+            hp_row = tk.Frame(body, bg="#1e1e2e")
+            hp_row.pack(fill=tk.X, pady=(0, 2))
+            tk.Label(hp_row, text="❤️ PV", bg="#1e1e2e", fg="#aaaaaa",
+                     font=("Arial", 9)).pack(side=tk.LEFT)
 
-        def _refresh_all():
-            try:
+            def get_hp():     return load_state().get("characters",{}).get(char_name,{}).get("hp", 0)
+            def get_max_hp(): return load_state().get("characters",{}).get(char_name,{}).get("max_hp", 0)
+            def set_hp(v):
+                s = load_state()
+                new_hp = max(0, min(v, get_max_hp()))
+                s["characters"][char_name]["hp"] = new_hp
+                s["characters"][char_name]["unconscious"] = new_hp <= 0
+                save_state(s)
+            def set_max_hp(v):
+                s = load_state(); s["characters"][char_name]["max_hp"] = max(1, v); save_state(s)
+
+            slash_lbl = tk.Label(hp_row, text=" / ", bg="#1e1e2e", fg="#444455",
+                                  font=("Consolas", 10))
+            slash_lbl.pack(side=tk.RIGHT)
+            maxhp_lbl, maxhp_spx = _make_editable(
+                hp_row, get_max_hp, set_max_hp, min_v=1, max_v=999,
+                font=("Consolas", 9)
+            )
+            maxhp_lbl.config(fg="#888888"); maxhp_spx.config(fg="#888888")
+
+            hp_lbl, hp_spx = _make_editable(
+                hp_row, get_hp, set_hp, min_v=0, max_v=999,
+                fg_fn=lambda v: self._hp_color(v / max(get_max_hp(), 1))
+            )
+
+            bar_bg   = tk.Frame(body, bg="#3a3a3a", height=8)
+            bar_bg.pack(fill=tk.X, pady=(0, 6))
+            pct_init = max(0, min(1, get_hp() / max(get_max_hp(), 1)))
+            bar_fill = tk.Frame(bar_bg, bg=self._hp_color(pct_init), height=8)
+            bar_fill.place(relx=0, rely=0, relwidth=pct_init, relheight=1)
+
+            # ── Classe d'Armure ───────────────────────────────────────────────
+            ac_row = tk.Frame(body, bg="#1e1e2e")
+            ac_row.pack(fill=tk.X, pady=(0, 6))
+            tk.Label(ac_row, text="🛡 CA", bg="#1e1e2e", fg="#aaaaaa",
+                     font=("Arial", 9)).pack(side=tk.LEFT)
+
+            def get_ac():
+                return load_state().get("characters", {}).get(char_name, {}).get("ac", ac)
+            def set_ac(v):
+                s = load_state(); s["characters"][char_name]["ac"] = max(0, min(v, 30)); save_state(s)
+
+            ac_lbl, ac_spx = _make_editable(
+                ac_row, get_ac, set_ac, min_v=0, max_v=30,
+                font=("Consolas", 11, "bold")
+            )
+            ac_lbl.config(fg=color)
+            ac_spx.config(fg=color)
+
+            # ── État Inconscient (Dying / Stable) ──────────────────────────────
+            cond_row = tk.Frame(body, bg="#1e1e2e")
+        
+            def _get_cond_text():
+                return load_state().get("characters", {}).get(char_name, {}).get("unconscious_state", "dying").capitalize()
+
+            def _refresh_cond():
+                h = load_state().get("characters", {}).get(char_name, {}).get("hp", 0)
+                if h <= 0:
+                    txt = _get_cond_text()
+                    cond_lbl.config(text=txt, fg="#e63946" if txt == "Dying" else "#4caf50")
+                    cond_row.pack(fill=tk.X, pady=(0, 6), after=hp_row)
+                else:
+                    cond_row.pack_forget()
+
+            def _toggle_cond(e):
+                s = load_state()
+                cur = s.get("characters", {}).get(char_name, {}).get("unconscious_state", "dying")
+                new_state = "stable" if cur.lower() == "dying" else "dying"
+                s["characters"][char_name]["unconscious_state"] = new_state
+                save_state(s)
+                _refresh_cond()
+
+            tk.Label(cond_row, text="💀 État", bg="#1e1e2e", fg="#aaaaaa", font=("Arial", 9)).pack(side=tk.LEFT)
+            cond_lbl = tk.Label(cond_row, text="", bg="#1e1e2e", font=("Consolas", 10, "bold"), cursor="hand2")
+            cond_lbl.pack(side=tk.RIGHT)
+            cond_lbl.bind("<Button-1>", _toggle_cond)
+        
+            _refresh_cond()
+
+            # ── Capacités (Features) ──────────────────────────────────────────────
+            def get_lay_on_hands():
+                return load_state().get("characters", {}).get(char_name, {}).get("features", {}).get("lay_on_hands", 0)
+            def set_lay_on_hands(v):
+                s = load_state()
+                if "features" not in s["characters"][char_name]:
+                    s["characters"][char_name]["features"] = {}
+                s["characters"][char_name]["features"]["lay_on_hands"] = max(0, min(v, s["characters"][char_name]["features"].get("max_lay_on_hands", 55)))
+                save_state(s)
+
+            state_now = load_state()
+            if "lay_on_hands" in state_now.get("characters", {}).get(char_name, {}).get("features", {}):
+                loh_row = tk.Frame(body, bg="#1e1e2e")
+                loh_row.pack(fill=tk.X, pady=(0, 6))
+                tk.Label(loh_row, text="🤲 Imposition", bg="#1e1e2e", fg="#e57373", font=("Arial", 9)).pack(side=tk.LEFT)
+                slash_lbl2 = tk.Label(loh_row, text=f" / {state_now['characters'][char_name]['features'].get('max_lay_on_hands', 55)}", bg="#1e1e2e", fg="#444455", font=("Consolas", 10))
+                slash_lbl2.pack(side=tk.RIGHT)
+                loh_lbl, loh_spx = _make_editable(loh_row, get_lay_on_hands, set_lay_on_hands, min_v=0, max_v=state_now['characters'][char_name]['features'].get('max_lay_on_hands', 55), font=("Consolas", 11, "bold"))
+                loh_lbl.config(fg="#e57373")
+                loh_spx.config(fg="#e57373")
+
+            # ── Hit Dice ──────────────────────────────────────────────────────
+            hd_row = tk.Frame(body, bg="#1e1e2e")
+            hd_row.pack(fill=tk.X, pady=(0, 6))
+            tk.Label(hd_row, text=f"🎲 Hit Dice (d{hit_die})", bg="#1e1e2e", fg="#aaaaaa",
+                     font=("Arial", 9)).pack(side=tk.LEFT)
+            tk.Label(hd_row, text=f"/{level}", bg="#1e1e2e", fg="#444455",
+                     font=("Consolas", 9)).pack(side=tk.RIGHT)
+
+            def get_hd_avail():
+                used = load_state().get("characters",{}).get(char_name,{}).get("hit_dice_used", 0)
+                return max(0, level - used)
+            def set_hd_avail(v):
+                used = max(0, level - v)
+                s = load_state(); s["characters"][char_name]["hit_dice_used"] = used; save_state(s)
+
+            hd_lbl, hd_spx = _make_editable(
+                hd_row, get_hd_avail, set_hd_avail, min_v=0, max_v=level,
+                font=("Consolas", 9, "bold")
+            )
+
+            # ── Emplacements de sort ──────────────────────────────────────────
+            slots        = data.get("spell_slots", {})
+            slot_widgets = {}  # lvl → (lbl, pip_frame, spx, maxi)
+
+            if slots or max_slots:
+                tk.Label(body, text="✨ Emplacements de Sort", bg="#1e1e2e", fg="#aaaaaa",
+                         font=("Arial", 9)).pack(anchor="w", pady=(0, 3))
+                slots_frame = tk.Frame(body, bg="#1e1e2e")
+                slots_frame.pack(fill=tk.X)
+                all_levels = sorted(set(list(slots.keys()) + list(max_slots.keys())), key=int)
+
+                for lvl in all_levels:
+                    cur  = slots.get(lvl, 0)
+                    maxi = max_slots.get(lvl, cur)
+
+                    def _get_slot(l=lvl):
+                        return load_state().get("characters",{}).get(char_name,{}).get("spell_slots",{}).get(l, 0)
+                    def _set_slot(v, l=lvl, mx=maxi):
+                        s = load_state()
+                        s["characters"][char_name].setdefault("spell_slots",{})[l] = max(0, min(v, mx))
+                        save_state(s)
+
+                    row = tk.Frame(slots_frame, bg="#1e1e2e")
+                    row.pack(fill=tk.X, pady=1)
+                    tk.Label(row, text=f"Niv {lvl}", bg="#1e1e2e", fg="#888888",
+                             font=("Consolas", 9), width=5, anchor="w").pack(side=tk.LEFT)
+
+                    pip_frame = tk.Frame(row, bg="#1e1e2e")
+                    pip_frame.pack(side=tk.LEFT, padx=4)
+                    for i in range(maxi):
+                        pip_bg = color if i < cur else "#333344"
+                        tk.Frame(pip_frame, bg=pip_bg, width=10, height=10).pack(
+                            side=tk.LEFT, padx=1)
+
+                    sl_lbl = tk.Label(row, text=f"{cur}/{maxi}", bg="#1e1e2e", fg=color,
+                                      font=("Consolas", 9, "bold"), cursor="hand2")
+                    sl_lbl.pack(side=tk.RIGHT, padx=4)
+
+                    sl_spx = tk.Spinbox(row, from_=0, to=maxi, width=4, bg="#252535", fg=color,
+                                        font=("Consolas", 9, "bold"), buttonbackground="#252535",
+                                        relief="flat", highlightthickness=1, highlightcolor=color)
+
+                    def _start_slot(e=None, _l=sl_lbl, _s=sl_spx, _g=_get_slot):
+                        _l.pack_forget()
+                        _s.delete(0, tk.END); _s.insert(0, str(_g()))
+                        _s.pack(side=tk.RIGHT); _s.focus_set()
+
+                    def _end_slot(e=None, _l=sl_lbl, _s=sl_spx, _g=_get_slot, _set=_set_slot,
+                                   _mx=maxi, _p=pip_frame):
+                        try:
+                            v = max(0, min(int(_s.get()), _mx))
+                            _set(v)
+                        except ValueError:
+                            pass
+                        _s.pack_forget()
+                        cur2 = _g()
+                        _l.config(text=f"{cur2}/{_mx}")
+                        _l.pack(side=tk.RIGHT)
+                        for i, pip in enumerate(_p.winfo_children()):
+                            pip.config(bg=color if i < cur2 else "#333344")
+
+                    sl_lbl.bind("<Button-1>", _start_slot)
+                    sl_spx.bind("<Return>",   _end_slot)
+                    sl_spx.bind("<FocusOut>", _end_slot)
+                    sl_spx.bind("<Escape>",   lambda e, _end=_end_slot: _end())
+                    slot_widgets[lvl] = (sl_lbl, pip_frame, sl_spx, maxi)
+            else:
+                tk.Label(body, text="(Pas d'emplacements de sort)", bg="#1e1e2e",
+                         fg="#444455", font=("Arial", 8, "italic")).pack(anchor="w")
+
+            # ── Refresh global ────────────────────────────────────────────────
+            def _rebuild_slots():
                 d2 = load_state().get("characters", {}).get(char_name, {})
+                sl = d2.get("spell_slots", {})
+                for lvl, (lbl, pip_frame, spx, maxi) in slot_widgets.items():
+                    cur = sl.get(lvl, 0)
+                    lbl.config(text=f"{cur}/{maxi}")
+                    for i, pip in enumerate(pip_frame.winfo_children()):
+                        pip.config(bg=color if i < cur else "#333344")
+
+            def _refresh_all():
+                try:
+                    d2 = load_state().get("characters", {}).get(char_name, {})
+                    h, mh = d2.get("hp", 0), d2.get("max_hp", 0)
+                    p  = max(0, min(1, h / mh)) if mh else 0
+                    hp_lbl.config(text=str(h), fg=self._hp_color(p))
+                    maxhp_lbl.config(text=str(mh))
+                    bar_fill.config(bg=self._hp_color(p))
+                    bar_fill.place(relx=0, rely=0, relwidth=p, relheight=1)
+                    _refresh_cond()
+                    used  = d2.get("hit_dice_used", 0)
+                    avail = max(0, level - used)
+                    hd_lbl.config(text=str(avail))
+                    ac_lbl.config(text=str(d2.get("ac", ac)))
+                    _rebuild_slots()
+                
+                    # Mise à jour Imposition des mains si présent
+                    if "lay_on_hands" in d2.get("features", {}):
+                        try:
+                            loh_lbl.config(text=str(d2["features"]["lay_on_hands"]))
+                        except Exception:
+                            pass
+
+                    # ── Mise à jour du label LLM si le modèle a changé ──────────────
+                    # (ex: fallback quota automatique, ou changement via dropdown)
+                    current_short = _fmt_llm(_get_actual_llm())
+                    if llm_label.cget("text") != current_short:
+                        llm_label.config(text=current_short)
+                except Exception:
+                    pass
+
+            win._refresh_stats = _refresh_all
+
+            # ── Short Rest ────────────────────────────────────────────────────
+            def _do_short_rest():
+                import tkinter.simpledialog as _sd
+                import random as _r
+                s = load_state()
+                d2 = s["characters"][char_name]
                 h, mh = d2.get("hp", 0), d2.get("max_hp", 0)
-                p  = max(0, min(1, h / mh)) if mh else 0
-                hp_lbl.config(text=str(h), fg=self._hp_color(p))
-                maxhp_lbl.config(text=str(mh))
-                bar_fill.config(bg=self._hp_color(p))
-                bar_fill.place(relwidth=p)
                 used  = d2.get("hit_dice_used", 0)
                 avail = max(0, level - used)
-                hd_lbl.config(text=str(avail))
-                ac_lbl.config(text=str(d2.get("ac", ac)))
-                _rebuild_slots()
-                
-                # Mise à jour Imposition des mains si présent
-                if "lay_on_hands" in d2.get("features", {}):
-                    try:
-                        loh_lbl.config(text=str(d2["features"]["lay_on_hands"]))
-                    except Exception:
-                        pass
+                if avail == 0:
+                    from tkinter import messagebox as _mb
+                    _mb.showinfo("Short Rest", f"{char_name} n'a plus de Hit Dice !", parent=win)
+                    return
+                nb = _sd.askinteger(
+                    "Short Rest",
+                    f"{char_name} — Combien de Hit Dice dépenser ?\n"
+                    f"d{hit_die} + {con_mod:+d} CON par dé    (disponibles : {avail}/{level})",
+                    minvalue=1, maxvalue=avail, parent=win)
+                if not nb: return
+                rolls  =[max(1, _r.randint(1, hit_die) + con_mod) for _ in range(nb)]
+                healed = sum(rolls)
+                new_hp = min(mh, h + healed)
+                d2["hp"] = new_hp
+                d2["unconscious"] = new_hp <= 0
+                d2["hit_dice_used"] = used + nb
+                save_state(s)
+                detail = " + ".join(str(r) for r in rolls)
+                self.msg_queue.put({"sender": "☽ Short Rest",
+                                    "text": f"{char_name} — {nb}d{hit_die} ({detail}) → +{healed} PV  ({h}→{new_hp}/{mh})",
+                                    "color": "#88aaff"})
+                _refresh_all()
 
-                # ── Mise à jour du label LLM si le modèle a changé ──────────────
-                # (ex: fallback quota automatique, ou changement via dropdown)
-                current_short = _fmt_llm(_get_actual_llm())
-                if llm_label.cget("text") != current_short:
-                    llm_label.config(text=current_short)
-            except Exception:
-                pass
-
-        # ── Short Rest ────────────────────────────────────────────────────
-        def _do_short_rest():
-            import tkinter.simpledialog as _sd
-            import random as _r
-            s = load_state()
-            d2 = s["characters"][char_name]
-            h, mh = d2.get("hp", 0), d2.get("max_hp", 0)
-            used  = d2.get("hit_dice_used", 0)
-            avail = max(0, level - used)
-            if avail == 0:
+            def _do_long_rest():
                 from tkinter import messagebox as _mb
-                _mb.showinfo("Short Rest", f"{char_name} n'a plus de Hit Dice !", parent=win)
-                return
-            nb = _sd.askinteger(
-                "Short Rest",
-                f"{char_name} — Combien de Hit Dice dépenser ?\n"
-                f"d{hit_die} + {con_mod:+d} CON par dé    (disponibles : {avail}/{level})",
-                minvalue=1, maxvalue=avail, parent=win)
-            if not nb: return
-            rolls  =[max(1, _r.randint(1, hit_die) + con_mod) for _ in range(nb)]
-            healed = sum(rolls)
-            new_hp = min(mh, h + healed)
-            d2["hp"] = new_hp
-            d2["hit_dice_used"] = used + nb
-            save_state(s)
-            detail = " + ".join(str(r) for r in rolls)
-            self.msg_queue.put({"sender": "☽ Short Rest",
-                                "text": f"{char_name} — {nb}d{hit_die} ({detail}) → +{healed} PV  ({h}→{new_hp}/{mh})",
-                                "color": "#88aaff"})
-            _refresh_all()
-
-        def _do_long_rest():
-            from tkinter import messagebox as _mb
-            mh_now    = load_state().get("characters",{}).get(char_name,{}).get("max_hp", 0)
-            recovered = max(1, level // 2)
-            if not _mb.askyesno("Long Rest",
-                                f"Long Rest pour {char_name} ?\n\n"
-                                f"• PV restaurés à {mh_now}/{mh_now}\n"
-                                f"• Hit Dice récupérés : {recovered} (max {level})\n"
-                                f"• Tous les emplacements de sort restaurés\n"
-                                f"• Imposition des mains restaurée (si Paladin)",
-                                parent=win): return
-            s  = load_state()
-            d2 = s["characters"][char_name]
-            used = d2.get("hit_dice_used", 0)
-            d2["hp"] = mh_now
-            d2["hit_dice_used"]  = max(0, used - recovered)
-            d2["spell_slots"]    = dict(max_slots)
+                mh_now    = load_state().get("characters",{}).get(char_name,{}).get("max_hp", 0)
+                recovered = max(1, level // 2)
+                if not _mb.askyesno("Long Rest",
+                                    f"Long Rest pour {char_name} ?\n\n"
+                                    f"• PV restaurés à {mh_now}/{mh_now}\n"
+                                    f"• Hit Dice récupérés : {recovered} (max {level})\n"
+                                    f"• Tous les emplacements de sort restaurés\n"
+                                    f"• Imposition des mains restaurée (si Paladin)",
+                                    parent=win): return
+                s  = load_state()
+                d2 = s["characters"][char_name]
+                used = d2.get("hit_dice_used", 0)
+                d2["hp"] = mh_now
+                d2["unconscious"] = mh_now <= 0
+                d2["hit_dice_used"]  = max(0, used - recovered)
+                d2["spell_slots"]    = dict(max_slots)
             
-            # Restaure l'imposition des mains si présente
-            if "features" in d2 and "lay_on_hands" in d2["features"]:
-                d2["features"]["lay_on_hands"] = d2["features"].get("max_lay_on_hands", 55)
+                # Restaure l'imposition des mains si présente
+                if "features" in d2 and "lay_on_hands" in d2["features"]:
+                    d2["features"]["lay_on_hands"] = d2["features"].get("max_lay_on_hands", 55)
 
-            save_state(s)
-            self.msg_queue.put({"sender": "☀ Long Rest",
-                                "text": f"{char_name} — PV: {mh_now}/{mh_now} | "
-                                        f"Hit Dice +{recovered} | Sorts restaurés",
-                                "color": "#ffcc66"})
-            _refresh_all()
+                save_state(s)
+                self.msg_queue.put({"sender": "☀ Long Rest",
+                                    "text": f"{char_name} — PV: {mh_now}/{mh_now} | "
+                                            f"Hit Dice +{recovered} | Sorts restaurés",
+                                    "color": "#ffcc66"})
+                _refresh_all()
 
-        rest_frame = tk.Frame(body, bg="#1e1e2e")
-        rest_frame.pack(fill=tk.X, pady=(8, 2))
-        tk.Button(rest_frame, text="☽ Short Rest", bg="#1a2a3a", fg="#88aaff",
-                  font=("Arial", 8, "bold"), relief="flat", bd=0, padx=6, pady=4,
-                  activebackground="#2a3a4a", activeforeground="white",
-                  command=_do_short_rest).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,3))
-        tk.Button(rest_frame, text="☀ Long Rest", bg="#2a2010", fg="#ffcc66",
-                  font=("Arial", 8, "bold"), relief="flat", bd=0, padx=6, pady=4,
-                  activebackground="#3a3020", activeforeground="white",
-                  command=_do_long_rest).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(3,0))
+            rest_frame = tk.Frame(body, bg="#1e1e2e")
+            rest_frame.pack(fill=tk.X, pady=(8, 2))
+            tk.Button(rest_frame, text="☽ Short Rest", bg="#1a2a3a", fg="#88aaff",
+                      font=("Arial", 8, "bold"), relief="flat", bd=0, padx=6, pady=4,
+                      activebackground="#2a3a4a", activeforeground="white",
+                      command=_do_short_rest).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,3))
+            tk.Button(rest_frame, text="☀ Long Rest", bg="#2a2010", fg="#ffcc66",
+                      font=("Arial", 8, "bold"), relief="flat", bd=0, padx=6, pady=4,
+                      activebackground="#3a3020", activeforeground="white",
+                      command=_do_long_rest).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(3,0))
 
-        # ════════════════════════════════════════════════════════════════════
-        # ── ONGLET SORTS  (v3 — basé sur spells_prepared + spell_data) ──
-        # Chaque personnage stocke uniquement une liste de noms anglais dans
-        # campaign_state["characters"][name]["spells_prepared"].
-        # Toutes les métadonnées (niveau, école, description) viennent
-        # dynamiquement de spell_data.py, qui scanne les fichiers spells-*.json
-        # du dossier spells/ en s'appuyant sur sources.json (sans hardcoding).
-        # ════════════════════════════════════════════════════════════════════
+            # ════════════════════════════════════════════════════════════════════
+            # ── ONGLET SORTS  (v3 — basé sur spells_prepared + spell_data) ──
+            # Chaque personnage stocke uniquement une liste de noms anglais dans
+            # campaign_state["characters"][name]["spells_prepared"].
+            # Toutes les métadonnées (niveau, école, description) viennent
+            # dynamiquement de spell_data.py, qui scanne les fichiers spells-*.json
+            # du dossier spells/ en s'appuyant sur sources.json (sans hardcoding).
+            # ════════════════════════════════════════════════════════════════════
 
-        SCHOOL_COLORS = {
-            "Abjuration": "#64b5f6", "Conjuration": "#81c784", "Divination": "#e9c46a",
-            "Enchantment": "#f06292", "Evocation": "#e57373", "Illusion": "#ce93d8",
-            "Necromancy": "#aaaaaa", "Transmutation": "#ffb74d",
-        }
+            SCHOOL_COLORS = {
+                "Abjuration": "#64b5f6", "Conjuration": "#81c784", "Divination": "#e9c46a",
+                "Enchantment": "#f06292", "Evocation": "#e57373", "Illusion": "#ce93d8",
+                "Necromancy": "#aaaaaa", "Transmutation": "#ffb74d",
+            }
 
-        # Préchargement du cache sorts + sources (non-bloquant)
-        def _preload_spells():
-            try:
-                from spell_data import load_spells, load_sources_index
-                load_spells()
-                load_sources_index()
-            except Exception:
-                pass
-        threading.Thread(target=_preload_spells, daemon=True).start()
+            # Préchargement du cache sorts + sources (non-bloquant)
+            def _preload_spells():
+                try:
+                    from spell_data import load_spells, load_sources_index
+                    load_spells()
+                    load_sources_index()
+                except Exception:
+                    pass
+            threading.Thread(target=_preload_spells, daemon=True).start()
 
-        # ── Widgets de l'onglet ─────────────────────────────────────────────
-        spell_list_outer = tk.Frame(spells_frame, bg="#1e1e2e")
-        spell_list_outer.pack(fill=tk.BOTH, expand=True)
+            # ── Widgets de l'onglet ─────────────────────────────────────────────
+            spell_list_outer = tk.Frame(spells_frame, bg="#1e1e2e")
+            spell_list_outer.pack(fill=tk.BOTH, expand=True)
 
-        sp_canvas = tk.Canvas(spell_list_outer, bg="#1e1e2e", highlightthickness=0)
-        sp_scroll = tk.Scrollbar(spell_list_outer, orient="vertical", command=sp_canvas.yview)
-        sp_canvas.configure(yscrollcommand=sp_scroll.set)
-        sp_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        sp_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            sp_canvas = tk.Canvas(spell_list_outer, bg="#1e1e2e", highlightthickness=0)
+            sp_scroll = tk.Scrollbar(spell_list_outer, orient="vertical", command=sp_canvas.yview)
+            sp_canvas.configure(yscrollcommand=sp_scroll.set)
+            sp_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+            sp_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        sp_inner = tk.Frame(sp_canvas, bg="#1e1e2e")
-        sp_window = sp_canvas.create_window((0, 0), window=sp_inner, anchor="nw")
+            sp_inner = tk.Frame(sp_canvas, bg="#1e1e2e")
+            sp_window = sp_canvas.create_window((0, 0), window=sp_inner, anchor="nw")
 
-        def _on_sp_configure(e):
-            sp_canvas.configure(scrollregion=sp_canvas.bbox("all"))
-        sp_inner.bind("<Configure>", _on_sp_configure)
+            def _on_sp_configure(e):
+                sp_canvas.configure(scrollregion=sp_canvas.bbox("all"))
+            sp_inner.bind("<Configure>", _on_sp_configure)
 
-        def _on_sp_canvas_configure(e):
-            sp_canvas.itemconfig(sp_window, width=e.width)
-        sp_canvas.bind("<Configure>", _on_sp_canvas_configure)
+            def _on_sp_canvas_configure(e):
+                sp_canvas.itemconfig(sp_window, width=e.width)
+            sp_canvas.bind("<Configure>", _on_sp_canvas_configure)
 
-        # Mousewheel — onglet Sorts
-        def _sp_mousewheel(e):
-            sp_canvas.yview_scroll(int(-1 * (e.delta or (1 if e.num == 4 else -1)) * 3), "units")
-        sp_canvas.bind("<Button-4>",   _sp_mousewheel)
-        sp_canvas.bind("<Button-5>",   _sp_mousewheel)
-        sp_canvas.bind("<MouseWheel>", _sp_mousewheel)
+            # Mousewheel — onglet Sorts
+            def _sp_mousewheel(e):
+                sp_canvas.yview_scroll(int(-1 * (e.delta or (1 if e.num == 4 else -1)) * 3), "units")
+            sp_canvas.bind("<Button-4>",   _sp_mousewheel)
+            sp_canvas.bind("<Button-5>",   _sp_mousewheel)
+            sp_canvas.bind("<MouseWheel>", _sp_mousewheel)
 
-        def _bind_sp_scroll(widget):
-            """Propage le scroll molette à sp_canvas depuis n'importe quel widget enfant."""
-            widget.bind("<Button-4>",   _sp_mousewheel, add="+")
-            widget.bind("<Button-5>",   _sp_mousewheel, add="+")
-            widget.bind("<MouseWheel>", _sp_mousewheel, add="+")
-            for child in widget.winfo_children():
-                _bind_sp_scroll(child)
+            def _bind_sp_scroll(widget):
+                """Propage le scroll molette à sp_canvas depuis n'importe quel widget enfant."""
+                widget.bind("<Button-4>",   _sp_mousewheel, add="+")
+                widget.bind("<Button-5>",   _sp_mousewheel, add="+")
+                widget.bind("<MouseWheel>", _sp_mousewheel, add="+")
+                for child in widget.winfo_children():
+                    _bind_sp_scroll(child)
 
-        # ── Barre de recherche + bouton Ajouter ─────────────────────────────
-        search_var = tk.StringVar()
-        if not hasattr(self, "_tk_vars_keepalive"): self._tk_vars_keepalive =[]
-        self._tk_vars_keepalive.append(search_var)
+            # ── Barre de recherche + bouton Ajouter ─────────────────────────────
+            search_var = tk.StringVar()
+            if not hasattr(self, "_tk_vars_keepalive"): self._tk_vars_keepalive =[]
+            self._tk_vars_keepalive.append(search_var)
         
-        spell_bar  = tk.Frame(spells_frame, bg="#12121e")
-        spell_bar.pack(fill=tk.X)
-        search_entry = tk.Entry(spell_bar, textvariable=search_var, bg="#1e1e2e", fg="#aaaaaa",
-                 insertbackground="white", font=("Consolas", 9),
-                 relief="flat")
-        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, pady=4)
-        search_entry.bind("<KeyRelease>", lambda e: _render_spells())
-        search_entry.bind("<<Paste>>", lambda e: search_entry.after(50, _render_spells))
-        search_entry.bind("<<Cut>>", lambda e: search_entry.after(50, _render_spells))
+            spell_bar  = tk.Frame(spells_frame, bg="#12121e")
+            spell_bar.pack(fill=tk.X)
+            search_entry = tk.Entry(spell_bar, textvariable=search_var, bg="#1e1e2e", fg="#aaaaaa",
+                     insertbackground="white", font=("Consolas", 9),
+                     relief="flat")
+            search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, pady=4)
+            search_entry.bind("<KeyRelease>", lambda e: _render_spells())
+            search_entry.bind("<<Paste>>", lambda e: search_entry.after(50, _render_spells))
+            search_entry.bind("<<Cut>>", lambda e: search_entry.after(50, _render_spells))
 
-        stats_lbl = tk.Label(spell_bar, text="", bg="#12121e", fg="#444466",
-                             font=("Consolas", 7))
-        stats_lbl.pack(side=tk.LEFT, padx=4)
+            stats_lbl = tk.Label(spell_bar, text="", bg="#12121e", fg="#444466",
+                                 font=("Consolas", 7))
+            stats_lbl.pack(side=tk.LEFT, padx=4)
 
-        tk.Button(spell_bar, text="＋ Sort", bg="#1a1a2e", fg=color,
-                  font=("Arial", 9, "bold"), relief="flat", padx=8,
-                  cursor="hand2",
-                  command=lambda: _open_spell_picker()).pack(side=tk.RIGHT, padx=8, pady=4)
+            tk.Button(spell_bar, text="＋ Sort", bg="#1a1a2e", fg=color,
+                      font=("Arial", 9, "bold"), relief="flat", padx=8,
+                      cursor="hand2",
+                      command=lambda: _open_spell_picker()).pack(side=tk.RIGHT, padx=8, pady=4)
 
-        # ── Helpers accès state ──────────────────────────────────────────────
-        def _get_prepared() -> list:
-            return list(load_state()
-                        .get("characters", {})
-                        .get(char_name, {})
-                        .get("spells_prepared",[]))
+            # ── Helpers accès state ──────────────────────────────────────────────
+            def _get_prepared() -> list:
+                return list(load_state()
+                            .get("characters", {})
+                            .get(char_name, {})
+                            .get("spells_prepared",[]))
 
-        def _set_prepared(names: list):
-            s = load_state()
-            s.setdefault("characters", {}).setdefault(char_name, {})["spells_prepared"] = names
-            save_state(s)
+            def _set_prepared(names: list):
+                s = load_state()
+                s.setdefault("characters", {}).setdefault(char_name, {})["spells_prepared"] = names
+                save_state(s)
 
-        # ── Rendu de la liste ────────────────────────────────────────────────
+            # ── Rendu de la liste ────────────────────────────────────────────────
         def _render_spells():
             for w in sp_inner.winfo_children():
                 w.destroy()
@@ -1275,7 +1378,7 @@ class CharacterMixin:
                 mb.showerror("Erreur", f"Impossible d'ouvrir le sélecteur de sorts :\n{e}",
                              parent=win)
 
-        _render_spells()
+        # La liste sera générée lors du premier _show_tab("spells")
 
         # ════════════════════════════════════════════════════════════════════
         # ── ONGLET RACE ─────────────────────────────────────────────────────
@@ -1665,18 +1768,47 @@ class CharacterMixin:
             # Spacer bas
             tk.Frame(rc_inner, bg=_race_bg, height=20).pack(fill=tk.X)
 
-        # Construire l'onglet avec la race actuelle (peut être vide)
-        _build_race_tab(char_race, char_subrace)
+        # Construit via _show_tab("race")
 
-        # ── Activation onglet Stats par défaut ─────────────────────────────
+        # ── Activation onglet Stats par défaut ──────────────────────────────
         _show_tab("stats")
 
         # ── Rafraîchissement auto toutes les 2 s ──────────────────────────
         def _refresh_popout():
             if not win.winfo_exists(): return
-            _refresh_all()
+            if hasattr(win, "_refresh_stats"):
+                try: win._refresh_stats()
+                except Exception: pass
             win.after(2000, _refresh_popout)
         win.after(2000, _refresh_popout)
+
+        # Mapping asynchrone pour éviter le freeze XWayland.
+        # Même pattern que _track_window :
+        #   • 150 ms  — laisse le WM reparenter complètement avant le deiconify
+        #               (50 ms était trop court sur XWayland/Mutter → le WM
+        #               décalait la fenêtre après le mapping, la dérive était
+        #               sauvegardée par _poll_geom et se cumulait à chaque cycle)
+        #   • +300 ms — re-applique la géométrie sauvegardée pour annuler tout
+        #               ajustement résiduel du WM (bordures, snapping d'écran…)
+        def _do_show():
+            if not win.winfo_exists():
+                return
+            win.deiconify()
+            win.lift()
+            if _saved_geom:
+                def _correct_drift():
+                    try:
+                        if win.winfo_exists():
+                            win.geometry(
+                                f"{_saved_geom['w']}x{_saved_geom['h']}"
+                                f"+{_saved_geom['x']}+{_saved_geom['y']}"
+                            )
+                    except Exception:
+                        pass
+                win.after(300, _correct_drift)
+
+        win.after(150, _do_show)
+
 
     # ─── Entrée vocale ────────────────────────────────────────────────────────
 

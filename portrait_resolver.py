@@ -31,11 +31,13 @@ import re
 import unicodedata
 from functools import lru_cache
 from typing import Optional
+import pickle
 
 # ─── Répertoires racines ─────────────────────────────────────────────────────
 _BASE_DIR       = os.path.dirname(__file__)
 _TOKENS_ROOT    = os.path.join(_BASE_DIR, "images", "tokens")
 _PORTRAITS_ROOT = os.path.join(_BASE_DIR, "images", "portraits")
+_INDEX_CACHE    = os.path.join(_BASE_DIR, "images", "portrait_index_cache.pkl")
 
 # Chaque dossier a son propre index :
 #   _INDEX_TOKENS   → images/tokens/   (art circulaire pour le canvas)
@@ -92,6 +94,21 @@ def _build_index() -> None:
         return
     _INDEX_BUILT = True
 
+    try:
+        newest_mtime = max(
+            os.path.getmtime(_TOKENS_ROOT) if os.path.exists(_TOKENS_ROOT) else 0,
+            os.path.getmtime(_PORTRAITS_ROOT) if os.path.exists(_PORTRAITS_ROOT) else 0
+        )
+        if os.path.exists(_INDEX_CACHE) and os.path.getmtime(_INDEX_CACHE) >= newest_mtime:
+            with open(_INDEX_CACHE, "rb") as f:
+                cached_data = pickle.load(f)
+                _INDEX_TOKENS.update(cached_data["tokens"])
+                _INDEX_PORTRAITS.update(cached_data["portraits"])
+                print(f"[PortraitResolver] Index chargé depuis le cache ({len(_INDEX_TOKENS)} tokens, {len(_INDEX_PORTRAITS)} portraits).")
+                return
+    except Exception as e:
+        print(f"[PortraitResolver] Cache illisible ou périmé : {e}")
+
     for target_dict, root, label in [
         (_INDEX_TOKENS,    _TOKENS_ROOT,    "tokens"),
         (_INDEX_PORTRAITS, _PORTRAITS_ROOT, "portraits"),
@@ -112,6 +129,12 @@ def _build_index() -> None:
                     count += 1
         print(f"[PortraitResolver] {count} {label} indexés depuis {root}")
 
+    try:
+        with open(_INDEX_CACHE, "wb") as f:
+            pickle.dump({"tokens": _INDEX_TOKENS, "portraits": _INDEX_PORTRAITS}, f)
+        print("[PortraitResolver] Cache d'index sauvegardé.")
+    except Exception as e:
+        print(f"[PortraitResolver] Erreur sauvegarde cache : {e}")
 
 # ─── Résolution ───────────────────────────────────────────────────────────────
 

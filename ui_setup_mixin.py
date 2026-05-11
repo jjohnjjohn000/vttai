@@ -8,8 +8,6 @@ import tkinter as tk
 from tkinter import scrolledtext
 
 from state_manager import load_state, set_character_active, is_character_active
-from llm_config import llm_config
-from combat_simulator import CombatSimulator
 from npc_bestiary_panel import GroupNPCPanel
 
 
@@ -29,6 +27,18 @@ class _ChatEntryWrapper(tk.Text):
         if index == 0 or index == "0": index = "1.0"
         elif index == tk.END: index = "end"
         super().insert(index, chars, *args)
+
+    def icursor(self, index):
+        """Simule entry.icursor(index) pour positionner le curseur."""
+        if index == tk.END or index == "end":
+            self.mark_set(tk.INSERT, "end-1c")
+        else:
+            self.mark_set(tk.INSERT, f"1.0+{int(index)}c")
+        self.see(tk.INSERT)
+
+    def get_cursor_pos(self):
+        """Renvoie la position du curseur sous forme d'entier (comme tk.Entry)."""
+        return len(self.get("1.0", tk.INSERT))
 
 
 class UISetupMixin:
@@ -124,6 +134,15 @@ class UISetupMixin:
         )
         self._inline_npc_btn.pack(side=tk.LEFT, padx=(0, 5))
 
+        self.tts_mj_enabled = tk.BooleanVar(value=False)
+        self.chk_tts_mj = tk.Checkbutton(
+            buttons_frame, text="🔊 Auto-TTS", variable=self.tts_mj_enabled,
+            bg="#1e1e1e", fg="#aaaaaa", selectcolor="#2d2d2d",
+            activebackground="#1e1e1e", activeforeground="white",
+            font=("Arial", 9)
+        )
+        self.chk_tts_mj.pack(side=tk.LEFT, padx=(5, 5))
+
         btn_send = tk.Button(buttons_frame, text="Envoyer", bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), command=self.send_text)
         btn_send.pack(side=tk.LEFT, padx=(0, 5))
 
@@ -165,6 +184,14 @@ class UISetupMixin:
             command=self.raise_all_windows,
         ).pack(side=tk.LEFT, padx=(5, 0))
 
+        tk.Button(
+            buttons_frame, text="🔍 Recherche",
+            bg="#3a2a4a", fg="#ccaace",
+            font=("Arial", 10, "bold"),
+            relief="flat", padx=6,
+            command=self.open_search_window,
+        ).pack(side=tk.LEFT, padx=(5, 0))
+
 
         # --- PANNEAU LATÉRAL (Stats & Actions) ---
         stats_frame = tk.Frame(self.root, bg="#252526", width=250)
@@ -174,19 +201,22 @@ class UISetupMixin:
         bottom_container = tk.Frame(stats_frame, bg="#252526")
         bottom_container.pack(side=tk.BOTTOM, fill=tk.X)
 
-        tk.Label(stats_frame, text="📊 ÉTAT DU GROUPE", bg="#252526", fg="#ffcc00",
-                 font=("Arial", 10, "bold")).pack(pady=(10, 4))
+        # --- SECTION ÉTAT DU GROUPE (collapsible) ---
+        _hdr_stats, _content_stats = self._make_collapsible_section(
+            stats_frame, "[Stats] ÉTAT DU GROUPE", "sidebar_stats",
+            title_fg="#ffcc00", title_bg="#1e1e2e", section_bg="#252526",
+        )
 
         # --- FICHES PERSONNAGES COMPACTES (boutons → popout) ---
-        self._char_card_frame = tk.Frame(stats_frame, bg="#252526")
-        self._char_card_frame.pack(fill=tk.X, padx=6)
+        self._char_card_frame = tk.Frame(_content_stats, bg="#252526")
+        self._char_card_frame.pack(fill=tk.X, padx=6, pady=(4, 0))
         self._char_cards: dict = {}   # {name: {"frame", "hp_bar", "hp_label"}}
         self._build_char_cards()
 
         # --- PANNEAU PNJs DU GROUPE (bestiary) ---
         from window_state import _save_window_state
         self._group_npc_panel = GroupNPCPanel(
-            parent_frame      = stats_frame,
+            parent_frame      = _content_stats,
             root              = self.root,
             win_state         = self._win_state,
             save_win_state_fn = lambda: _save_window_state(self._win_state),
@@ -196,8 +226,13 @@ class UISetupMixin:
             get_scene_fn      = lambda: __import__('state_manager').get_scene_prompt(),
         )
 
-        # --- BOUTONS D'ACTION ---
-        action_frame = tk.Frame(bottom_container, bg="#252526")
+        # --- SECTION BOUTONS D'ACTION (collapsible) ---
+        _hdr_actions, _content_actions = self._make_collapsible_section(
+            bottom_container, "Actions", "sidebar_actions",
+            title_fg="#aaaacc", title_bg="#1a1a2e", section_bg="#252526",
+        )
+
+        action_frame = tk.Frame(_content_actions, bg="#252526")
         action_frame.pack(fill=tk.X, pady=6, padx=10)
 
         tk.Button(action_frame, text="[Sac] Inventaire du Groupe", bg="#2a1e0a", fg="#f0c040",
@@ -209,8 +244,8 @@ class UISetupMixin:
         tk.Button(action_frame, text="📖 Chroniques & Mémoires", bg="#1e1a3a", fg="#c8b8ff",
                   font=("Arial", 10, "bold"), command=self.open_campaign_log_viewer).pack(fill=tk.X, pady=3)
 
-        tk.Button(action_frame, text="🎲 Lanceur de Dés", bg="#2a1a3a", fg="#ce93d8",
-                  font=("Arial", 10, "bold"), command=self.open_dice_roller).pack(fill=tk.X, pady=3)
+        tk.Button(action_frame, text="🃏 Tirage Tarokka", bg="#4a1e3a", fg="#ffb8c6",
+                  font=("Arial", 10, "bold"), command=self.open_tarokka_window).pack(fill=tk.X, pady=3)
 
         tk.Button(action_frame, text="🎲 Jet de Compétence", bg="#1a3a2a", fg="#81c784",
                   font=("Arial", 10, "bold"), command=self.open_skill_check_dialog).pack(fill=tk.X, pady=3)
@@ -221,9 +256,12 @@ class UISetupMixin:
         tk.Button(action_frame, text="🗺️ Carte de Combat", bg="#0e1e2c", fg="#64b5f6",
                   font=("Arial", 10, "bold"), command=self.open_combat_map).pack(fill=tk.X, pady=3)
 
+        tk.Button(action_frame, text="🎵 Mixer Audio", bg="#1a1a3a", fg="#c8b8ff",
+                  font=("Arial", 10, "bold"), command=self.open_music_mixer).pack(fill=tk.X, pady=3)
+
         tk.Button(action_frame, text="⚡ Simulateur Rapide", bg="#1a1a3a", fg="#9b59b6",
                   font=("Arial", 10, "bold"),
-                  command=lambda: CombatSimulator(self.root, load_state, self.msg_queue, llm_config,
+                  command=lambda: __import__('combat_simulator').CombatSimulator(self.root, load_state, self.msg_queue, __import__('llm_config').get_default_llm_config(),
                                                   inject_to_agents_fn=lambda t: (
                                                       setattr(self, "user_input", t),
                                                       self.msg_queue.put({"sender": "⚡ Simulation", "text": t, "color": "#9b59b6"}),
@@ -237,19 +275,96 @@ class UISetupMixin:
         tk.Button(action_frame, text="⚙️ Configuration", bg="#2a2a3a", fg="#aaaacc",
                   font=("Arial", 10, "bold"), command=self.open_config_panel).pack(fill=tk.X, pady=3)
 
-        tk.Button(action_frame, text="🛑 Terminer Session", bg="#F44336", fg="white",
-                  font=("Arial", 10, "bold"), command=self.trigger_end_session).pack(fill=tk.X, pady=3)
+        tk.Button(action_frame, text="⚙️ Gérer les PNJs", bg="#4a3060", fg="#c77dff",
+                  font=("Arial", 10, "bold"), command=self.open_npc_manager).pack(fill=tk.X, pady=3)
+
+
 
         tk.Frame(bottom_container, bg="#3a3a3a", height=1).pack(fill=tk.X, padx=8, pady=4)
 
-        # --- PANNEAU PNJ ---
+        # --- SECTION LANCEUR DE DÉS (collapsible) ---
+        _hdr_dice, _content_dice = self._make_collapsible_section(
+            bottom_container, "[D] LANCEUR DE DÉS", "sidebar_dice",
+            title_fg="#ce93d8", title_bg="#1a0e2e", section_bg="#252526",
+        )
+
+        dice_frame = tk.Frame(_content_dice, bg="#252526")
+        dice_frame.pack(fill=tk.X, padx=10, pady=(4, 4))
+                 
+        self._dice_counters = {d: tk.IntVar(value=0) for d in [4, 6, 8, 10, 12, 20, 100]}
+        
+        dice_row1 = tk.Frame(dice_frame, bg="#252526")
+        dice_row1.pack()
+        dice_row2 = tk.Frame(dice_frame, bg="#252526")
+        dice_row2.pack(pady=(2, 0))
+        
+        def build_dice_btn(parent, d):
+            btn = tk.Button(parent, text=f"d{d}", bg="#3a2a4a", fg="white", font=("Consolas", 9, "bold"), width=3, relief="flat")
+            def _cl(e, w=btn, val=d):
+                v = self._dice_counters[val].get() + 1
+                self._dice_counters[val].set(v)
+                w.config(text=f"{v}d{val}", bg="#703080")
+            def _cr(e, w=btn, val=d):
+                v = max(0, self._dice_counters[val].get() - 1)
+                self._dice_counters[val].set(v)
+                w.config(text=f"{v}d{val}" if v>0 else f"d{val}", bg="#703080" if v>0 else "#3a2a4a")
+            btn.bind("<Button-1>", _cl)
+            btn.bind("<Button-3>", _cr)
+            return btn
+            
+        build_dice_btn(dice_row1, 4).pack(side=tk.LEFT, padx=1)
+        build_dice_btn(dice_row1, 6).pack(side=tk.LEFT, padx=1)
+        build_dice_btn(dice_row1, 8).pack(side=tk.LEFT, padx=1)
+        build_dice_btn(dice_row1, 10).pack(side=tk.LEFT, padx=1)
+        
+        build_dice_btn(dice_row2, 12).pack(side=tk.LEFT, padx=1)
+        build_dice_btn(dice_row2, 20).pack(side=tk.LEFT, padx=1)
+        build_dice_btn(dice_row2, 100).pack(side=tk.LEFT, padx=1)
+        
+        dice_actions = tk.Frame(dice_frame, bg="#252526")
+        dice_actions.pack(pady=(4, 0))
+        
+        def _reset_all():
+            for d in [4, 6, 8, 10, 12, 20, 100]:
+                self._dice_counters[d].set(0)
+            for w in dice_row1.winfo_children() + dice_row2.winfo_children():
+                if isinstance(w, tk.Button):
+                    txt = w.cget("text")
+                    if "d" in txt:
+                        base_d = txt.split("d")[-1]
+                        w.config(text=f"d{base_d}", bg="#3a2a4a")
+                        
+        def _roll_dice():
+            import random
+            details, total = [], 0
+            for d, var in self._dice_counters.items():
+                c = var.get()
+                if c > 0:
+                    rolls = [random.randint(1, d) for _ in range(c)]
+                    total += sum(rolls)
+                    details.append(f"{c}d{d} {rolls}")
+            if details:
+                spc = getattr(self, "_npc_var", None)
+                nom = "MJ"
+                if spc:
+                    val = spc.get()
+                    if not val.startswith("— MJ"):
+                        nom = val
+                res_str = " + ".join(details) + f" = {total}"
+                self.msg_queue.put({"sender": nom, "text": f"🎲 Jet : {res_str}", "color": "#ce93d8"})
+                _reset_all()
+
+        tk.Button(dice_actions, text="Lancer", bg="#4CAF50", fg="white", font=("Arial", 9, "bold"), relief="flat", command=_roll_dice, padx=6).pack(side=tk.LEFT, padx=2)
+        tk.Button(dice_actions, text="Reset", bg="#F44336", fg="white", font=("Arial", 9, "bold"), relief="flat", command=_reset_all, padx=6).pack(side=tk.LEFT, padx=2)
+        
+        tk.Frame(bottom_container, bg="#3a3a3a", height=1).pack(fill=tk.X, padx=8, pady=4)
+
+        # --- PANNEAU PNJ (CACHÉ) ---
+        # Gardé non-packé pour conserver self._npc_var et self._npc_indicator 
+        # utilisés par le backend/autres boutons sans les afficher sur l'UI principale.
         npc_frame = tk.Frame(bottom_container, bg="#252526")
-        npc_frame.pack(fill=tk.X, padx=10, pady=(0, 4))
 
-        tk.Label(npc_frame, text="🎭 PARLER EN TANT QUE", bg="#252526", fg="#c77dff",
-                 font=("Arial", 10, "bold")).pack(pady=(6, 3))
-
-        # Dropdown PNJ — FIX B : tk.Button + tk.Menu paresseux (jamais pendant setup_ui)
+        # Dropdown PNJ — FIX B : tk.Button + tk.Menu paresseux
         self._npc_var  = tk.StringVar(value="— MJ Normal —")
         self._npc_menu = None
 
@@ -260,7 +375,8 @@ class UISetupMixin:
                                          activebackground="#5d3d7d", activeforeground="white")
                 self._rebuild_npc_menu()
             btn = self._npc_dropdown_btn
-            self._npc_menu.tk_popup(btn.winfo_rootx(), btn.winfo_rooty() + btn.winfo_height())
+            if btn.winfo_exists():
+                self._npc_menu.tk_popup(btn.winfo_rootx(), btn.winfo_rooty() + btn.winfo_height())
 
         self._npc_dropdown_btn = tk.Button(
             npc_frame, textvariable=self._npc_var,
@@ -268,11 +384,6 @@ class UISetupMixin:
             activebackground="#5d3d7d", activeforeground="white",
             anchor="w", padx=8, relief="flat", command=_show_npc_menu)
         self._npc_dropdown_btn.pack(fill=tk.X, pady=2)
-
-        tk.Button(npc_frame, text="⚙️ Gérer les PNJs",
-                  bg="#4a3060", fg="#c77dff",
-                  font=("Arial", 9, "bold"),
-                  command=self.open_npc_manager).pack(fill=tk.X, pady=(2, 4))
 
         self._npc_indicator = tk.Label(npc_frame, text="", bg="#252526",
                                         font=("Consolas", 9, "italic"))
@@ -282,20 +393,21 @@ class UISetupMixin:
 
         tk.Frame(bottom_container, bg="#3a3a3a", height=1).pack(fill=tk.X, padx=8, pady=4)
 
-        # --- PANNEAU SCÈNE ACTIVE ---
-        scene_frame = tk.Frame(bottom_container, bg="#1a2a1a")
-        scene_frame.pack(fill=tk.X, padx=8, pady=(0, 6))
+        # --- SECTION SCÈNE ACTIVE (collapsible) ---
+        _hdr_scene, _content_scene = self._make_collapsible_section(
+            bottom_container, "[Map] SCÈNE ACTIVE", "sidebar_scene",
+            title_fg="#81c784", title_bg="#0d1a0d", section_bg="#1a2a1a",
+        )
+        # Add ✏️ and 📸 shortcut buttons directly into the collapsible header row
+        tk.Button(_hdr_scene, text="[Img]", bg="#0d1a0d", fg="#64b5f6",
+                  font=("Consolas", 8), relief="flat", padx=2,
+                  command=self.open_location_image_popout).pack(side=tk.RIGHT, padx=1, pady=2)
+        tk.Button(_hdr_scene, text="[Edit]", bg="#0d1a0d", fg="#81c784",
+                  font=("Consolas", 8), relief="flat", padx=2,
+                  command=self.open_scene_editor).pack(side=tk.RIGHT, padx=1, pady=2)
 
-        scene_hdr = tk.Frame(scene_frame, bg="#1a2a1a")
-        scene_hdr.pack(fill=tk.X)
-        tk.Label(scene_hdr, text="🗺️ SCÈNE ACTIVE", bg="#1a2a1a", fg="#81c784",
-                 font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=8, pady=(6, 2))
-        tk.Button(scene_hdr, text="📸", bg="#1a2a1a", fg="#64b5f6",
-                  font=("TkDefaultFont", 9), relief="flat", padx=2,
-                  command=self.open_location_image_popout).pack(side=tk.RIGHT, padx=2, pady=2)
-        tk.Button(scene_hdr, text="✏️", bg="#1a2a1a", fg="#81c784",
-                  font=("TkDefaultFont", 9), relief="flat", padx=2,
-                  command=self.open_scene_editor).pack(side=tk.RIGHT, padx=2, pady=2)
+        scene_frame = tk.Frame(_content_scene, bg="#1a2a1a")
+        scene_frame.pack(fill=tk.X, padx=0, pady=0)
 
         self._scene_lieu_label = tk.Label(scene_frame, text="...", bg="#1a2a1a", fg="#c8e6c9",
                                            font=("Consolas", 9, "bold"), anchor="w",
@@ -309,20 +421,18 @@ class UISetupMixin:
 
         self._refresh_scene_widget()
 
-        # --- PANNEAU CALENDRIER ---
-        cal_frame = tk.Frame(bottom_container, bg="#0d0d1a")
-        cal_frame.pack(fill=tk.X, padx=8, pady=(0, 6))
+        # --- SECTION CALENDRIER (collapsible) ---
+        _hdr_cal, _content_cal = self._make_collapsible_section(
+            bottom_container, "[Cal] CALENDRIER", "sidebar_cal",
+            title_fg="#9b8fc7", title_bg="#0d0d1a", section_bg="#0d0d1a",
+        )
+        # Add 🗓 popout button to the collapsible header
+        tk.Button(_hdr_cal, text="[Cal]", bg="#0d0d1a", fg="#9b8fc7",
+                  font=("Consolas", 8), relief="flat", padx=2,
+                  command=self.open_calendar_popout).pack(side=tk.RIGHT, padx=1, pady=2)
 
-        cal_hdr = tk.Frame(cal_frame, bg="#0d0d1a")
-        cal_hdr.pack(fill=tk.X)
-        # Emoji séparé du texte Arial → évite segfault Tcl/Tk 8.6 emoji+font
-        tk.Label(cal_hdr, text="📅", bg="#0d0d1a", fg="#9b8fc7",
-                 font=("TkDefaultFont", 9)).pack(side=tk.LEFT, padx=(8, 2), pady=(6, 2))
-        tk.Label(cal_hdr, text="CALENDRIER", bg="#0d0d1a", fg="#9b8fc7",
-                 font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(0, 8), pady=(6, 2))
-        tk.Button(cal_hdr, text="🗓", bg="#0d0d1a", fg="#9b8fc7",
-                  font=("TkDefaultFont", 9), relief="flat", padx=2,
-                  command=self.open_calendar_popout).pack(side=tk.RIGHT, padx=2, pady=2)
+        cal_frame = tk.Frame(_content_cal, bg="#0d0d1a")
+        cal_frame.pack(fill=tk.X, padx=8, pady=(0, 6))
 
         self._cal_date_label = tk.Label(cal_frame, text="...", bg="#0d0d1a", fg="#c8b8ff",
                                         font=("Consolas", 9, "bold"), anchor="w",
@@ -467,8 +577,9 @@ class UISetupMixin:
           - Personnage réintégré après retrait (déjà dans groupchat.agents, re-éligible
             dès que get_active_characters() le retourne à nouveau — pas besoin de re-add)
 
-        On reconstruit toujours la liste depuis self._agents (qui contient les 4 objets
-        agent) pour ne jamais perdre un objet agent même s'il avait été retiré.
+        IMPORTANT : AutoGen peut maintenir PLUSIEURS références au GroupChat
+        (self.groupchat, manager._groupchat, reply_func_list[*].config).
+        On doit mettre à jour TOUTES ces références pour éviter une divergence.
         """
         if not self.groupchat or not self._agents:
             return
@@ -477,8 +588,33 @@ class UISetupMixin:
         _ALL_PLAYERS =["Kaelen", "Elara", "Thorne", "Lyra"]
         active_names = set(_get_active())
 
+        # ── Collecter TOUTES les références au GroupChat ──────────────────
+        _gc_refs = set()
+        _gc_refs.add(id(self.groupchat))
+        _all_gcs = [self.groupchat]
+
+        # Référence interne du manager
+        _mgr = getattr(self, "_groupchat_manager", None)
+        if _mgr is not None:
+            _mgr_gc = getattr(_mgr, "_groupchat", None)
+            if _mgr_gc is not None and id(_mgr_gc) not in _gc_refs:
+                _gc_refs.add(id(_mgr_gc))
+                _all_gcs.append(_mgr_gc)
+            # Configs stockées dans _reply_func_list
+            for _rft in getattr(_mgr, "_reply_func_list", []):
+                _cfg = _rft.get("config")
+                if _cfg is not None and hasattr(_cfg, "agents") and id(_cfg) not in _gc_refs:
+                    _gc_refs.add(id(_cfg))
+                    _all_gcs.append(_cfg)
+
+        # ── Utiliser le PREMIER gc (le live) comme référence pour non_players ──
+        _live_gc = _all_gcs[0] if _all_gcs else self.groupchat
+
         # Garder les agents non-joueurs (MJ, manager…) intacts
-        non_players =[a for a in self.groupchat.agents if a.name not in _ALL_PLAYERS]
+        non_players =[a for a in _live_gc.agents if a.name not in _ALL_PLAYERS]
+
+        # Conserver les noms des joueurs actuellement dans le groupchat pour comparaison
+        old_active_names = {a.name for a in _live_gc.agents if a.name in _ALL_PLAYERS}
 
         # Reconstruire la liste des joueurs depuis self._agents (source de vérité)
         # en respectant l'ordre canonique
@@ -488,7 +624,40 @@ class UISetupMixin:
             if name in active_names and name in self._agents
         ]
 
-        self.groupchat.agents = non_players + players
+        new_players = [a.name for a in players if a.name not in old_active_names]
+        removed_players = [name for name in old_active_names if name not in active_names]
+
+        _new_agents = non_players + players
+
+        # ── Mettre à jour TOUTES les références ──────────────────────────
+        for _gc in _all_gcs:
+            _gc.agents = _new_agents
+        # self.groupchat aussi (peut avoir été écarté du set si même id)
+        self.groupchat.agents = _new_agents
+
+        print(f"[SYNC DEBUG] Updated {len(_all_gcs)} gc refs. agents={[a.name for a in _new_agents]}")
+
+        # Synchroniser les messages d'Entrée en Scène pour forcer le speaker selector
+        # Utiliser le live_gc pour les messages (c'est celui que run_chat lit)
+        _msg_gc = _all_gcs[-1] if _all_gcs else self.groupchat
+        if _msg_gc.messages is not None:
+            if removed_players:
+                _msg_gc.messages[:] = [
+                    m for m in _msg_gc.messages
+                    if not (
+                        m.get("name") == "Alexis_Le_MJ"
+                        and any(f"[ENTRÉE EN SCÈNE] {rn}" in str(m.get("content", "")) for rn in removed_players)
+                    )
+                ]
+            for np in new_players:
+                _msg_gc.messages.append({
+                    "role":    "user",
+                    "name":    "Alexis_Le_MJ",
+                    "content": (
+                        f"[ENTRÉE EN SCÈNE] {np} rejoint le groupe. "
+                        f"{np}, quelle est ta première réaction ?"
+                    ),
+                })
 
         active_str = ", ".join(a.name for a in players) if players else "aucun"
         self.msg_queue.put({
@@ -631,3 +800,13 @@ class UISetupMixin:
         except Exception as e:
             print(f"[update_stats_panel] Erreur : {e}")
         self.root.after(2000, self.update_stats_panel)
+
+    def open_tarokka_window(self):
+        """Ouvre la fenêtre indépendante de tirage du Tarokka."""
+        from tarokka_window import TarokkaWindow
+        if getattr(self, "_tarokka_win", None) and self._tarokka_win.top.winfo_exists():
+            self._tarokka_win.top.lift()
+        else:
+            self._tarokka_win = TarokkaWindow(self.root, self.msg_queue)
+            if hasattr(self, "_track_window"):
+                self._track_window("tarokka", self._tarokka_win.top)

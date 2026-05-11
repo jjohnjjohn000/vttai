@@ -146,6 +146,15 @@ def log_llm_end(name: str, response_preview: str = "", error: str = ""):
         if _agent_configured_models.get(name, "").startswith("openrouter/"):
             log_openrouter_status()
 
+def log_token_usage(name: str, prompt_tokens: int, completion_tokens: int, total_tokens: int):
+    """Affiche la consommation de tokens pour un appel spécifique."""
+    cc = _char_color(name)
+    _print(
+        f"{_COL_TIME}{_now()}{_RESET}  "
+        f"{cc}📊 {_BOLD}{name}{_RESET}{cc} — Tokens : "
+        f"Input: {prompt_tokens} | Output: {_BOLD}{completion_tokens}{_RESET}{cc} | Total: {total_tokens}{_RESET}"
+    )
+
 
 def log_llm_model_used(name: str, model: str, configured_model: str = ""):
     """

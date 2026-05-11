@@ -372,7 +372,11 @@ DEFAULT_NPCS =[
     {"name": "Rahadin",   "voice": "fr-FR-JeromeNeural",   "speed": "+0%",  "color": "#ff6b6b"},
 ]
 
+_STATE_CACHE = None
+_STATE_CACHE_MTIME = 0.0
+
 def load_state():
+    global _STATE_CACHE, _STATE_CACHE_MTIME
     with state_lock:
         if not os.path.exists(STATE_FILE):
             initial_state = {
@@ -392,7 +396,15 @@ def load_state():
             }
             with open(STATE_FILE, "w", encoding="utf-8") as f:
                 json.dump(initial_state, f, indent=4, ensure_ascii=False)
+            _STATE_CACHE = initial_state
             return initial_state
+
+        try:
+            curr_mtime = os.path.getmtime(STATE_FILE)
+            if _STATE_CACHE is not None and curr_mtime == _STATE_CACHE_MTIME:
+                return _STATE_CACHE
+        except Exception:
+            pass
 
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             state = json.load(f)
@@ -455,11 +467,46 @@ def load_state():
             state["npc_cooldowns"] = {}
             dirty = True
 
+        # Migration : upgrades de monstres (HP, AC, Stats...)
+        if "monster_upgrades" not in state:
+            state["monster_upgrades"] = {}
+            dirty = True
+
         if dirty:
             with open(STATE_FILE, "w", encoding="utf-8") as f:
                 json.dump(state, f, indent=4, ensure_ascii=False)
 
+        _STATE_CACHE = state
+        try:
+            _STATE_CACHE_MTIME = os.path.getmtime(STATE_FILE)
+        except Exception:
+            pass
+
         return state
+
+# ============================================================
+# --- GESTION UPGRADES MONSTRES ---
+# ============================================================
+
+def get_monster_upgrade(bestiary_name: str) -> int:
+    state = load_state()
+    return state.get("monster_upgrades", {}).get(bestiary_name, 0)
+
+def set_monster_upgrade(bestiary_name: str, level: int):
+    with state_lock:
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        except Exception:
+            state = {"monster_upgrades": {}}
+
+        if "monster_upgrades" not in state:
+            state["monster_upgrades"] = {}
+            
+        state["monster_upgrades"][bestiary_name] = level
+        
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=4, ensure_ascii=False)
 
 # ============================================================
 # --- GESTION COOLDOWNS PNJ ---
@@ -679,6 +726,7 @@ def update_hp(character_name: str, amount: int) -> str:
         new_hp = min(current_hp + amount, max_hp)
 
     char["hp"] = new_hp
+    char["unconscious"] = new_hp <= 0
     save_state(state)
 
     temp_suffix = f" (+{char.get('temp_hp', 0)} tmp)" if char.get("temp_hp", 0) > 0 else ""
@@ -887,7 +935,9 @@ def get_health_prompt(char_name: str = "") -> str:
         elif pct > 0:
             status = "🔴"
         else:
-            status = "💀"
+            ustate = c.get("unconscious_state", "dying")
+            etat_str = "MOURANT" if ustate == "dying" else "STABLE"
+            status = f"💀 [INCONSCIENT - {etat_str}]"
         temp_str = f" (+{temp_hp} tmp)" if temp_hp > 0 else ""
         features_str = ""
         feats = c.get("features", {})
@@ -929,12 +979,27 @@ def get_health_prompt(char_name: str = "") -> str:
 
     if own_pct is not None and own_pct <= CRITICAL_THRESHOLD:
         # Le PJ lui-même est critique
-        lines.append(
-            f"\n⚠️ PRIORITÉ — {char_name}, tu es à {own_pct}% PV. "
-            f"Ta survie est en jeu ! Mentionne ton état physique dans ton roleplay. "
-            f"Cherche activement un moyen de te soigner (potion, repos, demander "
-            f"de l'aide à un soigneur du groupe) AVANT toute autre action."
-        )
+        if own_pct == 0:
+            ustate = chars.get(char_name, {}).get("unconscious_state", "dying")
+            if ustate == "dying":
+                lines.append(
+                    f"\n⚠️ URGENCE ABSOLUE — {char_name}, tu es INCONSCIENT et MOURANT (0 PV). "
+                    f"Tu es aux portes de la mort. Tu ne peux faire aucune action physique ni parler. "
+                    f"Mentionne tes visions confuses, tes prières silencieuses ou ton dernier souffle."
+                )
+            else:
+                lines.append(
+                    f"\n⚠️ INCONSCIENT — {char_name}, tu as 0 PV mais tu es STABLE. "
+                    f"Tu es plongé dans les ténèbres absolues. Tu ne peux ni parler ni agir. "
+                    f"Décris ton esprit flottant ou le calme trompeur de l'inconscience."
+                )
+        else:
+            lines.append(
+                f"\n⚠️ PRIORITÉ — {char_name}, tu es à {own_pct}% PV. "
+                f"Ta survie est en jeu ! Mentionne ton état physique dans ton roleplay. "
+                f"Cherche activement un moyen de te soigner (potion, repos, demander "
+                f"de l'aide à un soigneur du groupe) AVANT toute autre action."
+            )
 
     # Vérifier si ce PJ est un soigneur (a des sorts de soin préparés)
     _HEAL_KEYWORDS = {"soin", "soins", "guérison", "curative", "revigorer",
@@ -947,25 +1012,36 @@ def get_health_prompt(char_name: str = "") -> str:
         for s in spells
     )
 
-    if has_healing and critical_allies:
-        names_str = ", ".join(critical_allies)
-        lines.append(
-            f"\n⚠️ PRIORITÉ SOINS — {char_name}, tu possèdes des sorts de guérison "
-            f"et {names_str} {'est' if len(critical_allies) == 1 else 'sont'} "
-            f"en état critique. Propose activement de soigner "
-            f"{'cet allié' if len(critical_allies) == 1 else 'ces alliés'} "
-            f"dans ton prochain dialogue ou action. La vie de tes compagnons passe "
-            f"avant l'exploration."
-        )
-    elif critical_allies:
-        # Pas soigneur, mais des alliés sont critiques → conscience situationnelle
-        names_str = ", ".join(critical_allies)
-        lines.append(
-            f"\n⚠️ ATTENTION — {names_str} "
-            f"{'est gravement blessé' if len(critical_allies) == 1 else 'sont gravement blessés'}. "
-            f"Mentionne ton inquiétude en roleplay et adapte ton comportement "
-            f"(protection, prudence, suggestion de repos)."
-        )
+    if critical_allies:
+        # Construire une liste détaillée des alliés critiques
+        detailed_allies = []
+        for a in critical_allies:
+            if pc_health[a] == 0:
+                ustate = chars.get(a, {}).get("unconscious_state", "dying")
+                if ustate == "dying":
+                    detailed_allies.append(f"{a} (MOURANT)")
+                else:
+                    detailed_allies.append(f"{a} (INCONSCIENT mais STABLE)")
+            else:
+                detailed_allies.append(a)
+        
+        names_str = ", ".join(detailed_allies)
+        
+        if has_healing:
+            lines.append(
+                f"\n⚠️ PRIORITÉ SOINS — {char_name}, tu possèdes des sorts de guérison "
+                f"et tes alliés sont en péril : {names_str}. "
+                f"Propose activement de les soigner "
+                f"dans ton prochain dialogue ou action. Un allié inconscient et mourant (non stable) est une urgence absolue !"
+            )
+        else:
+            # Pas soigneur, mais des alliés sont critiques → conscience situationnelle
+            lines.append(
+                f"\n⚠️ ATTENTION — {names_str} "
+                f"{'est gravement blessé' if len(critical_allies) == 1 else 'sont gravement blessés'}. "
+                f"Mentionne ton inquiétude en roleplay et adapte ton comportement "
+                f"(protection, prudence, suggestion de repos ou aide médicale, pas de jet de compétence)."
+            )
 
     if not critical_allies and (own_pct is None or own_pct > CRITICAL_THRESHOLD):
         lines.append(

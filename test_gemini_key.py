@@ -21,6 +21,7 @@ for key in keys:
     BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
     MODELS = [
         "gemini-3.1-pro-preview",
+        "gemini-3.1-flash-lite",
         "gemini-3.1-flash-lite-preview",
         "gemini-3-flash-preview",
         "gemma-4-31b-it",

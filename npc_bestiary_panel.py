@@ -33,10 +33,12 @@ import base64 as _b64
 import tkinter as tk
 from tkinter import scrolledtext, filedialog, messagebox
 import re
+import pickle
 
 # ─── Répertoire du bestiary ───────────────────────────────────────────────────
 _BESTIARY_DIR   = os.path.join(os.path.dirname(__file__), "bestiary")
 _LEGENDARY_FILE = os.path.join(_BESTIARY_DIR, "legendarygroups.json")
+_CACHE_FILE     = os.path.join(_BESTIARY_DIR, "bestiary_cache.pkl")
 
 # ─── Mapping compétences → caractéristique de base ────────────────────────────
 _SKILL_TO_STAT = {
@@ -343,12 +345,30 @@ def _load_bestiary():
         return
 
     # ── Étape 1 : collecter TOUS les monstres bruts (toutes sources) ───────
-    raw_monsters: list[dict] = []
     stat_files = sorted(glob.glob(os.path.join(_BESTIARY_DIR, "bestiary-*.json")))
     if not stat_files:
         print(f"[Bestiary] Aucun fichier bestiary-*.json trouvé dans {_BESTIARY_DIR}")
         return
 
+    # Vérification du cache
+    try:
+        newest_mtime = max(os.path.getmtime(f) for f in stat_files)
+        fluff_files = sorted(glob.glob(os.path.join(_BESTIARY_DIR, "fluff-bestiary-*.json")))
+        if fluff_files:
+            newest_mtime = max(newest_mtime, max(os.path.getmtime(f) for f in fluff_files))
+        if os.path.exists(_LEGENDARY_FILE):
+            newest_mtime = max(newest_mtime, os.path.getmtime(_LEGENDARY_FILE))
+
+        if os.path.exists(_CACHE_FILE) and os.path.getmtime(_CACHE_FILE) >= newest_mtime:
+            with open(_CACHE_FILE, "rb") as f:
+                _BESTIARY_DATA, _FLUFF_DATA, _LEGENDARY_DATA, _BESTIARY_NAMES = pickle.load(f)
+            print(f"[Bestiary] Chargé depuis le cache : {len(_BESTIARY_DATA)} entrées.")
+            return
+    except Exception as e:
+        print(f"[Bestiary] Info: Impossible de lire le cache, chargement normal ({e})")
+
+    import time
+    raw_monsters: list[dict] = []
     for path in stat_files:
         try:
             with open(path, encoding="utf-8") as f:
@@ -356,6 +376,7 @@ def _load_bestiary():
             batch = data.get("monster", [])
             raw_monsters.extend(batch)
             print(f"[Bestiary] Chargé {len(batch)} monstres depuis {os.path.basename(path)}")
+            time.sleep(0.01)  # Force GIL yield to Tkinter mainloop
         except Exception as e:
             print(f"[Bestiary] Erreur lecture {path}: {e}")
 
@@ -370,7 +391,10 @@ def _load_bestiary():
         raw_by_name[name.lower()] = m  # écrase ; MM prioritaire si chargé en premier
 
     # ── Étape 3 : résoudre _copy et étendre _versions ──────────────────────
-    for m in raw_monsters:
+    for i, m in enumerate(raw_monsters):
+        if i % 100 == 0:
+            time.sleep(0.01)  # Force GIL yield during heavy parsing
+
         resolved = _resolve_copy(m, raw_by_key, raw_by_name)
         name_key = resolved.get("name", "").lower()
         _BESTIARY_DATA[name_key] = resolved
@@ -392,6 +416,7 @@ def _load_bestiary():
             for m in data.get("monsterFluff", []):
                 key = m.get("name", "").lower()
                 _FLUFF_DATA[key] = m
+            time.sleep(0.01)  # Force GIL yield
         except Exception as e:
             print(f"[Bestiary] Erreur lecture fluff {path}: {e}")
 
@@ -404,6 +429,13 @@ def _load_bestiary():
             _LEGENDARY_DATA[key] = g
     except Exception as e:
         print(f"[Bestiary] Impossible de charger {_LEGENDARY_FILE}: {e}")
+
+    # ── Sauvegarde du cache ────────────────────────────────────────────────
+    try:
+        with open(_CACHE_FILE, "wb") as f:
+            pickle.dump((_BESTIARY_DATA, _FLUFF_DATA, _LEGENDARY_DATA, _BESTIARY_NAMES), f)
+    except Exception as e:
+        print(f"[Bestiary] Erreur sauvegarde cache : {e}")
 
 
 def search_monsters(query: str, max_results: int = 12) -> list[str]:
@@ -419,10 +451,115 @@ def search_monsters(query: str, max_results: int = 12) -> list[str]:
     return [_BESTIARY_DATA[k]["name"] for k in results]
 
 
-def get_monster(name: str) -> dict | None:
+def get_monster(name: str, apply_upgrades: bool = True) -> dict | None:
     """Retourne le dict complet d'un monstre (ou None si introuvable)."""
     _load_bestiary()
-    return _BESTIARY_DATA.get(name.lower())
+    m = _BESTIARY_DATA.get(name.lower())
+    if not m:
+        return None
+
+    if apply_upgrades:
+        try:
+            from state_manager import get_monster_upgrade
+            lvl = get_monster_upgrade(name)
+            if lvl != 0:
+                import copy
+                m = copy.deepcopy(m)
+                _apply_monster_upgrade(m, lvl)
+        except Exception:
+            pass
+
+    return m
+
+def _apply_monster_upgrade(m: dict, lvl: int):
+    import re
+
+    # 1. Caractéristiques de base
+    for stat in["str", "dex", "con", "int", "wis", "cha"]:
+        if stat in m:
+            m[stat] = max(1, m[stat] + (lvl * 2))
+
+    # 2. Points de vie (moyenne)
+    if "hp" in m and isinstance(m["hp"], dict):
+        if lvl >= 0:
+            m["hp"]["average"] = int(m["hp"].get("average", 10) * (1 + lvl))
+        else:
+            m["hp"]["average"] = max(1, int(m["hp"].get("average", 10) / (1 + abs(lvl))))
+
+    # 3. Classe d'Armure (CA)
+    if "ac" in m and isinstance(m["ac"], list):
+        for i, ac_item in enumerate(m["ac"]):
+            if isinstance(ac_item, int):
+                m["ac"][i] = max(1, ac_item + lvl)
+            elif isinstance(ac_item, dict) and "ac" in ac_item:
+                ac_item["ac"] = max(1, ac_item["ac"] + lvl)
+
+    # 4. Jets de Sauvegarde et Compétences
+    if "save" in m and isinstance(m["save"], dict):
+        for k, v in m["save"].items():
+            if isinstance(v, str):
+                try: m["save"][k] = f"{int(v) + lvl:+d}"
+                except Exception: pass
+                
+    if "skill" in m and isinstance(m["skill"], dict):
+        for k, v in m["skill"].items():
+            if isinstance(v, str):
+                try: m["skill"][k] = f"{int(v) + lvl:+d}"
+                except Exception: pass
+
+    # 5. Remplacements textuels automatiques (Attaques, DCs, Dégâts)
+    def _upgrade_text(text: str) -> str:
+        # {@hit X} -> Modifie le bonus d'attaque
+        text = re.sub(r'\{@hit\s+(-?\d+)\}', lambda match: f"{{@hit {int(match.group(1)) + lvl}}}", text)
+        
+        # {@dc X} -> Modifie le jet de sauvegarde (Save DC)
+        text = re.sub(r'\{@dc\s+(\d+)\}', lambda match: f"{{@dc {int(match.group(1)) + lvl}}}", text)
+        
+        # {@damage NdX + Y} ou {@damage NdX - Y} -> Modifie les bonus de dégâts
+        def _dmg_repl(match):
+            dice, sign, bonus = match.group(1), match.group(2), int(match.group(3))
+            new_bonus = bonus + lvl if sign == '+' else bonus - lvl
+            if new_bonus > 0: return f"{{@damage {dice} + {new_bonus}}}"
+            elif new_bonus < 0: return f"{{@damage {dice} - {abs(new_bonus)}}}"
+            else: return f"{{@damage {dice}}}"
+        text = re.sub(r'\{@damage\s+(\d+d\d+)\s*([+-])\s*(\d+)\}', _dmg_repl, text)
+        
+        # {@damage NdX} (sans bonus de base)
+        def _dmg_base_repl(match):
+            dice = match.group(1)
+            if lvl > 0: return f"{{@damage {dice} + {lvl}}}"
+            elif lvl < 0: return f"{{@damage {dice} - {abs(lvl)}}}"
+            return match.group(0)
+        text = re.sub(r'\{@damage\s+(\d+d\d+)\}', _dmg_base_repl, text)
+
+        # {@damage FLAT} (dégâts bruts, sans dés)
+        def _dmg_flat_repl(match):
+            val = int(match.group(1))
+            return f"{{@damage {max(1, val + lvl)}}}"
+        text = re.sub(r'\{@damage\s+(\d+)\}', _dmg_flat_repl, text)
+
+        # Moyennes des dégâts affichées avant les tags : ex. "10 ({@damage..."
+        def _avg_repl(match):
+            old_avg = int(match.group(1))
+            return f"{max(1, old_avg + lvl)} ({{@damage"
+        text = re.sub(r'\b(\d+)\s*\(\{@damage', _avg_repl, text)
+
+        return text
+
+    # Parcours de tous les blocs d'actions du monstre pour appliquer les regex
+    def _walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if isinstance(v, str): node[k] = _upgrade_text(v)
+                elif isinstance(v, (dict, list)): _walk(v)
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                if isinstance(v, str): node[i] = _upgrade_text(v)
+                elif isinstance(v, (dict, list)): _walk(v)
+
+    for block in["action", "bonus_action", "reaction", "trait", "legendary", "spellcasting"]:
+        if block in m:
+            _walk(m[block])
 
 
 def get_monster_fluff(name: str) -> dict | None:
@@ -643,9 +780,8 @@ class MonsterSheetWindow:
         self._img_tk = None       # référence PhotoImage anti-GC
         self._img_bytes: bytes | None = load_npc_image_bytes(npc_name)
 
-        _load_bestiary()
-
         win = tk.Toplevel(root)
+        win.withdraw()  # Fix XWayland mapping freeze
         win.title(f"📋 {npc_name}" + (f" — {bestiary_name}" if bestiary_name else ""))
         win.configure(bg=self.BG)
         win.resizable(True, True)
@@ -710,6 +846,25 @@ class MonsterSheetWindow:
 
         # La molette sera liée récursivement après le chargement du PNJ
 
+        # Placeholder de chargement
+        self._loading_lbl = tk.Label(self._inner, text="⏳ Chargement du bestiaire…",
+                                     bg=self.BG, fg=self.FG_DIM,
+                                     font=("Consolas", 10, "italic"), pady=30)
+        self._loading_lbl.pack()
+
+        # Affiche la fenêtre immédiatement, puis charge le contenu en différé
+        win.after(20, win.deiconify)
+        win.after(40, win.lift)
+        win.after(60, lambda: self._deferred_load(bestiary_name))
+
+    def _deferred_load(self, bestiary_name):
+        """Charge le bestiaire et affiche la fiche après que la fenêtre soit visible."""
+        _load_bestiary()
+        # Supprime le placeholder
+        try:
+            self._loading_lbl.destroy()
+        except Exception:
+            pass
         # Affiche la fiche si un monstre est déjà connu
         if bestiary_name:
             self._show_monster(bestiary_name)
@@ -1740,86 +1895,112 @@ class MonsterSheetWindow:
 
         self._sep()
 
-        # ── JETS RAPIDES (stats / sauvegardes / compétences) ──────────────────
-        self._sep(color="#1a1a2a")
-        self._section("Jets Rapides", "#888899")
-        self._skill_roll_widget(self._inner, m, self.BG)
-        self._sep(color="#1a1a2a")
+        # ── Sections lourdes : construites en pipeline via after() ──────────
+        # Chaque section yielde au mainloop pour garder l'UI réactive.
+        _phases = []
 
-        # ── TRAITS ──────────────────────────────────────────────────────────
+        def _phase_skill_rolls():
+            self._sep(color="#1a1a2a")
+            self._section("Jets Rapides", "#888899")
+            self._skill_roll_widget(self._inner, m, self.BG)
+            self._sep(color="#1a1a2a")
+        _phases.append(_phase_skill_rolls)
+
         traits = m.get("trait", [])
         if traits:
-            self._section("Traits", self.PURPLE)
-            for t in traits:
-                self._action_block(self._inner, t, m, self.PURPLE, self.BG)
-            self._sep()
+            def _phase_traits(t=traits):
+                self._section("Traits", self.PURPLE)
+                for t_ in t:
+                    self._action_block(self._inner, t_, m, self.PURPLE, self.BG)
+                self._sep()
+            _phases.append(_phase_traits)
 
-        # ── SORTS (SPELLCASTING) ─────────────────────────────────────────────
         spellcasting = m.get("spellcasting", [])
         if spellcasting:
-            self._section("Sorts", "#b39ddb")
-            spell_outer = tk.Frame(self._inner, bg="#0d0d1f")
-            spell_outer.pack(fill=tk.X, padx=4, pady=(0, 4))
-            for sc in spellcasting:
-                self._spellcasting_block(spell_outer, sc, m)
-            self._sep(color="#2a1a4a")
+            def _phase_spells(sc_list=spellcasting):
+                self._section("Sorts", "#b39ddb")
+                spell_outer = tk.Frame(self._inner, bg="#0d0d1f")
+                spell_outer.pack(fill=tk.X, padx=4, pady=(0, 4))
+                for sc in sc_list:
+                    self._spellcasting_block(spell_outer, sc, m)
+                self._sep(color="#2a1a4a")
+            _phases.append(_phase_spells)
 
-        # ── ACTIONS ─────────────────────────────────────────────────────────
         actions = m.get("action", [])
         if actions:
-            self._section("Actions", self.ACCENT)
-            for a in actions:
-                self._action_block(self._inner, a, m, self.ACCENT, self.BG)
-            self._sep()
+            def _phase_actions(a=actions):
+                self._section("Actions", self.ACCENT)
+                for a_ in a:
+                    self._action_block(self._inner, a_, m, self.ACCENT, self.BG)
+                self._sep()
+            _phases.append(_phase_actions)
 
-        # ── ACTIONS BONUS ────────────────────────────────────────────────────
         bonus = m.get("bonus_action", m.get("bonusAction", []))
         if bonus:
-            self._section("Actions Bonus", "#ffb74d")
-            for a in bonus:
-                self._action_block(self._inner, a, m, "#ffb74d", self.BG)
-            self._sep()
+            def _phase_bonus(b=bonus):
+                self._section("Actions Bonus", "#ffb74d")
+                for b_ in b:
+                    self._action_block(self._inner, b_, m, "#ffb74d", self.BG)
+                self._sep()
+            _phases.append(_phase_bonus)
 
-        # ── RÉACTIONS ────────────────────────────────────────────────────────
         reactions = m.get("reaction", [])
         if reactions:
-            self._section("Réactions", self.BLUE)
-            for r in reactions:
-                self._action_block(self._inner, r, m, self.BLUE, self.BG)
-            self._sep()
+            def _phase_reactions(r=reactions):
+                self._section("Réactions", self.BLUE)
+                for r_ in r:
+                    self._action_block(self._inner, r_, m, self.BLUE, self.BG)
+                self._sep()
+            _phases.append(_phase_reactions)
 
-        # ── ACTIONS LÉGENDAIRES ───────────────────────────────────────────────
         legendary = m.get("legendary", [])
         leg_group_name = m.get("legendaryGroup", {})
         if isinstance(leg_group_name, dict):
             leg_group_name = leg_group_name.get("name", "")
-
         if legendary or leg_group_name:
-            self._section("Actions Légendaires", self.GOLD)
-            lg = get_legendary_group(leg_group_name) if leg_group_name else None
-            if lg:
-                intro = _fmt_entries(lg.get("lairActions", lg.get("regional", [])))
-                if intro:
-                    tk.Label(self._inner, text=intro, bg=self.BG, fg=self.FG_DIM,
-                             font=("Consolas", 8, "italic"), anchor="w", padx=10,
-                             wraplength=540, justify=tk.LEFT, pady=3).pack(fill=tk.X)
-            for la in legendary:
-                self._action_block(self._inner, la, m, self.GOLD, self.BG)
-            self._sep()
+            def _phase_legendary(leg=legendary, lgn=leg_group_name):
+                self._section("Actions Légendaires", self.GOLD)
+                lg = get_legendary_group(lgn) if lgn else None
+                if lg:
+                    intro = _fmt_entries(lg.get("lairActions", lg.get("regional", [])))
+                    if intro:
+                        tk.Label(self._inner, text=intro, bg=self.BG, fg=self.FG_DIM,
+                                 font=("Consolas", 8, "italic"), anchor="w", padx=10,
+                                 wraplength=540, justify=tk.LEFT, pady=3).pack(fill=tk.X)
+                for la in leg:
+                    self._action_block(self._inner, la, m, self.GOLD, self.BG)
+                self._sep()
+            _phases.append(_phase_legendary)
 
-        # ── LORE / FLUFF ──────────────────────────────────────────────────────
-        fluff = get_monster_fluff(name)
-        if fluff:
-            fluff_text = _fmt_entries(fluff.get("entries", []))
-            if fluff_text and fluff_text.strip():
-                self._section("Lore", self.FG_DIM)
-                self._text_block(fluff_text[:1200] + ("…" if len(fluff_text) > 1200 else ""),
-                                 color=self.FG_DIM)
+        def _phase_lore():
+            fluff = get_monster_fluff(name)
+            if fluff:
+                fluff_text = _fmt_entries(fluff.get("entries", []))
+                if fluff_text and fluff_text.strip():
+                    self._section("Lore", self.FG_DIM)
+                    self._text_block(fluff_text[:1200] + ("…" if len(fluff_text) > 1200 else ""),
+                                     color=self.FG_DIM)
+        _phases.append(_phase_lore)
 
-        # ── Pad bas ──────────────────────────────────────────────────────────
-        tk.Frame(self._inner, bg=self.BG, height=20).pack()
-        self._canvas.yview_moveto(0)
-        self._bind_mouse_scroll(self._inner)
+        def _phase_finalize():
+            tk.Frame(self._inner, bg=self.BG, height=20).pack()
+            self._canvas.yview_moveto(0)
+            self._bind_mouse_scroll(self._inner)
+        _phases.append(_phase_finalize)
+
+        # Exécute les phases avec yield au mainloop entre chacune
+        def _run_phase(idx):
+            if idx >= len(_phases):
+                return
+            try:
+                if not self.win.winfo_exists():
+                    return
+            except Exception:
+                return
+            _phases[idx]()
+            self.win.after(1, lambda: _run_phase(idx + 1))
+
+        self.win.after(1, lambda: _run_phase(0))
 
     def _bind_mouse_scroll(self, parent):
         """Bind les événements de défilement de façon récursive (Linux + Win/Mac)."""
@@ -2024,7 +2205,19 @@ class GroupNPCPanel:
         def _on_close():
             self._open_sheets.pop(npc_name, None)
             try:
-                sheet.win.destroy()
+                # X11 fix : withdraw + ghost
+                try: sheet.win.selection_clear()
+                except Exception: pass
+                try:
+                    sheet.win.unbind_all("<MouseWheel>")
+                    sheet.win.unbind_all("<Button-4>")
+                    sheet.win.unbind_all("<Button-5>")
+                except Exception: pass
+                sheet.win.withdraw()
+                sheet.win.update_idletasks()
+                if not hasattr(self.root, "_ghosted_panels"):
+                    self.root._ghosted_panels = []
+                self.root._ghosted_panels.append(sheet.win)
             except Exception:
                 pass
 

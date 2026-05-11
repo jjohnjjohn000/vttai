@@ -106,3 +106,19 @@ class VolumeControlMixin:
         # Feedback icône : muet / bas / normal / fort
         icon = "🔇" if value == 0 else ("🔈" if value < 40 else ("🔉" if value < 75 else "🔊"))
         # (le label icône n'est pas stocké mais on peut le retrouver via le parent)
+
+        # ── Propager aux canaux du mixer audio (si ouvert et en lecture) ──
+        _mixer = getattr(self, "_music_mixer_win", None)
+        if _mixer:
+            try:
+                for ch in (_mixer._bg_channel, _mixer._combat_channel):
+                    if ch._playing and not ch._paused:
+                        # Debounce identique au slider du mixer
+                        if ch._vol_debounce_id is not None:
+                            try:
+                                ch._root.after_cancel(ch._vol_debounce_id)
+                            except Exception:
+                                pass
+                        ch._vol_debounce_id = ch._root.after(300, ch._apply_volume_live)
+            except Exception:
+                pass

@@ -350,6 +350,9 @@ def load_spells():
     if _SPELL_DATA:
         return
 
+    import pickle
+    cache_path = os.path.join(_BASE_DIR, "spells_cache.pkl")
+
     # ── 1. Charger sources.json pour connaître les codes sources attendus ─────
     load_sources_index()
     source_codes = list(_SOURCES_INDEX.keys()) if _SOURCES_INDEX else []
@@ -365,7 +368,6 @@ def load_spells():
             if os.path.exists(candidate) and candidate not in seen:
                 files.append(candidate)
                 seen.add(candidate)
-    # Glob fallback — attrape tout fichier spells-*.json non encore chargé
     for pat in (os.path.join(_SPELLS_DIR, "spells-*.json"),
                 os.path.join(_BASE_DIR,   "spells-*.json")):
         for p in sorted(glob.glob(pat)):
@@ -377,9 +379,25 @@ def load_spells():
         print(f"[SpellData] Aucun fichier spells-*.json trouvé dans {_SPELLS_DIR}")
         return
 
+    # ── 3. Vérifier le cache PKL ──────────────────────────────────────────
+    try:
+        latest_mtime = max(os.path.getmtime(f) for f in files)
+        if os.path.exists(cache_path) and os.path.getmtime(cache_path) >= latest_mtime:
+            with open(cache_path, "rb") as f:
+                cached = pickle.load(f)
+                _SPELL_DATA = cached.get("_SPELL_DATA", {})
+                _SPELL_NAMES = cached.get("_SPELL_NAMES", [])
+            print(f"[SpellData] Chargé depuis le cache binaire : {len(_SPELL_DATA)} sorts")
+            return
+    except Exception as e:
+        print(f"[SpellData] Erreur vérification cache: {e}")
+
+    # ── 4. Parser les JSONs si cache invalide ────────────────────────────
     total = 0
+    import time
     for path in files:
         try:
+            time.sleep(0.01)  # Force GIL yield to Tkinter
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             for raw in data.get("spell", []):
@@ -394,7 +412,14 @@ def load_spells():
             print(f"[SpellData] Erreur {path}: {e}")
 
     _SPELL_NAMES = sorted(_SPELL_DATA.keys())
-    print(f"[SpellData] Total : {total} sorts en cache")
+    print(f"[SpellData] Total : {total} sorts en cache parsés")
+
+    try:
+        with open(cache_path, "wb") as f:
+            pickle.dump({"_SPELL_DATA": _SPELL_DATA, "_SPELL_NAMES": _SPELL_NAMES}, f)
+        print(f"[SpellData] Cache binaire sauvegardé ({cache_path})")
+    except Exception as e:
+        print(f"[SpellData] Erreur écriture cache: {e}")
 
 
 def search_spells(query: str, max_results: int = 14) -> list[str]:
@@ -826,7 +851,7 @@ class SpellPickerDialog:
                   bg="#1a0a0a", fg="#cc5555",
                   font=("Consolas", 9, "bold"), relief="flat",
                   padx=10, pady=4,
-                  command=self.win.destroy).pack(side=tk.RIGHT, padx=6)
+                  command=self._safe_close).pack(side=tk.RIGHT, padx=6)
 
         self._btn_select = tk.Button(
             bot, text="✅ Sélectionner ce sort",
@@ -848,6 +873,7 @@ class SpellPickerDialog:
         self._highlight_idx = -1
 
         self._refresh_list()
+        self.win.protocol("WM_DELETE_WINDOW", self._safe_close)
 
     # ── Liste ─────────────────────────────────────────────────────────────────
 
@@ -987,12 +1013,32 @@ class SpellPickerDialog:
         if names:
             self._show_spell(names[0])
 
+    # ── Fermeture X11-safe ─────────────────────────────────────────────────────
+
+    def _safe_close(self):
+        """withdraw + ghost au lieu de destroy() pour éviter le gel clavier X11."""
+        try: self.win.grab_release()
+        except Exception: pass
+        try: self.win.selection_clear()
+        except Exception: pass
+        try:
+            self.win.unbind_all("<MouseWheel>")
+            self.win.unbind_all("<Button-4>")
+            self.win.unbind_all("<Button-5>")
+        except Exception: pass
+        self.win.withdraw()
+        self.win.update_idletasks()
+        _root = self.win.master
+        if not hasattr(_root, "_ghosted_panels"):
+            _root._ghosted_panels = []
+        _root._ghosted_panels.append(self.win)
+
     # ── Confirmation ──────────────────────────────────────────────────────────
 
     def _confirm(self):
         if self._selected:
             self._cb(self._selected)
-            self.win.destroy()
+            self._safe_close()
 
 
 # ─── Regex cachée de tous les noms de sorts ───────────────────────────────────

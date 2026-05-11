@@ -70,12 +70,13 @@ def _ms(t0: float) -> str:
 
 # ─── Catalogue des voix françaises ───────────────────────────────────────────
 
-KNOWN_PIPER_VOICES: list[str] = [
+KNOWN_PIPER_VOICES: list[str] =[
     "fr_FR-upmc-medium",
     "fr_FR-mls-medium",
     "fr_FR-siwis-low",
     "fr_FR-siwis-medium",
     "fr_FR-gilles-low",
+    "en_US-joe-medium",
 ]
 
 _HF_BASE     = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
@@ -103,7 +104,7 @@ def _clean(text: str) -> str | None:
     t = ' '.join(t.split())
     if len(re.findall(r'[a-zA-ZÀ-ÿ0-9]', t)) < _MIN_ALPHANUM:
         return None
-    return t[:4000]
+    return t[:10000]
 
 
 def _split_chunks(text: str) -> list[str]:
@@ -250,31 +251,35 @@ def _load_voice(voice_id: str, models_dir: str):
 
 # ─── Synthèse d'un chunk ────────────────────────────────────────────────────
 
-def _pitch_shift(src: str, semitones: float) -> str:
+def _process_audio(src: str, semitones: float, speed: float = 1.0, volume: float = 1.0) -> str:
     """
-    Applique un pitch shift (en demi-tons) sur src via ffmpeg rubberband.
-    Retourne le chemin du fichier résultant (nouveau fichier temp).
-    Si semitones == 0 ou ffmpeg échoue, retourne src inchangé.
-    Vérifie le pause event avant de lancer ffmpeg.
+    Applique un pitch shift, un changement de vitesse et/ou de volume via ffmpeg.
     """
-    if abs(semitones) < 0.01:
+    if abs(semitones) < 0.01 and abs(speed - 1.0) < 0.01 and abs(volume - 1.0) < 0.01:
         return src
     import subprocess, math
-    # Vérifier pause avant de lancer un process
     try:
         from voice_interface import _AUDIO_PAUSE_EVENT
         if not _AUDIO_PAUSE_EVENT.is_set():
             return src
     except ImportError:
         pass
-    ratio = 2 ** (semitones / 12.0)
+        
+    filters =[]
+    if abs(semitones) >= 0.01:
+        ratio = 2 ** (semitones / 12.0)
+        filters.append(f"rubberband=pitch={ratio:.6f}")
+    if abs(speed - 1.0) >= 0.01:
+        filters.append(f"atempo={speed:.2f}")
+    if abs(volume - 1.0) >= 0.01:
+        filters.append(f"volume={volume:.2f}")
+        
     dst = None
     try:
-        fd, dst = tempfile.mkstemp(suffix=".wav", prefix="piper_pitched_")
+        fd, dst = tempfile.mkstemp(suffix=".wav", prefix="piper_processed_")
         os.close(fd)
-        r = subprocess.run(
-            ["ffmpeg", "-y", "-i", src,
-             "-af", f"rubberband=pitch={ratio:.6f}",
+        r = subprocess.run(["ffmpeg", "-y", "-i", src,
+             "-af", ",".join(filters),
              dst],
             capture_output=True, timeout=15,
         )
@@ -282,36 +287,25 @@ def _pitch_shift(src: str, semitones: float) -> str:
             try: os.remove(src)
             except OSError: pass
             return dst
-        _log("pitch", f"✗ ffmpeg returncode={r.returncode}  stderr={r.stderr[:120]}", "red")
+        _log("process", f"✗ ffmpeg returncode={r.returncode}  stderr={r.stderr[:120]}", "red")
         try: os.remove(dst)
         except OSError: pass
         return src
     except Exception as e:
-        _log("pitch", f"✗ exception : {e}", "red")
+        _log("process", f"✗ exception : {e}", "red")
         if dst:
             try: os.remove(dst)
             except OSError: pass
         return src
 
 
-def _synthesize_chunk(voice_obj, text: str, pitch_semitones: float = 0.0) -> str | None:
-    """Synthétise un chunk → fichier WAV temporaire. Retourne le chemin ou None.
-
-    API piper-tts >= 1.2 : synthesize() retourne un itérable d'AudioChunk.
-    Chaque chunk expose audio_int16_bytes (PCM 16-bit) et les paramètres audio.
-    On concatène tous les chunks dans un seul fichier WAV.
-    Si pitch_semitones != 0, applique un pitch shift via ffmpeg rubberband.
-    """
+def _synthesize_chunk(voice_obj, text: str, pitch_semitones: float = 0.0, speed: float = 1.0, volume: float = 1.0) -> str | None:
+    """Synthétise un chunk → fichier WAV temporaire. Retourne le chemin ou None."""
     prefix = "piper_DEBUG_" if PIPER_DEBUG else "piper_"
     try:
         fd, tmp = tempfile.mkstemp(suffix=".wav", prefix=prefix)
         os.close(fd)
 
-        # Supprimer les warnings "Missing phoneme from id map" de piper/onnx.
-        # IMPORTANT : sys.stderr est un global partagé — le remplacer dans un
-        # thread pendant qu'un autre fait de même corrompt l'interpréteur
-        # → segfault. On redirige au niveau du file descriptor OS (fd 2) avec
-        # un verrou global pour garantir l'exclusion mutuelle entre threads.
         import os as _os
         with _STDERR_LOCK:
             _devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
@@ -319,6 +313,7 @@ def _synthesize_chunk(voice_obj, text: str, pitch_semitones: float = 0.0) -> str
             _os.dup2(_devnull_fd, 2)
             _os.close(_devnull_fd)
             try:
+                # Plus de length_scale ici pour éviter les crashs de l'API Piper
                 chunks = list(voice_obj.synthesize(text))
             finally:
                 _os.dup2(_saved_fd, 2)
@@ -329,14 +324,10 @@ def _synthesize_chunk(voice_obj, text: str, pitch_semitones: float = 0.0) -> str
             return None
 
         first = chunks[0]
-        sample_rate     = first.sample_rate
-        sample_width    = first.sample_width
-        sample_channels = first.sample_channels
-
         with wave.open(tmp, "wb") as wf:
-            wf.setnchannels(sample_channels)
-            wf.setsampwidth(sample_width)
-            wf.setframerate(sample_rate)
+            wf.setnchannels(first.sample_channels)
+            wf.setsampwidth(first.sample_width)
+            wf.setframerate(first.sample_rate)
             for chunk in chunks:
                 wf.writeframes(chunk.audio_int16_bytes)
 
@@ -344,7 +335,8 @@ def _synthesize_chunk(voice_obj, text: str, pitch_semitones: float = 0.0) -> str
             os.remove(tmp)
             return None
 
-        result = _pitch_shift(tmp, pitch_semitones)
+        # On applique FFmpeg (pitch + vitesse + volume)
+        result = _process_audio(tmp, pitch_semitones, speed, volume)
         return result
 
     except Exception as e:
@@ -495,51 +487,58 @@ def _play_file(path: str) -> bool:
 
 def prefetch_piper_voice(text: str, character_name: str,
                           voice_id: str, models_dir: str = _DEFAULT_DIR,
-                          pitch_semitones: float = 0.0) -> list[str]:
+                          pitch_semitones: float = 0.0, volume_percent: int = 100) -> list[str]:
     """
     Génère tous les chunks audio en avance (sans les jouer).
     Retourne une liste ORDONNÉE de chemins de fichiers WAV prêts à lire.
     """
+    speed = 1.0
+    if character_name == "Alexis_Le_MJ":
+        speed = 1.15  # Accélération via ffmpeg atempo
+
     from concurrent.futures import ThreadPoolExecutor, wait as _fw, ALL_COMPLETED
 
     t0 = time.perf_counter()
     if not shutil.which("ffplay"):
         _log("prefetch", "\u2717 ffplay introuvable", "red")
-        return []
+        return[]
     clean = _clean(text)
     if not clean:
-        return []
+        return[]
     voice_obj = _load_voice(voice_id, models_dir)
     if voice_obj is None:
         _log("prefetch", "\u2717 mod\u00e8le non charg\u00e9", "red")
-        return []
+        return[]
 
     chunks    = _split_chunks(clean)
     n_workers = min(len(chunks), os.cpu_count() or 2, 4)
 
     if n_workers <= 1 or len(chunks) == 1:
-        results = [_synthesize_chunk(voice_obj, ch, pitch_semitones) for ch in chunks]
+        results =[_synthesize_chunk(voice_obj, ch, pitch_semitones, speed, volume_percent / 100.0) for ch in chunks]
         files   = [f for f in results if f]
     else:
         ordered: list[str | None] = [None] * len(chunks)
         def _synth(idx, chunk):
-            ordered[idx] = _synthesize_chunk(voice_obj, chunk, pitch_semitones)
+            ordered[idx] = _synthesize_chunk(voice_obj, chunk, pitch_semitones, speed, volume_percent / 100.0)
         with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="piper-pre") as ex:
             _fw([ex.submit(_synth, i, ch) for i, ch in enumerate(chunks)],
                 return_when=ALL_COMPLETED)
-        files = [f for f in ordered if f]
+        files =[f for f in ordered if f]
 
     elapsed = (time.perf_counter() - t0) * 1000
     return files
 
-
 def play_piper_voice(text: str, character_name: str,
                      voice_id: str, models_dir: str = _DEFAULT_DIR,
-                     pitch_semitones: float = 0.0) -> bool:
+                     pitch_semitones: float = 0.0, volume_percent: int = 100) -> bool:
     """
     Synthétise et joue la voix via Piper TTS (hors-ligne).
     Pipeline pipeliné : génération chunk N+1 en parallèle de la lecture chunk N.
     """
+    speed = 1.0
+    if character_name == "Alexis_Le_MJ":
+        speed = 1.15  # Accélération via ffmpeg atempo
+
     t0 = time.perf_counter()
     if not shutil.which("ffplay"):
         _log("play_voice", "\u2717 ffplay introuvable \u2014 sudo apt install ffmpeg", "red")
@@ -571,7 +570,7 @@ def play_piper_voice(text: str, character_name: str,
         def _synth_safe(idx, chunk):
             if _stop.is_set():
                 return idx, None
-            return idx, _synthesize_chunk(voice_obj, chunk, pitch_semitones)
+            return idx, _synthesize_chunk(voice_obj, chunk, pitch_semitones, speed, volume_percent / 100.0)
 
         with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="piper-gen") as ex:
             futures = [ex.submit(_synth_safe, i, ch) for i, ch in enumerate(chunks)]

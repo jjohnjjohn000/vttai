@@ -180,6 +180,9 @@ class CharacterFaceWindow:
         self._thinking      = False
         self._think_tick    = 0
 
+        # Inconscient (0 HP)
+        self._unconscious   = False
+
         # Émotion
         self._emotion       = "neutral"
         self._emotion_timer = 0            # compte à rebours EMOTION_DECAY
@@ -214,7 +217,8 @@ class CharacterFaceWindow:
             self._bind_context_menu()   # menu émotions toujours disponible
         # Différer le premier tick pour laisser le canvas être rendu par Tk
         # (appel immédiat sur un widget non encore affiché → segfault possible)
-        self.root.after(100, self._animate)
+        # 500ms delay: avoids 4× concurrent 30fps redraws during startup restore
+        self.root.after(500, self._animate)
 
     # ── Construction UI ───────────────────────────────────────────────────────
     def _build_ui(self):
@@ -336,6 +340,16 @@ class CharacterFaceWindow:
         self._tick    += 1
         self._breath  += 0.055
 
+        # ── Synchro avec JSON état (toutes les ~1.5s) ───────────────────────
+        if self._tick % 45 == 0:
+            try:
+                from state_manager import load_state
+                _char_data = load_state().get("characters", {}).get(self.name, {})
+                self._unconscious = _char_data.get("unconscious", False) or _char_data.get("hp", 1) <= 0
+                self._unconscious_state = _char_data.get("unconscious_state", "dying")
+            except Exception:
+                pass
+
         # ── Clignement ───────────────────────────────────────────────────────
         self._blink_counter += 1
         if self._emotion in ("fear", "surprise"):
@@ -344,6 +358,10 @@ class CharacterFaceWindow:
             blink_interval = 100
         bc = self._blink_counter % blink_interval
         self._blink_open = not (3 <= bc <= 5)
+        
+        # Override si inconscient
+        if self._unconscious:
+            self._blink_open = False
 
         # ── Lipsync organique ─────────────────────────────────────────────────
         eco = EMOTION_CONFIG.get(self._emotion, EMOTION_CONFIG["neutral"])
@@ -358,6 +376,11 @@ class CharacterFaceWindow:
         else:
             # Fermeture progressive
             self._mouth_open = max(0.0, self._mouth_open - 0.09)
+            
+        if self._unconscious:
+            # Laisse la bouche très légèrement entrouverte et fige l'expression
+            self._mouth_open = max(self._mouth_open, 0.15)
+            self._emotion_blend = 0.0 # reset emotion to neutral base
 
         # ── Compteur de réflexion ─────────────────────────────────────────────
         if self._thinking:
@@ -477,7 +500,15 @@ class CharacterFaceWindow:
 
         c.delete("all")
 
-        breath = math.sin(self._breath) * 1.8
+        breath_amp = 1.8
+        if getattr(self, "_unconscious", False):
+            # Respiration haletante ou difficile : 
+            # légèrement plus lente mais plus saccadée / ample (modulée)
+            b_phase = self._breath * 0.7
+            breath = (math.sin(b_phase) + 0.3 * math.sin(b_phase * 2.4)) * 2.2
+        else:
+            breath = math.sin(self._breath) * breath_amp
+            
         fy = int(ch * 0.38 + breath)   # remonté de 0.46 → bouche dégagée des vêtements
 
         # ── Fond lumineux (pensée) ────────────────────────────────────────────
@@ -617,6 +648,25 @@ class CharacterFaceWindow:
         skin_shadow = _darken(self.cfg["skin"], 0.55)
         mouth_fill  = "#aa4444"
         mouth_out   = "#884444"
+
+        # ── Bouche Inconscient (dying / stable) ───────────────────────────────
+        if getattr(self, "_unconscious", False):
+            ustate = getattr(self, "_unconscious_state", "dying")
+            if ustate == "dying":
+                # Grimace de douleur
+                c.create_arc(cx - 11, my - 3, cx + 11, my + 9,
+                             start=20, extent=140,
+                             outline=skin_shadow, width=2, style="arc")
+                # Langue pendante
+                c.create_polygon(
+                    [cx-3, my-3, cx+3, my-3, cx+5, my+6, cx-1, my+8],
+                    fill="#cc5555", outline="#aa3333", smooth=True
+                )
+                return
+            else:
+                # Stable : bouche neutre et relâchée
+                c.create_line(cx - 8, my, cx + 8, my, fill=skin_shadow, width=2)
+                return
 
         # ── Bouche ouverte (parole ou surprise) ───────────────────────────────
         if mo > 0.25 or self._emotion == "surprise":

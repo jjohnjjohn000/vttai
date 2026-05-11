@@ -194,6 +194,7 @@ class CoreMixin:
 
     def _build_window(self):
         self.win = tk.Toplevel(self.parent)
+        self.win.withdraw()  # Fix XWayland mapping freeze
         self.win.title(f"Carte de Combat — {self._active_map_name}")
         self.win.configure(bg=BG_WIN)
         self.win.minsize(600, 450)
@@ -210,3 +211,6 @@ class CoreMixin:
         self.win.after(80, self._full_redraw)
         # Restaurer zoom + scroll après que le canvas soit rendu et stable
         self.win.after(160, self._restore_view)
+        # Mapping asynchrone final
+        self.win.after(50, self.win.deiconify)
+        self.win.after(100, self.win.lift)

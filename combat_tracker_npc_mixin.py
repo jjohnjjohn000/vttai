@@ -35,6 +35,8 @@ class CombatTrackerNPCMixin:
             max_hp  = int(self._npc_hp.get()  or 15)
             ac      = int(self._npc_ac.get()   or 13)
             dex_b   = int(self._npc_dex.get()  or 1)
+            hit_b   = int(self._npc_hit.get()  or 0)
+            dmg_b   = int(self._npc_dmg.get()  or 0)
             qty     = max(1, int(self._npc_qty.get() or 1))
             fixed   = self._npc_init_fixed.get().strip()
         except ValueError:
@@ -45,6 +47,13 @@ class CombatTrackerNPCMixin:
                       "#99ffcc","#ff99bb","#ddbbff","#aaffaa"]
 
         bname = getattr(self, "_current_bestiary_name", "")
+        lvl   = getattr(self, "_npc_upgrade_lvl", 0)
+        b_stats = getattr(self, "_npc_base_stats", {})
+
+        upgraded_stats = {"str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10}
+        if b_stats and "stats" in b_stats:
+            for k in upgraded_stats:
+                upgraded_stats[k] = b_stats["stats"].get(k, 10) + (lvl * 2)
 
         # ── Résolution du portrait (une fois pour tous les clones) ───────────
         # On utilise bestiary_name en priorité car c'est la clé exacte du
@@ -63,7 +72,8 @@ class CombatTrackerNPCMixin:
             c    = Combatant(name=n, is_pc=False,
                              max_hp=max_hp, ac=ac,
                              initiative=init, dex_bonus=dex_b,
-                             color=col)
+                             color=col, hit_bonus=hit_b, dmg_bonus=dmg_b,
+                             upgrade_level=lvl, stats=upgraded_stats)
             c.bestiary_name = bname
             # Portrait pré-résolu — partagé entre tous les clones (même image)
             c.portrait = portrait_path

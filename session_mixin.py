@@ -36,29 +36,6 @@ class SessionMixin:
         self.msg_queue.put({"sender": "Système", "text": "💾 Sauvegarde en cours... Le Chroniqueur IA rédige le résumé...", "color": "#FF9800"})
         threading.Thread(target=self._generate_and_save_summary, args=(False,), daemon=True).start()
 
-    def trigger_end_session(self):
-        """Termine la session en cours : résumé → journal → nouvelle session.
-        Ne ferme PAS l'application."""
-        if not self.groupchat:
-            self.msg_queue.put({
-                "sender": "Système",
-                "text":   "❌ La session n'a pas encore commencé.",
-                "color":  "#F44336",
-            })
-            return
-        self.msg_queue.put({
-            "sender": "Système",
-            "text":   "📖 Fin de session — génération du résumé en cours…",
-            "color":  "#FF9800",
-        })
-        # Interrompre les LLMs s'ils tournent encore
-        if self._llm_running and not self._waiting_for_mj:
-            self._inject_stop()
-        threading.Thread(
-            target=self._generate_and_save_summary,
-            daemon=True,
-        ).start()
-
     # ─── Génération du résumé ────────────────────────────────────────────────
 
     def _generate_and_save_summary(self, _legacy_end=False):

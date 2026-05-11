@@ -37,6 +37,7 @@ KNOWN_MODELS = [
     "ollama/qwen3.5:9b",
 
     # Gemini — modèles actifs
+    "gemini-3.1-flash-lite",
     "gemini-3.1-flash-lite-preview",
     "gemini-3-flash-preview",
     "gemma-4-31b-it",
@@ -48,6 +49,8 @@ KNOWN_MODELS = [
     # DeepSeek direct (DEEPSEEK_API_KEY)
     "deepseek/deepseek-chat",       # V3.2 — outil calls, 128K ctx, pas cher
     "deepseek/deepseek-reasoner",   # V3.2 thinking — CoT, ignorer temperature
+    # Qwen direct (QWEN_API_KEY)
+    "qwen/qwen3.6-flash",
     # Groq
     "groq/meta-llama/llama-4-scout-17b-16e-instruct",
     "groq/llama-3.3-70b-versatile",
@@ -60,7 +63,8 @@ KNOWN_MODELS = [
     "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
     "openrouter/google/gemma-4-26b-a4b-it:free",
     "openrouter/minimax/minimax-m2.5:free",
-    "openrouter/inclusionai/ling-2.6-1t:free"
+    "openrouter/inclusionai/ling-2.6-1t:free",
+    "openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 ]
 
 # ─── Valeurs par défaut ────────────────────────────────────────────────────────
@@ -101,6 +105,7 @@ DEFAULTS: dict = {
         "max_round":            9999,
         "allow_repeat_speaker": False,
         "allow_skill_checks":   True,
+        "agent_max_sentences":  4,
     },
     "memories": {
         "compact_importance_min":    2,   # importance min pour le bloc compact injecté en permanence
@@ -121,6 +126,7 @@ DEFAULTS: dict = {
             "Elara":   "fr_FR-siwis-medium",
             "Thorne":  "fr_FR-upmc-medium",
             "Lyra":    "fr_FR-siwis-medium",
+            "Alexis_Le_MJ": "en_US-joe-medium",
             "default": "fr_FR-upmc-medium",
         },
         "pitch": {
@@ -130,7 +136,17 @@ DEFAULTS: dict = {
             "Elara":   2.0,
             "Thorne": -2.0,
             "Lyra":    1.0,
+            "Alexis_Le_MJ": 0.0,
             "default": 0.0,
+        },
+        "volume": {
+            # Volume indépendant pour Piper TTS, en pourcentage (0-200%).
+            "Kaelen":  100,
+            "Elara":   100,
+            "Thorne":  100,
+            "Lyra":    100,
+            "Alexis_Le_MJ": 100,
+            "default": 100,
         },
     },
     "ui": {
@@ -141,7 +157,7 @@ DEFAULTS: dict = {
         "hotkey": "F12",   # keysym Tk — ex: "F12", "space", "Insert", "grave"
     },
     "combat": {
-        "model": "gemini-3.1-flash-lite-preview",   # LLM utilisé par TOUS les PJ en mode combat
+        "model": "gemini-3.1-flash-lite",   # LLM utilisé par TOUS les PJ en mode combat
     },
     "fallback_chain": [
         # Ordre de tentative quand le modèle principal (Gemini) est épuisé.
@@ -211,6 +227,10 @@ def get_groupchat_config() -> dict:
     return APP_CONFIG.get("groupchat", DEFAULTS["groupchat"])
 
 
+def get_agent_max_sentences() -> int:
+    return int(APP_CONFIG.get("groupchat", {}).get("agent_max_sentences", DEFAULTS["groupchat"]["agent_max_sentences"]))
+
+
 def get_memories_config() -> dict:
     return APP_CONFIG.get("memories", DEFAULTS["memories"])
 
@@ -229,6 +249,11 @@ def get_piper_pitch(char_name: str) -> float:
     """Retourne le pitch shift (demi-tons) configuré pour un personnage Piper."""
     pitch_cfg = APP_CONFIG.get("piper", {}).get("pitch", DEFAULTS["piper"]["pitch"])
     return float(pitch_cfg.get(char_name, pitch_cfg.get("default", 0.0)))
+
+def get_piper_volume(char_name: str) -> int:
+    """Retourne le volume (en pourcentage) configuré pour un personnage Piper."""
+    vol_cfg = APP_CONFIG.get("piper", {}).get("volume", DEFAULTS["piper"]["volume"])
+    return int(vol_cfg.get(char_name, vol_cfg.get("default", 100)))
 
 def get_ptt_config() -> dict:
     return APP_CONFIG.get("ptt", DEFAULTS["ptt"])

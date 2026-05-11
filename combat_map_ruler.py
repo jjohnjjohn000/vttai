@@ -437,7 +437,19 @@ class RulerMixin:
 
     def _on_close(self):
         self._save_state()
-        self.win.destroy()
+        # X11 fix : withdraw + ghost au lieu de destroy()
+        try: self.win.selection_clear()
+        except Exception: pass
+        try:
+            self.win.unbind_all("<MouseWheel>")
+            self.win.unbind_all("<Button-4>")
+            self.win.unbind_all("<Button-5>")
+        except Exception: pass
+        self.win.withdraw()
+        self.win.update_idletasks()
+        if not hasattr(self.parent, "_ghosted_panels"):
+            self.parent._ghosted_panels = []
+        self.parent._ghosted_panels.append(self.win)
 
 
 # ─── Fenêtre Vue Joueurs ──────────────────────────────────────────────────────

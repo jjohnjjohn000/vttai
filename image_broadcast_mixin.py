@@ -107,6 +107,19 @@ class ImageBroadcastMixin:
                 ])
 
                 text = (response.choices[0].message.content or "").strip()
+                
+                import re
+                _emo_m = re.search(r'\[EMOTION\]\s*([a-zA-Z]+)', text, flags=re.IGNORECASE)
+                if _emo_m:
+                    _emo_type = _emo_m.group(1).lower()
+                    def _trigger_emo(n=name, e=_emo_type):
+                        try:
+                            _face = getattr(self, "face_windows", {}).get(n)
+                            if _face: _face.set_emotion(e)
+                        except Exception: pass
+                    self.msg_queue.put({"action": "ui_callback", "delay": 0, "callback": _trigger_emo})
+                    text = re.sub(r'\[EMOTION\]\s*[a-zA-Z]+', '', text, flags=re.IGNORECASE).strip()
+
                 log_llm_end(name, response_preview=text)
                 if text and text != "[SILENCE]":
                     color = self.CHAR_COLORS.get(name, "#e0e0e0")
@@ -212,6 +225,19 @@ class ImageBroadcastMixin:
                 ])
 
                 text = (response.choices[0].message.content or "").strip()
+                
+                import re
+                _emo_m = re.search(r'\[EMOTION\]\s*([a-zA-Z]+)', text, flags=re.IGNORECASE)
+                if _emo_m:
+                    _emo_type = _emo_m.group(1).lower()
+                    def _trigger_emo(n=name, e=_emo_type):
+                        try:
+                            _face = getattr(self, "face_windows", {}).get(n)
+                            if _face: _face.set_emotion(e)
+                        except Exception: pass
+                    self.msg_queue.put({"action": "ui_callback", "delay": 0, "callback": _trigger_emo})
+                    text = re.sub(r'\[EMOTION\]\s*[a-zA-Z]+', '', text, flags=re.IGNORECASE).strip()
+
                 log_llm_end(name, response_preview=text)
                 if text and text != "[SILENCE]":
                     color = self.CHAR_COLORS.get(name, "#e0e0e0")
@@ -266,5 +292,116 @@ class ImageBroadcastMixin:
                         f.result()
                     except Exception:
                         pass
+
+        threading.Thread(target=_run_all, daemon=True).start()
+
+    def _broadcast_shared_image(self, img_bytes: bytes, title: str, context_txt: str):
+        """
+        Partage une illustration globale (livre, monstre, lieu) aux agents.
+        """
+        if not self._agents:
+            # S'il n'y a pas d'agents, on informe juste le chat
+            if self.msg_queue is not None:
+                self.msg_queue.put({
+                    "sender": "🖼️ Système",
+                    "text": f"📸 Illustration partagée (Aucun agent actif) : {title}",
+                    "color": "#81c784"
+                })
+            return
+
+        import base64 as _b64
+        import re
+        b64 = _b64.b64encode(img_bytes).decode()
+        media_type = "image/png"
+
+        self.msg_queue.put({
+            "sender": "🖼️ Système",
+            "text": f"📸 Illustration partagée avec les agents multimodaux : {title}",
+            "color": "#81c784"
+        })
+
+        clean_context = re.sub(r'<img src=".*?" />', '', context_txt)
+        if len(clean_context) > 200:
+            clean_context = clean_context[:200] + "..."
+
+        def _send_to_agent(name, agent):
+            if not self._is_multimodal_agent(agent):
+                return
+
+            try:
+                import autogen as _ag
+                client = _ag.OpenAIWrapper(config_list=agent.llm_config["config_list"])
+
+                system_msg = agent.system_message or ""
+                prompt_text = (
+                    f"[PARTAGE D'ILLUSTRATION — CONTEXTE DE RÈGLES / LORE]\n"
+                    f"Le MJ partage une image de référence intitulée « {title} ».\n"
+                )
+                if clean_context.strip():
+                    prompt_text += f"\nContexte associé :\n{clean_context.strip()}\n"
+                
+                prompt_text += (
+                    f"\nAgissant en fonction de cette image, réponds par une très courte réflexion "
+                    f"interne ou extériorisée (roleplay), sans poser de question. "
+                    f"Si ça n'a pas de sens pour toi, réponds [SILENCE]."
+                )
+
+                log_llm_start(name, prompt_text, context="image_share")
+                response = client.create(messages=[
+                    {"role": "system", "content": system_msg},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt_text},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{media_type};base64,{b64}"
+                                }
+                            }
+                        ]
+                    }
+                ])
+
+                text = (response.choices[0].message.content or "").strip()
+                
+                import re
+                _emo_m = re.search(r'\[EMOTION\]\s*([a-zA-Z]+)', text, flags=re.IGNORECASE)
+                if _emo_m:
+                    _emo_type = _emo_m.group(1).lower()
+                    def _trigger_emo(n=name, e=_emo_type):
+                        try:
+                            _face = getattr(self, "face_windows", {}).get(n)
+                            if _face: _face.set_emotion(e)
+                        except Exception: pass
+                    self.msg_queue.put({"action": "ui_callback", "delay": 0, "callback": _trigger_emo})
+                    text = re.sub(r'\[EMOTION\]\s*[a-zA-Z]+', '', text, flags=re.IGNORECASE).strip()
+
+                log_llm_end(name, response_preview=text)
+                if text and text != "[SILENCE]":
+                    color = self.CHAR_COLORS.get(name, "#e0e0e0")
+                    self.msg_queue.put({"sender": name, "text": text, "color": color})
+                    tts_text = strip_mechanical_blocks(text)
+                    if tts_text:
+                        log_tts_start(name, tts_text)
+                        self.audio_queue.put((tts_text, name))
+
+            except Exception as e:
+                log_llm_end(name, error=str(e))
+                self.msg_queue.put({
+                    "sender": f"⚠️ Image Share ({name})",
+                    "text": f"Échec partage : {e}",
+                    "color": "#F44336"
+                })
+
+        def _run_all():
+             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+                futures = [
+                    ex.submit(_send_to_agent, name, agent)
+                    for name, agent in self._agents.items()
+                ]
+                for f in concurrent.futures.as_completed(futures):
+                    try: f.result()
+                    except Exception: pass
 
         threading.Thread(target=_run_all, daemon=True).start()

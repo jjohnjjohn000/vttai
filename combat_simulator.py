@@ -298,13 +298,28 @@ class CombatSimulator:
         self._import_pcs()
 
     # ── Construction UI ───────────────────────────────────────────────────────
+    def _on_close(self):
+        # X11 fix : withdraw + ghost au lieu de destroy()
+        try: self.win.selection_clear()
+        except Exception: pass
+        try:
+            self.win.unbind_all("<MouseWheel>")
+            self.win.unbind_all("<Button-4>")
+            self.win.unbind_all("<Button-5>")
+        except Exception: pass
+        self.win.withdraw()
+        self.win.update_idletasks()
+        if not hasattr(self.root, "_ghosted_panels"):
+            self.root._ghosted_panels = []
+        self.root._ghosted_panels.append(self.win)
+
     def _build_window(self):
         self.win = tk.Toplevel(self.root)
         self.win.title("⚡ Simulateur de Combat Rapide")
         self.win.geometry("1200x800")
         self.win.configure(bg=C["bg"])
         self.win.minsize(900, 600)
-        self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+        self.win.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._build_topbar()
 

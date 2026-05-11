@@ -22,7 +22,9 @@ class Combatant:
                  max_hp: int = 20, current_hp: int = None,
                  ac: int = 10, initiative: int = 0,
                  dex_bonus: int = 0, color: str = "#e0e0e0",
-                 concentration: bool = False):
+                 concentration: bool = False,
+                 hit_bonus: int = 0, dmg_bonus: int = 0,
+                 upgrade_level: int = 0, stats: dict = None):
         Combatant._id_counter += 1
         self.uid        = Combatant._id_counter
         self.name       = name
@@ -33,6 +35,10 @@ class Combatant:
         self.ac         = ac
         self.initiative = initiative
         self.dex_bonus  = dex_bonus
+        self.hit_bonus  = hit_bonus
+        self.dmg_bonus  = dmg_bonus
+        self.upgrade_level = upgrade_level
+        self.stats      = stats or {"str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10}
         self.color      = color
         self.concentration = concentration
         self.conc_spell        = ""   # nom du sort maintenu en concentration
@@ -123,6 +129,10 @@ class Combatant:
             "ac":                 self.ac,
             "initiative":         self.initiative,
             "dex_bonus":          self.dex_bonus,
+            "hit_bonus":          self.hit_bonus,
+            "dmg_bonus":          self.dmg_bonus,
+            "upgrade_level":      self.upgrade_level,
+            "stats":              self.stats,
             "color":              self.color,
             "concentration":      self.concentration,
             "conc_spell":         self.conc_spell,
@@ -152,6 +162,10 @@ class Combatant:
             ac            = d.get("ac", 10),
             initiative    = d.get("initiative", 0),
             dex_bonus     = d.get("dex_bonus", 0),
+            hit_bonus     = d.get("hit_bonus", 0),
+            dmg_bonus     = d.get("dmg_bonus", 0),
+            upgrade_level = d.get("upgrade_level", 0),
+            stats         = d.get("stats", {"str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10}),
             color         = d.get("color", "#e0e0e0"),
             concentration = d.get("concentration", False),
         )

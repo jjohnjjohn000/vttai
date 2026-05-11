@@ -1413,19 +1413,28 @@ class TokenManagerMixin:
                 
             self.canvas.create_line(x1, y1, x2, y2, fill="#fff176", width=2, dash=(4,3), tags=("drag_counter",))
 
-        # Tracer l'encart de distance
-        tx, ty = cx, cy - 40
-        self.canvas.create_rectangle(tx-10, ty-10, tx+10, ty+10, 
-                                     fill="#1e1e1e", outline="#fff176", width=1, 
-                                     tags=("drag_counter", "drag_counter_bg"))
-        self.canvas.create_text(tx, ty, text=label, fill="#fff176", 
-                                font=("Consolas", 10, "bold"), 
-                                tags=("drag_counter", "drag_counter_txt"))
-        
-        bbox = self.canvas.bbox("drag_counter_txt")
+        # ── Encart de distance : ancré dans le coin supérieur gauche du canvas
+        # visible, indépendamment de la position du curseur ou du token.
+        vis_x = self.canvas.canvasx(10)
+        vis_y = self.canvas.canvasy(10)
+
+        txt_id = self.canvas.create_text(
+            vis_x, vis_y,
+            text=label,
+            fill="#fff176",
+            font=("Consolas", 11, "bold"),
+            anchor="nw",
+            tags=("drag_counter",),
+        )
+        bbox = self.canvas.bbox(txt_id)
         if bbox:
-            self.canvas.coords("drag_counter_bg", bbox[0]-6, bbox[1]-3, bbox[2]+6, bbox[3]+3)
-        self.canvas.tag_raise("drag_counter")
+            bg_id = self.canvas.create_rectangle(
+                bbox[0] - 8, bbox[1] - 5,
+                bbox[2] + 8, bbox[3] + 5,
+                fill="#1e1e1e", outline="#fff176", width=2,
+                tags=("drag_counter",),
+            )
+            self.canvas.tag_raise(txt_id, bg_id)  # texte par-dessus le fond
         # ----------------------------------------------------------------------
 
         for t in self.tokens:
