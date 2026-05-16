@@ -150,8 +150,16 @@ _dbg("import chat_mixin...")
 from chat_mixin        import ChatMixin
 _dbg("import character_mixin...")
 from character_mixin   import CharacterMixin
-_dbg("import panels_mixin...")
-from panels_mixin      import PanelsMixin
+_dbg("import panels_core_mixin...")
+from panels_core_mixin import PanelsCoreMixin
+_dbg("import panels_calendar_mixin...")
+from panels_calendar_mixin import PanelsCalendarMixin
+_dbg("import panels_scene_mixin...")
+from panels_scene_mixin import PanelsSceneMixin
+_dbg("import panels_npc_mixin...")
+from panels_npc_mixin import PanelsNPCMixin
+_dbg("import panels_tools_mixin...")
+from panels_tools_mixin import PanelsToolsMixin
 
 # ── Imports des mixins issus du découpage de main.py ──────────────────────────
 _dbg("import session_mixin...")
@@ -228,7 +236,11 @@ class DnDApp(
     ChatMixin,
     TabAutocompleteMixin,
     CharacterMixin,
-    PanelsMixin,
+    PanelsCoreMixin,
+    PanelsCalendarMixin,
+    PanelsSceneMixin,
+    PanelsNPCMixin,
+    PanelsToolsMixin,
     # ── Nouveaux mixins issus du découpage de main.py ─────────────────────────
     SessionMixin,           # session_mixin.py        — cycle de vie des sessions
     SessionPauseMixin,      # session_pause_mixin.py  — pause/reprise globale
@@ -601,7 +613,7 @@ class DnDApp(
         if exact_phrase:
             self._search_win._do_search()
 
-    def open_tarokka(self):
+    def open_tarokka_window(self):
         """Ouvre la fenêtre du tirage de Tarokka avec lecture/écriture via state_manager."""
         from tarokka_window import TarokkaWindow
         

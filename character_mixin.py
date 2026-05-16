@@ -437,6 +437,20 @@ class CharacterMixin:
         race_frame   = tk.Frame(win, bg="#1e1e2e")
 
         _rendered_tabs = set()
+
+        def _bind_mousewheel_recursive(widget, canvas):
+            """Bind scroll events on widget AND all its descendants so the
+            canvas scrolls regardless of which child the mouse is over."""
+            def _scroll(e):
+                canvas.yview_scroll(
+                    int(-1 * (e.delta or (1 if e.num == 4 else -1)) * 3), "units"
+                )
+            widget.bind("<MouseWheel>", _scroll, add="+")
+            widget.bind("<Button-4>",   _scroll, add="+")
+            widget.bind("<Button-5>",   _scroll, add="+")
+            for child in widget.winfo_children():
+                _bind_mousewheel_recursive(child, canvas)
+
         def _show_tab(name):
             for f in (stats_frame, spells_frame, class_frame, race_frame):
                 f.pack_forget()
@@ -770,6 +784,9 @@ class CharacterMixin:
                 # Bas de page spacer
                 tk.Frame(cls_inner, bg=_cls_bg, height=20).pack(fill=tk.X)
 
+            # Propagate scroll events from every child widget to cls_canvas
+            _bind_mousewheel_recursive(cls_inner, cls_canvas)
+
             # ════════════════════════════════════════════════════════════════════
             # ── ONGLET STATS ────────────────────────────────────────────────────
             # ════════════════════════════════════════════════════════════════════
@@ -867,28 +884,65 @@ class CharacterMixin:
             ac_lbl.config(fg=color)
             ac_spx.config(fg=color)
 
-            # ── État Inconscient (Dying / Stable) ──────────────────────────────
+            # ── État Inconscient (Dying / Stable / Mort) ────────────────────────
             cond_row = tk.Frame(body, bg="#1e1e2e")
         
             def _get_cond_text():
-                return load_state().get("characters", {}).get(char_name, {}).get("unconscious_state", "dying").capitalize()
+                raw = load_state().get("characters", {}).get(char_name, {}).get("unconscious_state", "dying").lower()
+                if raw == "dying": return "Dying"
+                if raw == "dead": return "Mort"
+                return "Stable"
 
             def _refresh_cond():
                 h = load_state().get("characters", {}).get(char_name, {}).get("hp", 0)
                 if h <= 0:
                     txt = _get_cond_text()
-                    cond_lbl.config(text=txt, fg="#e63946" if txt == "Dying" else "#4caf50")
+                    if txt == "Dying":
+                        color = "#e63946"
+                    elif txt == "Mort":
+                        color = "#888888"
+                    else:
+                        color = "#4caf50"
+                    cond_lbl.config(text=txt, fg=color)
                     cond_row.pack(fill=tk.X, pady=(0, 6), after=hp_row)
                 else:
                     cond_row.pack_forget()
 
             def _toggle_cond(e):
                 s = load_state()
-                cur = s.get("characters", {}).get(char_name, {}).get("unconscious_state", "dying")
-                new_state = "stable" if cur.lower() == "dying" else "dying"
+                cur = s.get("characters", {}).get(char_name, {}).get("unconscious_state", "dying").lower()
+                if cur == "dying":
+                    new_state = "stable"
+                elif cur == "stable":
+                    new_state = "dead"
+                else:
+                    new_state = "dying"
                 s["characters"][char_name]["unconscious_state"] = new_state
                 save_state(s)
                 _refresh_cond()
+                
+                # Mise à jour de la carte de combat (redessiner le token)
+                map_win = getattr(self, "_combat_map_win", None)
+                if map_win:
+                    for t in map_win.tokens:
+                        if t.get("name") == char_name:
+                            t.pop("_fp", None)
+                            
+                            # Exclusion mutuelle Inconscient / Mort
+                            conds = set(t.get("conditions",[]))
+                            if new_state == "dead":
+                                if "Inconscient" in conds:
+                                    conds.remove("Inconscient")
+                                conds.add("Mort")
+                            else:
+                                if "Mort" in conds:
+                                    conds.remove("Mort")
+                                conds.add("Inconscient")
+                            t["conditions"] = list(conds)
+                            
+                    map_win._redraw_all_tokens()
+                    if hasattr(map_win, "_save_state"):
+                        map_win._save_state()
 
             tk.Label(cond_row, text="💀 État", bg="#1e1e2e", fg="#aaaaaa", font=("Arial", 9)).pack(side=tk.LEFT)
             cond_lbl = tk.Label(cond_row, text="", bg="#1e1e2e", font=("Consolas", 10, "bold"), cursor="hand2")
@@ -1124,104 +1178,104 @@ class CharacterMixin:
                       activebackground="#3a3020", activeforeground="white",
                       command=_do_long_rest).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(3,0))
 
-            # ════════════════════════════════════════════════════════════════════
-            # ── ONGLET SORTS  (v3 — basé sur spells_prepared + spell_data) ──
-            # Chaque personnage stocke uniquement une liste de noms anglais dans
-            # campaign_state["characters"][name]["spells_prepared"].
-            # Toutes les métadonnées (niveau, école, description) viennent
-            # dynamiquement de spell_data.py, qui scanne les fichiers spells-*.json
-            # du dossier spells/ en s'appuyant sur sources.json (sans hardcoding).
-            # ════════════════════════════════════════════════════════════════════
+        # ════════════════════════════════════════════════════════════════════
+        # ── ONGLET SORTS  (v3 — basé sur spells_prepared + spell_data) ──
+        # Chaque personnage stocke uniquement une liste de noms anglais dans
+        # campaign_state["characters"][name]["spells_prepared"].
+        # Toutes les métadonnées (niveau, école, description) viennent
+        # dynamiquement de spell_data.py, qui scanne les fichiers spells-*.json
+        # du dossier spells/ en s'appuyant sur sources.json (sans hardcoding).
+        # ════════════════════════════════════════════════════════════════════
 
-            SCHOOL_COLORS = {
-                "Abjuration": "#64b5f6", "Conjuration": "#81c784", "Divination": "#e9c46a",
-                "Enchantment": "#f06292", "Evocation": "#e57373", "Illusion": "#ce93d8",
-                "Necromancy": "#aaaaaa", "Transmutation": "#ffb74d",
-            }
+        SCHOOL_COLORS = {
+            "Abjuration": "#64b5f6", "Conjuration": "#81c784", "Divination": "#e9c46a",
+            "Enchantment": "#f06292", "Evocation": "#e57373", "Illusion": "#ce93d8",
+            "Necromancy": "#aaaaaa", "Transmutation": "#ffb74d",
+        }
 
-            # Préchargement du cache sorts + sources (non-bloquant)
-            def _preload_spells():
-                try:
-                    from spell_data import load_spells, load_sources_index
-                    load_spells()
-                    load_sources_index()
-                except Exception:
-                    pass
-            threading.Thread(target=_preload_spells, daemon=True).start()
+        # Préchargement du cache sorts + sources (non-bloquant)
+        def _preload_spells():
+            try:
+                from spell_data import load_spells, load_sources_index
+                load_spells()
+                load_sources_index()
+            except Exception:
+                pass
+        threading.Thread(target=_preload_spells, daemon=True).start()
 
-            # ── Widgets de l'onglet ─────────────────────────────────────────────
-            spell_list_outer = tk.Frame(spells_frame, bg="#1e1e2e")
-            spell_list_outer.pack(fill=tk.BOTH, expand=True)
+        # ── Widgets de l'onglet ─────────────────────────────────────────────
+        spell_list_outer = tk.Frame(spells_frame, bg="#1e1e2e")
+        spell_list_outer.pack(fill=tk.BOTH, expand=True)
 
-            sp_canvas = tk.Canvas(spell_list_outer, bg="#1e1e2e", highlightthickness=0)
-            sp_scroll = tk.Scrollbar(spell_list_outer, orient="vertical", command=sp_canvas.yview)
-            sp_canvas.configure(yscrollcommand=sp_scroll.set)
-            sp_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-            sp_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sp_canvas = tk.Canvas(spell_list_outer, bg="#1e1e2e", highlightthickness=0)
+        sp_scroll = tk.Scrollbar(spell_list_outer, orient="vertical", command=sp_canvas.yview)
+        sp_canvas.configure(yscrollcommand=sp_scroll.set)
+        sp_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        sp_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-            sp_inner = tk.Frame(sp_canvas, bg="#1e1e2e")
-            sp_window = sp_canvas.create_window((0, 0), window=sp_inner, anchor="nw")
+        sp_inner = tk.Frame(sp_canvas, bg="#1e1e2e")
+        sp_window = sp_canvas.create_window((0, 0), window=sp_inner, anchor="nw")
 
-            def _on_sp_configure(e):
-                sp_canvas.configure(scrollregion=sp_canvas.bbox("all"))
-            sp_inner.bind("<Configure>", _on_sp_configure)
+        def _on_sp_configure(e):
+            sp_canvas.configure(scrollregion=sp_canvas.bbox("all"))
+        sp_inner.bind("<Configure>", _on_sp_configure)
 
-            def _on_sp_canvas_configure(e):
-                sp_canvas.itemconfig(sp_window, width=e.width)
-            sp_canvas.bind("<Configure>", _on_sp_canvas_configure)
+        def _on_sp_canvas_configure(e):
+            sp_canvas.itemconfig(sp_window, width=e.width)
+        sp_canvas.bind("<Configure>", _on_sp_canvas_configure)
 
-            # Mousewheel — onglet Sorts
-            def _sp_mousewheel(e):
-                sp_canvas.yview_scroll(int(-1 * (e.delta or (1 if e.num == 4 else -1)) * 3), "units")
-            sp_canvas.bind("<Button-4>",   _sp_mousewheel)
-            sp_canvas.bind("<Button-5>",   _sp_mousewheel)
-            sp_canvas.bind("<MouseWheel>", _sp_mousewheel)
+        # Mousewheel — onglet Sorts
+        def _sp_mousewheel(e):
+            sp_canvas.yview_scroll(int(-1 * (e.delta or (1 if e.num == 4 else -1)) * 3), "units")
+        sp_canvas.bind("<Button-4>",   _sp_mousewheel)
+        sp_canvas.bind("<Button-5>",   _sp_mousewheel)
+        sp_canvas.bind("<MouseWheel>", _sp_mousewheel)
 
-            def _bind_sp_scroll(widget):
-                """Propage le scroll molette à sp_canvas depuis n'importe quel widget enfant."""
-                widget.bind("<Button-4>",   _sp_mousewheel, add="+")
-                widget.bind("<Button-5>",   _sp_mousewheel, add="+")
-                widget.bind("<MouseWheel>", _sp_mousewheel, add="+")
-                for child in widget.winfo_children():
-                    _bind_sp_scroll(child)
+        def _bind_sp_scroll(widget):
+            """Propage le scroll molette à sp_canvas depuis n'importe quel widget enfant."""
+            widget.bind("<Button-4>",   _sp_mousewheel, add="+")
+            widget.bind("<Button-5>",   _sp_mousewheel, add="+")
+            widget.bind("<MouseWheel>", _sp_mousewheel, add="+")
+            for child in widget.winfo_children():
+                _bind_sp_scroll(child)
 
-            # ── Barre de recherche + bouton Ajouter ─────────────────────────────
-            search_var = tk.StringVar()
-            if not hasattr(self, "_tk_vars_keepalive"): self._tk_vars_keepalive =[]
-            self._tk_vars_keepalive.append(search_var)
-        
-            spell_bar  = tk.Frame(spells_frame, bg="#12121e")
-            spell_bar.pack(fill=tk.X)
-            search_entry = tk.Entry(spell_bar, textvariable=search_var, bg="#1e1e2e", fg="#aaaaaa",
-                     insertbackground="white", font=("Consolas", 9),
-                     relief="flat")
-            search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, pady=4)
-            search_entry.bind("<KeyRelease>", lambda e: _render_spells())
-            search_entry.bind("<<Paste>>", lambda e: search_entry.after(50, _render_spells))
-            search_entry.bind("<<Cut>>", lambda e: search_entry.after(50, _render_spells))
+        # ── Barre de recherche + bouton Ajouter ─────────────────────────────
+        search_var = tk.StringVar()
+        if not hasattr(self, "_tk_vars_keepalive"): self._tk_vars_keepalive =[]
+        self._tk_vars_keepalive.append(search_var)
+    
+        spell_bar  = tk.Frame(spells_frame, bg="#12121e")
+        spell_bar.pack(fill=tk.X)
+        search_entry = tk.Entry(spell_bar, textvariable=search_var, bg="#1e1e2e", fg="#aaaaaa",
+                 insertbackground="white", font=("Consolas", 9),
+                 relief="flat")
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, pady=4)
+        search_entry.bind("<KeyRelease>", lambda e: _render_spells())
+        search_entry.bind("<<Paste>>", lambda e: search_entry.after(50, _render_spells))
+        search_entry.bind("<<Cut>>", lambda e: search_entry.after(50, _render_spells))
 
-            stats_lbl = tk.Label(spell_bar, text="", bg="#12121e", fg="#444466",
-                                 font=("Consolas", 7))
-            stats_lbl.pack(side=tk.LEFT, padx=4)
+        stats_lbl = tk.Label(spell_bar, text="", bg="#12121e", fg="#444466",
+                             font=("Consolas", 7))
+        stats_lbl.pack(side=tk.LEFT, padx=4)
 
-            tk.Button(spell_bar, text="＋ Sort", bg="#1a1a2e", fg=color,
-                      font=("Arial", 9, "bold"), relief="flat", padx=8,
-                      cursor="hand2",
-                      command=lambda: _open_spell_picker()).pack(side=tk.RIGHT, padx=8, pady=4)
+        tk.Button(spell_bar, text="＋ Sort", bg="#1a1a2e", fg=color,
+                  font=("Arial", 9, "bold"), relief="flat", padx=8,
+                  cursor="hand2",
+                  command=lambda: _open_spell_picker()).pack(side=tk.RIGHT, padx=8, pady=4)
 
-            # ── Helpers accès state ──────────────────────────────────────────────
-            def _get_prepared() -> list:
-                return list(load_state()
-                            .get("characters", {})
-                            .get(char_name, {})
-                            .get("spells_prepared",[]))
+        # ── Helpers accès state ──────────────────────────────────────────────
+        def _get_prepared() -> list:
+            return list(load_state()
+                        .get("characters", {})
+                        .get(char_name, {})
+                        .get("spells_prepared",[]))
 
-            def _set_prepared(names: list):
-                s = load_state()
-                s.setdefault("characters", {}).setdefault(char_name, {})["spells_prepared"] = names
-                save_state(s)
+        def _set_prepared(names: list):
+            s = load_state()
+            s.setdefault("characters", {}).setdefault(char_name, {})["spells_prepared"] = names
+            save_state(s)
 
-            # ── Rendu de la liste ────────────────────────────────────────────────
+        # ── Rendu de la liste ────────────────────────────────────────────────
         def _render_spells():
             for w in sp_inner.winfo_children():
                 w.destroy()
@@ -1767,6 +1821,11 @@ class CharacterMixin:
 
             # Spacer bas
             tk.Frame(rc_inner, bg=_race_bg, height=20).pack(fill=tk.X)
+
+            # Propagate scroll events from every child widget to rc_canvas
+            # (_build_race_tab can be called multiple times on race change;
+            # old widgets are destroyed so stale bindings are cleaned up automatically)
+            _bind_mousewheel_recursive(rc_inner, rc_canvas)
 
         # Construit via _show_tab("race")
 

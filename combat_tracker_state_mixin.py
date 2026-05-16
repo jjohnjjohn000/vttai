@@ -193,13 +193,15 @@ class CombatTrackerStateMixin:
                 # Reconstruction complète depuis la sauvegarde
                 self.combatants = [Combatant.from_dict(d) for d in saved["combatants"]]
 
-                # ── Réconciliation HP : la source de vérité pour les PJ est
+                # ── Réconciliation HP/MAX_HP/AC : la source de vérité pour les PJ est
                 # campaign_state["characters"], pas le snapshot du tracker.
-                # (update_hp écrit dans characters ; on s'assure qu'ils sont alignés.)
                 _canonical_chars = state.get("characters", {})
                 for cb in self.combatants:
                     if cb.is_pc and cb.name in _canonical_chars:
-                        cb.hp = _canonical_chars[cb.name].get("hp", cb.hp)
+                        cd = _canonical_chars[cb.name]
+                        cb.hp = cd.get("hp", cb.hp)
+                        cb.max_hp = cd.get("max_hp", cb.max_hp)
+                        cb.ac = cd.get("ac", cb.ac)
 
                 self.combat_active = saved.get("active", False)
                 self.round_num     = saved.get("round_num", 0)

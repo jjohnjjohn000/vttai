@@ -30,7 +30,8 @@ from state_manager import (
 )
 from combat_tracker import COMBAT_STATE, _is_fully_silenced
 from agent_logger   import log_llm_model_used, set_agent_configured_model, log_agent_prompt, log_agent_response
-
+from llm_probe import run_probe_parallel, LLMProbeTimeout, TIMEOUT_HEADERS, TIMEOUT_TTFT
+from autogen_engine import LLMTimeoutError  # classe canonique — même objet que autogen_engine.py teste via isinstance
 
 # ─── SSL hardening global (anti-segfault OpenSSL multithreading) ──────────────
 # Deux causes de segfault OpenSSL en contexte multithread :
@@ -649,6 +650,33 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                     _close_agent_connections(self_agent)
                     done_evt.set()
 
+        # ── Sonde LLM précoce (HTTP 200 + TTFT) ──────────────────────────
+        # Lance la sonde EN PARALLÈLE de l'appel AutoGen réel.
+        # Si HTTP 200 ne revient pas en TIMEOUT_HEADERS secondes,
+        # ou si le 1er token ne revient pas en TIMEOUT_TTFT secondes,
+        # stop_event est levé → l'appel AutoGen est interrompu
+        # → LLMTimeoutError remonte → fallback automatique dans autogen_engine.py
+        _probe_messages = (
+            messages if messages is not None
+            else self_agent.chat_messages.get(sender, [])
+        )
+        probe_thread = _threading_mod.Thread(
+            target = run_probe_parallel,
+            kwargs = dict(
+                llm_config      = self_agent.llm_config,
+                messages        = _probe_messages,
+                real_done       = done_evt,
+                stop_event      = app_ref._stop_event,
+                agent_name      = name,
+                timeout_headers = TIMEOUT_HEADERS,
+                timeout_ttft    = TIMEOUT_TTFT,
+            ),
+            daemon = True,
+            name   = f"llm-probe-{name}",
+        )
+        probe_thread.start()
+        # ─────────────────────────────────────────────────────────────────
+
         llm_thread = _threading_mod.Thread(target=_llm_call, daemon=True,
                                            name=f"llm-call-{name}")
         llm_thread.start()
@@ -661,13 +689,19 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                         face.set_thinking(False)
                     except Exception:
                         pass
-                # FIX C : best-effort close depuis le thread principal pour
-                # accélérer la mort du thread daemon abandonné. Le daemon
-                # peut déjà tenir _SSL_LOCK — on ne bloque pas ici.
                 try:
                     _close_agent_connections(self_agent)
                 except Exception:
                     pass
+ 
+                # ── AJOUT : distinguer interruption utilisateur vs sonde ──
+                probe_reason = getattr(app_ref._stop_event, "probe_failure_reason", None)
+                if probe_reason:
+                    # Effacer pour ne pas polluer le prochain appel
+                    app_ref._stop_event.probe_failure_reason = None
+                    raise LLMTimeoutError(probe_reason)
+                # ─────────────────────────────────────────────────────────
+ 
                 raise StopLLMRequested()
 
         if face:

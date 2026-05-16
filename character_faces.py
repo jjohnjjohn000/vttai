@@ -502,10 +502,14 @@ class CharacterFaceWindow:
 
         breath_amp = 1.8
         if getattr(self, "_unconscious", False):
-            # Respiration haletante ou difficile : 
-            # légèrement plus lente mais plus saccadée / ample (modulée)
-            b_phase = self._breath * 0.7
-            breath = (math.sin(b_phase) + 0.3 * math.sin(b_phase * 2.4)) * 2.2
+            ustate = getattr(self, "_unconscious_state", "dying")
+            if ustate == "dead":
+                breath = 0.0
+            else:
+                # Respiration haletante ou difficile : 
+                # légèrement plus lente mais plus saccadée / ample (modulée)
+                b_phase = self._breath * 0.7
+                breath = (math.sin(b_phase) + 0.3 * math.sin(b_phase * 2.4)) * 2.2
         else:
             breath = math.sin(self._breath) * breath_amp
             
@@ -634,8 +638,14 @@ class CharacterFaceWindow:
                     c.create_oval(ex - 2, tear_y, ex + 2, tear_y + 5,
                                   fill="#88aaff", outline="")
             else:
-                c.create_line(ex - ew, ey, ex + ew, ey,
-                              fill="#888888", width=2)
+                if getattr(self, "_unconscious", False) and getattr(self, "_unconscious_state", "dying") == "dead":
+                    c.create_line(ex - ew, ey - eh, ex + ew, ey + eh,
+                                  fill="#222222", width=2)
+                    c.create_line(ex - ew, ey + eh, ex + ew, ey - eh,
+                                  fill="#222222", width=2)
+                else:
+                    c.create_line(ex - ew, ey, ex + ew, ey,
+                                  fill="#888888", width=2)
 
     # ── Bouche ────────────────────────────────────────────────────────────────
     def _draw_mouth(self, c, cx, my, expression, eco):
@@ -649,7 +659,7 @@ class CharacterFaceWindow:
         mouth_fill  = "#aa4444"
         mouth_out   = "#884444"
 
-        # ── Bouche Inconscient (dying / stable) ───────────────────────────────
+        # ── Bouche Inconscient (dying / stable / dead) ────────────────────────
         if getattr(self, "_unconscious", False):
             ustate = getattr(self, "_unconscious_state", "dying")
             if ustate == "dying":
@@ -658,10 +668,13 @@ class CharacterFaceWindow:
                              start=20, extent=140,
                              outline=skin_shadow, width=2, style="arc")
                 # Langue pendante
-                c.create_polygon(
-                    [cx-3, my-3, cx+3, my-3, cx+5, my+6, cx-1, my+8],
+                c.create_polygon([cx-3, my-3, cx+3, my-3, cx+5, my+6, cx-1, my+8],
                     fill="#cc5555", outline="#aa3333", smooth=True
                 )
+                return
+            elif ustate == "dead":
+                # Inerte / morte
+                c.create_oval(cx - 5, my - 1, cx + 5, my + 3, fill=_darken(self.cfg["skin"], 0.7), outline="")
                 return
             else:
                 # Stable : bouche neutre et relâchée

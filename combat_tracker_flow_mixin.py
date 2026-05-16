@@ -503,9 +503,9 @@ class CombatTrackerFlowMixin:
         return "  |  ".join(lines)
 
     def _trigger_pc_turn_if_needed(self):
-        """Si le combatant actif est un PJ vivant, appelle pc_turn_callback
-        pour déclencher son tour automatiquement dans autogen.
-        Appelé après chaque _next_turn() et _start_combat().
+        """Si le combatant actif est un PJ, gère son tour :
+        - S'il est vivant, déclenche son tour AutoGen.
+        - S'il est mourant (0 PV), lance un jet de sauvegarde contre la mort.
         """
         if not self.combat_active or not self.pc_turn_callback:
             return
@@ -514,9 +514,162 @@ class CombatTrackerFlowMixin:
             return
         if not (0 <= self.current_idx < len(self.combatants)):
             return
+        
         c = self.combatants[self.current_idx]
-        if c.is_pc and not c.is_down:
-            self.pc_turn_callback(c.name)
+        if c.is_pc:
+            if not c.is_down:
+                self.pc_turn_callback(c.name)
+            else:
+                # Vérifier si le héros est en état "dying" (ni mort ni stabilisé)
+                try:
+                    from state_manager import load_state
+                    cs = load_state().get("characters", {}).get(c.name, {})
+                    ustate = cs.get("unconscious_state", "dying")
+                    if ustate == "dying":
+                        self._prompt_death_save(c)
+                    else:
+                        # Déjà stabilisé ou mort : on passe son tour
+                        if getattr(self, "chat_queue", None):
+                            etat_fr = "mort" if ustate == "dead" else "stabilisé mais inconscient"
+                            self.chat_queue.put({
+                                "sender": "⚠️ Système",
+                                "text": f"{c.name} est {etat_fr}. Son tour est passé.",
+                                "color": "#aaaaaa"
+                            })
+                        self.root.after(1500, self._next_turn)
+                except Exception:
+                    pass
+
+    def _prompt_death_save(self, c):
+        """Affiche la boîte de dialogue de jet de mort pour le MJ."""
+        import random
+        from state_manager import load_state, save_state
+        
+        roll = random.randint(1, 20)
+        
+        if roll == 20:
+            res_txt = "Succès Critique ! (Nat 20)"
+            add_succ, add_fail, new_hp = 0, 0, 1
+        elif roll == 1:
+            res_txt = "Échec Critique ! (Nat 1) = +2 Échecs"
+            add_succ, add_fail, new_hp = 0, 2, 0
+        elif roll >= 10:
+            res_txt = "Succès (10+)"
+            add_succ, add_fail, new_hp = 1, 0, 0
+        else:
+            res_txt = "Échec (9-)"
+            add_succ, add_fail, new_hp = 0, 1, 0
+            
+        dw = tk.Toplevel(self.win)
+        dw.title(f"Jet de Mort — {c.name}")
+        dw.geometry("340x380")
+        dw.configure(bg="#0d1018")
+        dw.attributes("-topmost", True)
+        dw.resizable(False, False)
+        dw.grab_set()
+        
+        tk.Label(dw, text=f"💀 Jet de mort de {c.name}", bg="#0d1018", fg="#ce93d8", font=("Consolas", 11, "bold")).pack(pady=10)
+        
+        # Résultat du dé
+        tk.Label(dw, text=f"Résultat : {roll}", bg="#0d1018", fg="#ffffff", font=("Consolas", 18, "bold")).pack()
+        tk.Label(dw, text=res_txt, bg="#0d1018", fg="#aaaaaa", font=("Consolas", 10, "italic")).pack(pady=5)
+        
+        frm = tk.Frame(dw, bg="#1a1a2e", padx=10, pady=10)
+        frm.pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Label(frm, text="Succès (3 = Stable):", bg="#1a1a2e", fg="#4caf50", font=("Consolas", 9)).grid(row=0, column=0, sticky="w", pady=5)
+        succ_var = tk.IntVar(value=c.death_saves_success + add_succ)
+        tk.Spinbox(frm, from_=0, to=3, textvariable=succ_var, width=5, bg="#252538", fg="#4caf50", font=("Consolas", 10, "bold"), buttonbackground="#252538").grid(row=0, column=1, padx=10)
+        
+        tk.Label(frm, text="Échecs (3 = Mort):", bg="#1a1a2e", fg="#e63946", font=("Consolas", 9)).grid(row=1, column=0, sticky="w", pady=5)
+        fail_var = tk.IntVar(value=c.death_saves_fail + add_fail)
+        tk.Spinbox(frm, from_=0, to=3, textvariable=fail_var, width=5, bg="#252538", fg="#e63946", font=("Consolas", 10, "bold"), buttonbackground="#252538").grid(row=1, column=1, padx=10)
+        
+        hp_var = tk.IntVar(value=new_hp)
+        tk.Checkbutton(frm, text="Se réveille avec 1 PV", variable=hp_var, onvalue=1, offvalue=0, bg="#1a1a2e", fg="#ffffff", selectcolor="#0d1018", activebackground="#1a1a2e").grid(row=2, column=0, columnspan=2, pady=10)
+        
+        def _apply():
+            final_succ = succ_var.get()
+            final_fail = fail_var.get()
+            final_hp = hp_var.get()
+            
+            s = load_state()
+            char_data = s.setdefault("characters", {}).setdefault(c.name, {})
+            
+            c.death_saves_success = final_succ
+            c.death_saves_fail = final_fail
+            
+            msg_text = f"💀 {c.name} a lancé un jet de mort : {roll} ({res_txt})."
+            
+            if final_hp > 0:
+                char_data["hp"] = 1
+                char_data["unconscious"] = False
+                char_data["unconscious_state"] = "stable"
+                c.hp = 1
+                c.death_saves_success = 0
+                c.death_saves_fail = 0
+                msg_text += f"\nMiracle ! {c.name} se réveille avec 1 PV."
+            elif final_succ >= 3:
+                char_data["unconscious_state"] = "stable"
+                c.death_saves_success = 0
+                c.death_saves_fail = 0
+                msg_text += f"\n💚 {c.name} s'est stabilisé (3 succès)."
+            elif final_fail >= 3:
+                char_data["unconscious_state"] = "dead"
+                c.death_saves_success = 0
+                c.death_saves_fail = 0
+                msg_text += f"\n⚰️ Tragédie. {c.name} est mort (3 échecs)."
+            else:
+                msg_text += f"\nBilan : {final_succ} Succès / {final_fail} Échecs."
+                
+            save_state(s)
+            
+            # Sync carte de combat si changement majeur (mort, réveil, etc.)
+            if final_fail >= 3 or final_hp > 0:
+                if getattr(self, "app", None):
+                    map_win = getattr(self.app, "_combat_map_win", None)
+                    if map_win:
+                        for t in map_win.tokens:
+                            if t.get("name") == c.name:
+                                t.pop("_fp", None)
+                                conds = set(t.get("conditions",[]))
+                                if final_fail >= 3:
+                                    if "Inconscient" in conds: conds.remove("Inconscient")
+                                    conds.add("Mort")
+                                else:
+                                    if "Mort" in conds: conds.remove("Mort")
+                                    if final_hp == 0:
+                                        conds.add("Inconscient")
+                                    else:
+                                        if "Inconscient" in conds: conds.remove("Inconscient")
+                                t["conditions"] = list(conds)
+                                map_win._redraw_one_token(t)
+                        if hasattr(map_win, "_save_state"):
+                            map_win._save_state()
+
+            # Maj UI tracker
+            self._refresh_list()
+            self._schedule_save()
+            
+            # Message chat
+            if getattr(self, "chat_queue", None):
+                self.chat_queue.put({
+                    "sender": "Jet de Mort",
+                    "text": msg_text,
+                    "color": "#e63946"
+                })
+                
+            # Gérer la fin du tour
+            if final_hp > 0:
+                # S'il se réveille, il peut jouer (déclenche l'agent)
+                self.pc_turn_callback(c.name)
+            else:
+                # Sinon on passe automatiquement au prochain personnage
+                self.root.after(1500, self._next_turn)
+            
+            dw.destroy()
+
+        tk.Button(dw, text="Valider le jet", bg="#2c1000", fg="#ef9a9a", font=("Consolas", 10, "bold"), relief="flat", padx=10, command=_apply).pack(pady=10)
 
     def _trigger_npc_turn_if_needed(self):
         """Déclenche l'affichage des outils MJ si le combattant actif est un PNJ."""

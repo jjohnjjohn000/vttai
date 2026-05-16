@@ -45,16 +45,28 @@ class RendererMixin:
         self.canvas.bind("<ButtonRelease-1>",   self._mb1_up)
         self.canvas.bind("<Double-Button-1>",   self._mb1_double)
         self.canvas.bind("<ButtonPress-2>",     self._pan_start)
-        self.canvas.bind("<B2-Motion>",         self._pan_drag)
-        self.canvas.bind("<ButtonRelease-2>",   lambda e: self._schedule_tile_refresh())
+        self.canvas.bind("<B2-Motion>",         self._pan_drag_fast)
+        self.canvas.bind("<ButtonRelease-2>",   self._pan_end)
         self.canvas.bind("<ButtonPress-3>",     self._mb3_down)
         self.canvas.bind("<Alt-ButtonPress-1>", self._pan_start)
-        self.canvas.bind("<Alt-B1-Motion>",     self._pan_drag)
-        self.canvas.bind("<Alt-ButtonRelease-1>", lambda e: self._schedule_tile_refresh())
+        self.canvas.bind("<Alt-B1-Motion>",     self._pan_drag_fast)
+        self.canvas.bind("<Alt-ButtonRelease-1>", self._pan_end)
         self.canvas.bind("<MouseWheel>",        self._do_zoom)
         self.canvas.bind("<Button-4>",          self._do_zoom)
         self.canvas.bind("<Button-5>",          self._do_zoom)
         self.canvas.bind("<Motion>",            self._mouse_move)
+        
+        # FIX: Rafraîchissement automatique lors de l'apparition de la fenêtre.
+        self.canvas.bind("<Configure>", lambda e: self._schedule_tile_refresh())
+
+        # Poller thread-safe pour rafraîchir la carte quand le fond a fini de charger
+        def _check_async_bg():
+            if getattr(self, "_bg_loaded_flag", False):
+                self._bg_loaded_flag = False
+                self._schedule_tile_refresh()
+            if hasattr(self, 'win') and self.win.winfo_exists():
+                self.win.after(100, _check_async_bg)
+        self.win.after(100, _check_async_bg)
 
         # Clavier (focus sur la fenêtre toplevel, pas le canvas)
         self.win.bind("<Left>",        lambda e: self._map_nudge(-1,  0))
@@ -66,6 +78,15 @@ class RendererMixin:
         self.win.bind("<Escape>",      lambda e: self._escape_to_select())
         self.win.bind("<Control-z>",   lambda e: self._undo_fog())
         self.win.bind("<Control-Z>",   lambda e: self._undo_fog())
+
+    def _pan_drag_fast(self, event):
+        self._is_panning = True
+        if hasattr(self, '_pan_drag'):
+            self._pan_drag(event)
+        
+    def _pan_end(self, event):
+        self._is_panning = False
+        self._schedule_tile_refresh()
 
     def _build_statusbar(self):
         sb = tk.Frame(self.win, bg="#070710", pady=3)
@@ -125,15 +146,40 @@ class RendererMixin:
         bg = Image.fromarray(arr.astype(np.uint8), "RGBA")
 
         # ── Calques de carte (du plus bas au plus haut) ───────────────────────
+        import threading
+        
         for layer in self.map_layers:
             if not layer.get("visible", True):
                 continue
             lpath = layer.get("path", "")
             if not lpath or not os.path.exists(lpath):
                 continue
+                
             try:
+                # Chargement asynchrone de l'image (si absente du cache)
+                # On évite le freeze en dessinant le damier en attendant que l'image
+                # se charge en mémoire dans un thread séparé.
                 if lpath not in self._map_pil_cache_dict:
-                    self._map_pil_cache_dict[lpath] = Image.open(lpath).convert("RGBA")
+                    def _load_img(p=lpath):
+                        try:
+                            img = Image.open(p).convert("RGBA")
+                            if max(img.size) > 8000:
+                                img.thumbnail((8000, 8000), getattr(Image, 'Resampling', Image).BILINEAR)
+                            self._map_pil_cache_dict[p] = img
+                        except Exception as e:
+                            print(f"[CombatMap] Erreur chargement image arrière-plan : {e}")
+                            self._map_pil_cache_dict[p] = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+                            
+                        # Signal thread-safe intercepté par la boucle principale
+                        self._bg_loaded_flag = True
+                            
+                    self._map_pil_cache_dict[lpath] = "loading" # Marqueur
+                    threading.Thread(target=_load_img, daemon=True, name="bg-loader").start()
+                    continue
+                
+                if self._map_pil_cache_dict[lpath] == "loading":
+                    continue # En cours de chargement par le thread, on ignore
+                
                 src = self._map_pil_cache_dict[lpath]
                 sw, sh = src.size
                 scale   = self._cp / self.cell_px
@@ -147,6 +193,7 @@ class RendererMixin:
                 img_cy0 = int(loy * scale)
                 ix0 = max(tx0, img_cx0);  iy0 = max(ty0, img_cy0)
                 ix1 = min(tx1, img_cx0 + disp_w);  iy1 = min(ty1, img_cy0 + disp_h)
+                
                 if ix1 > ix0 and iy1 > iy0:
                     dest_w = ix1 - ix0;  dest_h = iy1 - iy0
                     frac_x0 = (ix0 - img_cx0) / disp_w;  frac_y0 = (iy0 - img_cy0) / disp_h
@@ -155,8 +202,17 @@ class RendererMixin:
                         max(0, int(frac_x0 * sw)), max(0, int(frac_y0 * sh)),
                         min(sw, max(1, int(frac_x1 * sw))), min(sh, max(1, int(frac_y1 * sh))),
                     ))
-                    src_cw, src_ch = src_crop.size
-                    filt = Image.BILINEAR if dest_w > src_cw else Image.LANCZOS
+                    
+                    # Rendu Rapide lors des pan/zoom rapides (NEAREST) et HD à l'arrêt
+                    if getattr(self, "_is_panning", False):
+                        filt = getattr(Image, 'Resampling', Image).NEAREST
+                    else:
+                        # Si le crop source est massif, LANCZOS bloque le thread principal.
+                        if src_crop.width > 3000 or src_crop.height > 3000:
+                            filt = getattr(Image, 'Resampling', Image).BILINEAR
+                        else:
+                            filt = getattr(Image, 'Resampling', Image).LANCZOS
+                    
                     tile_img = src_crop.resize((dest_w, dest_h), filt)
                     map_layer = Image.new("RGBA", (TW, TH), (0, 0, 0, 0))
                     map_layer.paste(tile_img, (ix0 - tx0, iy0 - ty0))
@@ -207,7 +263,7 @@ class RendererMixin:
             max(0, fx0), max(0, fy0),
             min(mW, max(fx0 + 1, fx1)),
             min(mH, max(fy0 + 1, fy1))))
-        scaled = fog_crop.resize((TW, TH), Image.NEAREST)
+        scaled = fog_crop.resize((TW, TH), getattr(Image, 'Resampling', Image).NEAREST)
 
         arr  = np.array(scaled, dtype=np.uint8)
         rgba = np.zeros((TH, TW, 4), dtype=np.uint8)
@@ -294,6 +350,11 @@ class RendererMixin:
         self._obs_pil = None   # invalide le cache obstacles (zoom changé)
         self._img_id  = 0
         self.canvas.delete("scene")
+        
+        # FIX: Configurer la scrollregion AVANT de générer le fond.
+        W_full, H_full = self._wh
+        self.canvas.config(scrollregion=(0, 0, W_full + 40, H_full + 40))
+        
         self._rebuild_bg()
         self._rebuild_fog()
         self._redraw_all_doors()

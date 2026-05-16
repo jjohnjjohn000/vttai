@@ -936,7 +936,10 @@ def get_health_prompt(char_name: str = "") -> str:
             status = "🔴"
         else:
             ustate = c.get("unconscious_state", "dying")
-            etat_str = "MOURANT" if ustate == "dying" else "STABLE"
+            if ustate == "dead":
+                etat_str = "MORT"
+            else:
+                etat_str = "MOURANT" if ustate == "dying" else "STABLE"
             status = f"💀 [INCONSCIENT - {etat_str}]"
         temp_str = f" (+{temp_hp} tmp)" if temp_hp > 0 else ""
         features_str = ""
@@ -971,9 +974,14 @@ def get_health_prompt(char_name: str = "") -> str:
     # ── Directives personnalisées ───────────────────────────────────────────
     CRITICAL_THRESHOLD = 40   # ≤ 40% = état critique
 
-    # Alliés critiques (autres que char_name)
-    critical_allies = [n for n, p in pc_health.items()
-                       if p <= CRITICAL_THRESHOLD and n != char_name]
+    # Alliés critiques (autres que char_name et non morts)
+    critical_allies =[n for n, p in pc_health.items()
+                       if p <= CRITICAL_THRESHOLD and n != char_name 
+                       and not (p == 0 and chars.get(n, {}).get("unconscious_state", "dying") == "dead")]
+
+    # Alliés morts
+    dead_allies =[n for n, p in pc_health.items()
+                   if n != char_name and p == 0 and chars.get(n, {}).get("unconscious_state", "dying") == "dead"]
 
     own_pct = pc_health.get(char_name)
 
@@ -986,6 +994,11 @@ def get_health_prompt(char_name: str = "") -> str:
                     f"\n⚠️ URGENCE ABSOLUE — {char_name}, tu es INCONSCIENT et MOURANT (0 PV). "
                     f"Tu es aux portes de la mort. Tu ne peux faire aucune action physique ni parler. "
                     f"Mentionne tes visions confuses, tes prières silencieuses ou ton dernier souffle."
+                )
+            elif ustate == "dead":
+                lines.append(
+                    f"\n⚠️ MORT — {char_name}, tu es MORT. Ton âme a quitté ton corps. "
+                    f"Tu es incapable d'agir ou de parler, sauf par des moyens surnaturels si le MJ l'autorise."
                 )
             else:
                 lines.append(
@@ -1014,7 +1027,7 @@ def get_health_prompt(char_name: str = "") -> str:
 
     if critical_allies:
         # Construire une liste détaillée des alliés critiques
-        detailed_allies = []
+        detailed_allies =[]
         for a in critical_allies:
             if pc_health[a] == 0:
                 ustate = chars.get(a, {}).get("unconscious_state", "dying")
@@ -1043,7 +1056,14 @@ def get_health_prompt(char_name: str = "") -> str:
                 f"(protection, prudence, suggestion de repos ou aide médicale, pas de jet de compétence)."
             )
 
-    if not critical_allies and (own_pct is None or own_pct > CRITICAL_THRESHOLD):
+    if dead_allies:
+        names_dead = ", ".join(dead_allies)
+        lines.append(
+            f"\n⚠️ TRAGÉDIE — Mort dans le groupe : {names_dead}. "
+            f"La perte est absolue sans magie de résurrection. Exprime ton choc, ton deuil ou ta rage dans ton roleplay."
+        )
+
+    if not critical_allies and not dead_allies and (own_pct is None or own_pct > CRITICAL_THRESHOLD):
         lines.append(
             "Adapte ton roleplay à l'état de santé visible : "
             "un allié blessé mérite attention, un compagnon en pleine forme rassure."

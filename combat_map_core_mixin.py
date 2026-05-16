@@ -154,20 +154,38 @@ class CoreMixin:
         if getattr(self, "win", None) is None or not self.win.winfo_exists():
             return
             
+        need_redraw = False
         new_active = None
+        
         if getattr(self, "app", None):
             tracker = getattr(self.app, "_combat_tracker_win", None)
             if tracker and getattr(tracker, "combat_active", False):
                 idx = getattr(tracker, "current_idx", -1)
-                c_list = getattr(tracker, "combatants", [])
+                c_list = getattr(tracker, "combatants",[])
                 if 0 <= idx < len(c_list):
                     new_active = c_list[idx].name
                     
         # Si le tour a changé ou si le combat s'est arrêté
         if getattr(self, "active_turn_name", None) != new_active:
             self.active_turn_name = new_active
-            if hasattr(self, "_redraw_all_tokens"):
-                self._redraw_all_tokens()
+            need_redraw = True
+
+        # Vérifie si l'index des portraits vient de se terminer (pour rafraîchir les images de tokens)
+        try:
+            import portrait_resolver
+            is_built = portrait_resolver._INDEX_BUILT
+            was_built = getattr(self, "_portrait_index_was_built", False)
+            if is_built and not was_built:
+                self._portrait_index_was_built = True
+                # Vider le cache des tokens pour forcer le re-rendu de l'art
+                for tok in self.tokens:
+                    tok.pop("_fp", None)
+                need_redraw = True
+        except Exception:
+            pass
+            
+        if need_redraw and hasattr(self, "_redraw_all_tokens"):
+            self._redraw_all_tokens()
                 
         # Revérifier dans 500 ms
         self.win.after(500, self._poll_active_turn)

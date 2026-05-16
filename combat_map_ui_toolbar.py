@@ -846,7 +846,7 @@ class UIToolbarMixin:
                     min(sw, max(1, int(frac_x1 * sw))), min(sh, max(1, int(frac_y1 * sh))),
                 ))
                 src_cw, _ = src_crop.size
-                filt = Image.BILINEAR if dest_w > src_cw else Image.LANCZOS
+                filt = getattr(Image, 'Resampling', Image).BILINEAR if dest_w > src_cw else getattr(Image, 'Resampling', Image).LANCZOS
                 tile_img = src_crop.resize((dest_w, dest_h), filt)
                 map_layer = Image.new("RGBA", (VW, VH), (0, 0, 0, 0))
                 map_layer.paste(tile_img, (ix0 - vx0, iy0 - vy0))
@@ -881,7 +881,7 @@ class UIToolbarMixin:
         fy1 = int(vy1 / H_full * mh_fog) if H_full > 0 else mh_fog
         fog_crop   = mask.crop((max(0,fx0), max(0,fy0),
                                 min(mw_fog,max(fx0+1,fx1)), min(mh_fog,max(fy0+1,fy1))))
-        fog_scaled = fog_crop.resize((VW, VH), Image.NEAREST)
+        fog_scaled = fog_crop.resize((VW, VH), getattr(Image, 'Resampling', Image).NEAREST)
         fog_arr    = np.array(fog_scaled, dtype=np.uint8)
         fog_rgba   = np.zeros((VH, VW, 4), dtype=np.uint8)
         fog_rgba[fog_arr > 0] = _C_FOG_PLAYER

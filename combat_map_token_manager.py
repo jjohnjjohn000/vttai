@@ -13,6 +13,9 @@ except ImportError:
 from combat_map_constants import *
 from combat_map_constants import _sep, _darken_rgb, _darken_rgb_tuple, _compress_ranges, _C_BG_A, _C_BG_B, _C_FOG_CLEAR, _C_FOG_DM, _C_FOG_PLAYER, _C_GRID, _rgb_to_hex
 
+if "Mort" not in DND_CONDITIONS:
+    DND_CONDITIONS["Mort"] = "#222222"
+
 # ─── Portrait image cache ──────────────────────────────────────────────────────
 # Clé : (chemin_absolu, diamètre_pixels) → ImageTk.PhotoImage
 # Évite de recharger et de re-rogner l'image PIL à chaque redraw.
@@ -98,7 +101,7 @@ def _make_circular_portrait(path: str, diameter: int):
             top  = (h - side) // 2
             img  = img.crop((left, top, left + side, top + side))
 
-        img = img.resize((diameter, diameter), Image.LANCZOS)
+        img = img.resize((diameter, diameter), getattr(Image, 'Resampling', Image).LANCZOS)
 
         # Masque circulaire
         mask = Image.new("L", (diameter, diameter), 0)
@@ -164,11 +167,19 @@ class TokenManagerMixin:
     @staticmethod
     def _tok_fingerprint(tok: dict, zoom: float, cp: int, sel: set, active_turn: str = None) -> tuple:
         """Hashable fingerprint of a token's visual state."""
+        hero_u_state = ""
+        if tok.get("type") == "hero" and tok.get("hp", -1) <= 0:
+            try:
+                from state_manager import load_state
+                hero_u_state = load_state().get("characters", {}).get(tok.get("name", ""), {}).get("unconscious_state", "")
+            except Exception:
+                pass
+
         return (
             tok.get("col"), tok.get("row"), tok.get("type"),
             tok.get("name", ""), tok.get("size", 1),
             tok.get("hp", -1), tok.get("max_hp", -1),
-            tuple(tok.get("conditions", [])),
+            tuple(tok.get("conditions",[])),
             tok.get("altitude_ft", 0),
             tok.get("aura_radius", 0),
             tok.get("aura_color", ""),
@@ -177,7 +188,8 @@ class TokenManagerMixin:
             tok.get("portrait", ""),     # portrait path — redraw if it changes
             zoom, cp,
             id(tok) in sel,
-            tok.get("name") == active_turn if active_turn else False # redessiner si l'initiative change
+            tok.get("name") == active_turn if active_turn else False, # redessiner si l'initiative change
+            hero_u_state
         )
 
     def _tok_is_visible_for_players(self, tok: dict) -> bool:
@@ -454,6 +466,30 @@ class TokenManagerMixin:
             # Réduire le stipple sur l'image en vol via un rectangle semi-transparent
             # (la transparence PNG suffit à montrer le "vol", pas besoin de stipple image)
 
+        # ── Overlay Mort (Dead) ───────────────────────────────────────────────
+        is_dead = False
+        _tok_hp = tok.get("hp", -1)
+        if _tok_hp <= 0 and _tok_hp != -1:
+            if tok.get("type") == "hero":
+                try:
+                    from state_manager import load_state
+                    if load_state().get("characters", {}).get(name, {}).get("unconscious_state") == "dead":
+                        is_dead = True
+                except Exception:
+                    pass
+            elif _tok_hp == 0:
+                is_dead = True # NPCs at 0 HP are dead by default
+
+        if is_dead:
+            ids.append(self.canvas.create_oval(
+                cx-rad, cy-rad, cx+rad, cy+rad,
+                fill="#000000", stipple="gray50", outline="",
+                tags=("token", tag)))
+            ids.append(self.canvas.create_text(
+                cx, cy, text="💀", fill="white",
+                font=("Arial", max(16, int(24 * self.zoom * size))),
+                tags=("token", tag)))
+
         # ── Texte du token ────────────────────────────────────────────────────
         # Initiales uniquement quand pas de portrait (ou token trop petit)
         fs = max(7, int(10 * self.zoom * size))
@@ -555,6 +591,10 @@ class TokenManagerMixin:
 
         # ── Badges de conditions ───────────────────────────────────────────────
         conditions = tok.get("conditions", [])
+        # Exclusion mutuelle à l'affichage : si "Mort" est présent, on ignore "Inconscient"
+        if "Mort" in conditions and "Inconscient" in conditions:
+            conditions =[c for c in conditions if c != "Inconscient"]
+
         if conditions and self.zoom >= 0.4:
             badge_r = max(4, int(cp * 0.13))
             import math as _m
@@ -830,8 +870,13 @@ class TokenManagerMixin:
                            font=("Consolas", 8)).pack(side=tk.LEFT)
 
         def _apply():
-            tok["conditions"] = [c for c, v in vars_map.items() if v.get()]
-            tok["tactics"]    = [t for t, v in tac_vars.items() if v.get()]
+            conds =[c for c, v in vars_map.items() if v.get()]
+            # Exclusion mutuelle Inconscient / Mort au niveau de l'interface graphique
+            if "Mort" in conds and "Inconscient" in conds:
+                conds.remove("Inconscient")
+                
+            tok["conditions"] = conds
+            tok["tactics"]    =[t for t, v in tac_vars.items() if v.get()]
             
             # ── Synchro avec le tracker ──
             if getattr(self, "app", None):

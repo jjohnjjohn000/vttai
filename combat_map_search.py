@@ -195,17 +195,20 @@ class AdventureSearchWindow:
         # Options de source
         source_frame = tk.Frame(search_frame, bg="#1a1a2e")
         source_frame.grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 15))
-        ttk.Label(source_frame, text="Rechercher dans :").pack(anchor="w", pady=(0, 2))
+        ttk.Label(source_frame, text="Rechercher avec :").pack(anchor="w", pady=(0, 2))
         
+        self.search_mode_var = tk.StringVar(value="local")
+        
+        tk.Radiobutton(source_frame, text="Local (Aventures/Livres)", variable=self.search_mode_var, value="local",
+                       bg="#1a1a2e", fg="#dde0e8", selectcolor="#252538", 
+                       activebackground="#1a1a2e", activeforeground="white").pack(anchor="w")
+        tk.Radiobutton(source_frame, text="IA (Chroniqueur)", variable=self.search_mode_var, value="ai",
+                       bg="#1a1a2e", fg="#dde0e8", selectcolor="#252538", 
+                       activebackground="#1a1a2e", activeforeground="white").pack(anchor="w")
+        
+        # Variables conservées pour la compatibilité de la recherche locale
         self.search_adv_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(source_frame, text="Aventures", variable=self.search_adv_var, 
-                       bg="#1a1a2e", fg="#dde0e8", selectcolor="#252538", 
-                       activebackground="#1a1a2e", activeforeground="white").pack(anchor="w")
-        
         self.search_book_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(source_frame, text="Livres", variable=self.search_book_var, 
-                       bg="#1a1a2e", fg="#dde0e8", selectcolor="#252538", 
-                       activebackground="#1a1a2e", activeforeground="white").pack(anchor="w")
 
         # Mots Clés
         ttk.Label(search_frame, text="Phrase Exacte :").grid(row=0, column=1, sticky="w", pady=2)
@@ -272,6 +275,10 @@ class AdventureSearchWindow:
         kws_or =[k.strip().lower() for k in self.or_var.get().split(',') if k.strip()]
         kws_exc =[k.strip().lower() for k in self.except_var.get().split(',') if k.strip()]
         
+        if getattr(self, "search_mode_var", None) and self.search_mode_var.get() == "ai":
+            self._do_ai_search(exact, kws_and, kws_or, kws_exc)
+            return
+        
         search_adv = self.search_adv_var.get()
         search_book = self.search_book_var.get()
         
@@ -298,6 +305,81 @@ class AdventureSearchWindow:
                 snippet = snippet[:120] + "..."
                 
             self.tree.insert("", tk.END, iid=str(idx), values=(rec["source_type"], rec["file"], rec["chapter"], rec["section"], snippet))
+
+    def _do_ai_search(self, exact, kws_and, kws_or, kws_exc):
+        query_parts =[]
+        if exact: query_parts.append(f"Sujet principal : {exact}")
+        if kws_and: query_parts.append(f"Doit inclure : {', '.join(kws_and)}")
+        if kws_or: query_parts.append(f"Mots-clés optionnels : {', '.join(kws_or)}")
+        if kws_exc: query_parts.append(f"Exclure : {', '.join(kws_exc)}")
+        
+        full_query = "\n".join(query_parts)
+        if not full_query.strip():
+            messagebox.showwarning("Requête vide", "Veuillez entrer une recherche pour l'IA.", parent=self.top)
+            return
+            
+        self.tree.insert("", tk.END, iid="ai_loading", values=("IA", "Chroniqueur", "Recherche en cours...", "", "⏳ Veuillez patienter, l'IA réfléchit..."))
+        self.top.update_idletasks()
+        
+        def fetch_ai():
+            try:
+                import autogen
+                from app_config import get_chronicler_config
+                from llm_config import build_llm_config, _default_model
+                
+                chron_cfg = get_chronicler_config()
+                llm_cfg = build_llm_config(
+                    chron_cfg.get("model", _default_model),
+                    temperature=chron_cfg.get("temperature", 0.3),
+                )
+                client = autogen.OpenAIWrapper(config_list=llm_cfg["config_list"])
+                
+                sys_prompt = (
+                    "Tu es le Chroniqueur IA, un érudit omniscient des règles et du lore de D&D 5e. "
+                    "Réponds à la question de recherche du Maître de Jeu de façon claire, concise et précise. "
+                    "Cite les règles officielles ou le lore pertinent de la campagne."
+                )
+                
+                response = client.create(messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": f"Voici ma recherche :\n{full_query}"}
+                ])
+                
+                answer = (response.choices[0].message.content or "").strip()
+                self.top.after(0, lambda: self._show_ai_result(answer))
+                
+            except Exception as e:
+                self.top.after(0, lambda: self._show_ai_error(str(e)))
+                
+        threading.Thread(target=fetch_ai, daemon=True).start()
+        
+    def _show_ai_result(self, answer):
+        if self.tree.exists("ai_loading"):
+            self.tree.delete("ai_loading")
+        
+        fake_record = {
+            "source_type": "IA",
+            "file": "Chroniqueur",
+            "chapter": "Réponse",
+            "section": "Générée",
+            "text": answer,
+            "chapter_node": {"name": "Recherche IA", "type": "text", "entries": [answer]},
+            "section_node": {"name": "Résultat IA", "type": "text", "entries": [answer]},
+            "node": {}
+        }
+        self.records.append(fake_record)
+        idx = len(self.records) - 1
+        
+        snippet = answer.replace('\n', ' ')
+        if len(snippet) > 120:
+            snippet = snippet[:120] + "..."
+            
+        self.tree.insert("", tk.END, iid=str(idx), values=("IA", "Chroniqueur", "Réponse", "Générée", snippet))
+        
+    def _show_ai_error(self, error_msg):
+        if self.tree.exists("ai_loading"):
+            self.tree.delete("ai_loading")
+        messagebox.showerror("Erreur IA", f"Le Chroniqueur n'a pas pu répondre :\n{error_msg}", parent=self.top)
 
     def _on_double_click(self, event):
         selected = self.tree.selection()

@@ -32,6 +32,7 @@ import unicodedata
 from functools import lru_cache
 from typing import Optional
 import pickle
+import threading
 
 # ─── Répertoires racines ─────────────────────────────────────────────────────
 _BASE_DIR       = os.path.dirname(__file__)
@@ -52,6 +53,7 @@ _INDEX: dict[str, str] = {}          # index global (compat), non utilisé direc
 _INDEX_TOKENS:    dict[str, str] = {}  # images/tokens/
 _INDEX_PORTRAITS: dict[str, str] = {}  # images/portraits/
 _INDEX_BUILT = False
+_INDEX_LOCK = threading.Lock()       # Verrou pour le préchargement asynchrone
 _EXTENSIONS = {".webp", ".png", ".jpg", ".jpeg", ".gif"}
 
 
@@ -87,54 +89,61 @@ def _build_index() -> None:
     Construit deux index séparés :
       _INDEX_TOKENS    ← images/tokens/   (art de token avec cadre, pour le canvas)
       _INDEX_PORTRAITS ← images/portraits/ (portrait brut, pour les tooltips)
-    Appelée une seule fois (lazy).
+    Appelée une seule fois. Gère les accès concurrents.
     """
     global _INDEX_BUILT
     if _INDEX_BUILT:
         return
-    _INDEX_BUILT = True
+        
+    with _INDEX_LOCK:
+        if _INDEX_BUILT:
+            return
 
-    try:
-        newest_mtime = max(
-            os.path.getmtime(_TOKENS_ROOT) if os.path.exists(_TOKENS_ROOT) else 0,
-            os.path.getmtime(_PORTRAITS_ROOT) if os.path.exists(_PORTRAITS_ROOT) else 0
-        )
-        if os.path.exists(_INDEX_CACHE) and os.path.getmtime(_INDEX_CACHE) >= newest_mtime:
-            with open(_INDEX_CACHE, "rb") as f:
-                cached_data = pickle.load(f)
-                _INDEX_TOKENS.update(cached_data["tokens"])
-                _INDEX_PORTRAITS.update(cached_data["portraits"])
-                print(f"[PortraitResolver] Index chargé depuis le cache ({len(_INDEX_TOKENS)} tokens, {len(_INDEX_PORTRAITS)} portraits).")
-                return
-    except Exception as e:
-        print(f"[PortraitResolver] Cache illisible ou périmé : {e}")
+        try:
+            newest_mtime = max(
+                os.path.getmtime(_TOKENS_ROOT) if os.path.exists(_TOKENS_ROOT) else 0,
+                os.path.getmtime(_PORTRAITS_ROOT) if os.path.exists(_PORTRAITS_ROOT) else 0
+            )
+            if os.path.exists(_INDEX_CACHE) and os.path.getmtime(_INDEX_CACHE) >= newest_mtime:
+                with open(_INDEX_CACHE, "rb") as f:
+                    cached_data = pickle.load(f)
+                    _INDEX_TOKENS.update(cached_data["tokens"])
+                    _INDEX_PORTRAITS.update(cached_data["portraits"])
+                    print(f"[PortraitResolver] Index chargé depuis le cache ({len(_INDEX_TOKENS)} tokens, {len(_INDEX_PORTRAITS)} portraits).")
+                    _INDEX_BUILT = True  # <- BUG 2 FIXÉ : on prévient les recharges inutiles
+                    return
+        except Exception as e:
+            print(f"[PortraitResolver] Cache illisible ou périmé : {e}")
 
-    for target_dict, root, label in [
-        (_INDEX_TOKENS,    _TOKENS_ROOT,    "tokens"),
-        (_INDEX_PORTRAITS, _PORTRAITS_ROOT, "portraits"),
-    ]:
-        if not os.path.isdir(root):
-            print(f"[PortraitResolver] Dossier introuvable (ignoré) : {root}")
-            continue
-        count = 0
-        for dirpath, _dirs, files in os.walk(root):
-            for fname in files:
-                stem, ext = os.path.splitext(fname)
-                if ext.lower() not in _EXTENSIONS:
-                    continue
-                key = _normalize(stem)
-                full_path = os.path.join(dirpath, fname)
-                if key not in target_dict:
-                    target_dict[key] = full_path
-                    count += 1
-        print(f"[PortraitResolver] {count} {label} indexés depuis {root}")
+        # <- BUG 1 et 3 FIXÉS : Toute cette partie est bien indentée sous le "with _INDEX_LOCK:"
+        for target_dict, root, label in[
+            (_INDEX_TOKENS,    _TOKENS_ROOT,    "tokens"),
+            (_INDEX_PORTRAITS, _PORTRAITS_ROOT, "portraits"),
+        ]:
+            if not os.path.isdir(root):
+                print(f"[PortraitResolver] Dossier introuvable (ignoré) : {root}")
+                continue
+            count = 0
+            for dirpath, _dirs, files in os.walk(root):
+                for fname in files:
+                    stem, ext = os.path.splitext(fname)
+                    if ext.lower() not in _EXTENSIONS:
+                        continue
+                    key = _normalize(stem)
+                    full_path = os.path.join(dirpath, fname)
+                    if key not in target_dict:
+                        target_dict[key] = full_path
+                        count += 1
+            print(f"[PortraitResolver] {count} {label} indexés depuis {root}")
 
-    try:
-        with open(_INDEX_CACHE, "wb") as f:
-            pickle.dump({"tokens": _INDEX_TOKENS, "portraits": _INDEX_PORTRAITS}, f)
-        print("[PortraitResolver] Cache d'index sauvegardé.")
-    except Exception as e:
-        print(f"[PortraitResolver] Erreur sauvegarde cache : {e}")
+        try:
+            with open(_INDEX_CACHE, "wb") as f:
+                pickle.dump({"tokens": _INDEX_TOKENS, "portraits": _INDEX_PORTRAITS}, f)
+            print("[PortraitResolver] Cache d'index sauvegardé.")
+        except Exception as e:
+            print(f"[PortraitResolver] Erreur sauvegarde cache : {e}")
+        
+        _INDEX_BUILT = True
 
 # ─── Résolution ───────────────────────────────────────────────────────────────
 
@@ -187,19 +196,12 @@ def resolve_portrait(name: str) -> str:
     """
     Retourne le chemin absolu du **portrait brut** (images/portraits/) pour
     un affichage en tooltip.  Ne cherche PAS dans images/tokens/.
-
-    Paramètres
-    ----------
-    name : str
-        Nom du monstre/PNJ, suffixes numériques ignorés ("Gobelin 3" → "Gobelin").
-
-    Retourne
-    --------
-    str  Chemin absolu, ou "" si introuvable.
     """
     if not name or not name.strip():
         return ""
-    _build_index()
+    if not _INDEX_BUILT:
+        return "" # Ne bloque jamais le thread principal pendant le chargement initial
+        
     result = _search_index(_INDEX_PORTRAITS, name, "portrait")
     if not result:
         print(f"[PortraitResolver] ✗ aucun portrait pour '{name}'")
@@ -210,25 +212,18 @@ def resolve_token_art(name: str) -> str:
     """
     Retourne le chemin absolu de l'**art de token** (images/tokens/) à afficher
     sur le canvas de combat.  Cherche d'abord dans images/tokens/, puis dans
-    images/portraits/ en fallback si aucun art spécifique n'existe.
-
-    Paramètres
-    ----------
-    name : str
-        Nom du monstre/PNJ tel qu'il apparaît dans le tracker.
-
-    Retourne
-    --------
-    str  Chemin absolu, ou "" si introuvable.
+    images/portraits/ en fallback.
     """
     if not name or not name.strip():
         return ""
-    _build_index()
+    if not _INDEX_BUILT:
+        return "" # Ne bloque jamais le thread principal
+        
     # 1. Art dédié dans images/tokens/
     result = _search_index(_INDEX_TOKENS, name, "token")
     if result:
         return result
-    # 2. Fallback : portrait brut (sera rogné en cercle par _make_circular_portrait)
+    # 2. Fallback : portrait brut
     result = _search_index(_INDEX_PORTRAITS, name, "portrait→fallback")
     if not result:
         print(f"[PortraitResolver] ✗ aucun art de token pour '{name}'")
@@ -278,3 +273,8 @@ def is_known_image_path(path: str) -> bool:
         if abs_path.startswith(os.path.abspath(root)):
             return True
     return False
+
+# ─── Préchauffage asynchrone ─────────────────────────────────────────────────
+# Lance la construction de l'index dans un thread séparé dès l'import du module,
+# empêchant le freeze de l'interface lors de la première ouverture de la carte.
+threading.Thread(target=_build_index, daemon=True, name="portrait-resolver-preload").start()

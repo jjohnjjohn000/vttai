@@ -95,7 +95,12 @@ class TarokkaWindow:
         except Exception as e:
             print(f"[Tarokka] Image de fond non trouvée : {e}")
 
+        self.top.protocol("WM_DELETE_WINDOW", self.on_closing)
         self._restore_state()
+
+    def on_closing(self):
+        self._notify_save()
+        self.top.destroy()
 
     def _restore_state(self):
         """Restaure les cartes de manière sécurisée sans crasher la fenêtre."""
@@ -344,8 +349,22 @@ class TarokkaWindow:
         self._notify_save()
 
     def _notify_save(self):
+        # 1. On modifie directement le dictionnaire d'origine en mémoire
+        # C'est souvent indispensable si le script parent sauvegarde son état global
+        if isinstance(self.initial_state, dict):
+            self.initial_state["drawn_cards"] = list(self.drawn_cards_files)
+        elif self.initial_state is None:
+            self.initial_state = {"drawn_cards": list(self.drawn_cards_files)}
+
+        # 2. On déclenche la sauvegarde du parent
         if self.save_callback:
-            self.save_callback({"drawn_cards": self.drawn_cards_files})
+            try:
+                self.save_callback({"drawn_cards": list(self.drawn_cards_files)})
+                print(f"[Tarokka DEBUG] Sauvegarde déclenchée avec {len(self.drawn_cards_files)} cartes.")
+            except Exception as e:
+                print(f"[Tarokka ERREUR] Échec de la fonction de sauvegarde du parent : {e}")
+        else:
+            print("[Tarokka AVERTISSEMENT] Aucun save_callback fourni par le parent.")
 
     def reset_tarokka(self):
         """Réinitialise complètement le plateau de jeu et les paquets"""
@@ -364,5 +383,4 @@ class TarokkaWindow:
         self.btn_draw.config(state=tk.NORMAL, text="🃏 Tirer la carte suivante", bg="#4a1e3a", fg="white")
         self.lbl_info.config(text="Tirage réinitialisé avec succès.")
         
-        if self.save_callback:
-            self.save_callback({"drawn_cards": self.drawn_cards_files})
+        self._notify_save()

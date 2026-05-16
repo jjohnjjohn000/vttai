@@ -60,7 +60,7 @@ class MapManagerMixin:
             raw = base64.b64decode(fog_b64)
             img = Image.open(_io.BytesIO(raw)).convert("L")
             if img.size != (mw, mh):
-                img = img.resize((mw, mh), Image.NEAREST)
+                img = img.resize((mw, mh), getattr(Image, 'Resampling', Image).NEAREST)
             self._fog_mask = img
         else:
             # Rétro-compatibilité : ancien format liste de cases

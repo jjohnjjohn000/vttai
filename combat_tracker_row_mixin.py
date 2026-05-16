@@ -95,6 +95,14 @@ class CombatTrackerRowMixin:
                     )
                     rw["draw_hp_bar"](rw["bar_canvas"], c)
 
+                # Nettoyage widget jets de mort s'il est ressuscité
+                if c.is_pc and c.hp > 0 and "death_saves_frame" in rw:
+                    rw["death_saves_frame"].destroy()
+                    del rw["death_saves_frame"]
+                # Création s'il vient de tomber et n'en a pas
+                elif c.is_pc and c.hp <= 0 and "death_saves_frame" not in rw:
+                    rw["death_saves_frame"] = self._mini_death_saves(rw["hp_f"], c)
+
                 # Variables d'actions
                 acts = rw.get("action_vars", {})
                 if "action" in acts: acts["action"].set(c.action_used)
@@ -468,8 +476,9 @@ class CombatTrackerRowMixin:
                   command=apply_temp
                   ).pack(side=tk.LEFT, padx=(2, 0))
 
+        ds_frame = None
         if c.is_pc and c.is_down:
-            self._mini_death_saves(hp_f, c)
+            ds_frame = self._mini_death_saves(hp_f, c)
 
         # ── Col 4 : CA ────────────────────────────────────────────────────
         ac_f = _col(52)
@@ -530,7 +539,10 @@ class CombatTrackerRowMixin:
             "action_vars": action_vars,  # dict of action vars
             "cond_btns":   cond_btns,
             "tac_btns":    tac_btns,
+            "hp_f":        hp_f,
         }
+        if ds_frame is not None:
+            self._row_widgets[c.uid]["death_saves_frame"] = ds_frame
 
         # ── Col 7 : Concentration ─────────────────────────────────────────
         conc_f = _col(58)
@@ -922,6 +934,7 @@ class CombatTrackerRowMixin:
                   bg=_darken(C["red"], 0.3), fg=C["red_bright"],
                   font=("Consolas", 7), relief="flat", padx=3,
                   command=_fail).pack(side=tk.LEFT, padx=1)
+        return f
 
     # ─── Image Tooltip (Survol) ──────────────────────────────────────────────
 
