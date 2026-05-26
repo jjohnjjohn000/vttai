@@ -24,7 +24,7 @@ import threading
 import tkinter as tk
 
 from state_manager import load_state, save_state
-from window_state import _get_win_geometry, _save_window_state
+from window_state import _get_win_geometry, _save_window_state, _apply_win_geometry
 from voice_interface import record_audio_and_transcribe, ptt_start, ptt_stop_and_transcribe
 from character_faces import CharacterFaceWindow, CHARACTER_DATA
 
@@ -59,7 +59,7 @@ class CharacterMixin:
         _key        = f"char_{char_name}"
         _saved_geom = self._win_state.get(_key)
         if _saved_geom:
-            win.geometry(f"{_saved_geom['w']}x{_saved_geom['h']}+{_saved_geom['x']}+{_saved_geom['y']}")
+            win.geometry(f"{_saved_geom['w']}x{_saved_geom['h']}")
         else:
             win.geometry("300x680")
 
@@ -111,7 +111,7 @@ class CharacterMixin:
                 win.after(2000, _poll_geom)
             except Exception:
                 pass
-        win.after(2000, _poll_geom)
+        win.after(3000, _poll_geom)
 
         # ── Nettoyage synchrone du flag _open_ ─────────────────────────────────
         def _on_map(event):
@@ -171,7 +171,134 @@ class CharacterMixin:
             except Exception:
                 pass
         except Exception as e:
-            print(f"[popout] Erreur avatar {char_name}: {e}")
+            # Échoue silencieusement pour les persos sans avatar
+            pass
+
+        # ── Bascule IA / Humain + Webcam (Nouveaux persos uniquement) ─────────
+        if char_name not in ["Kaelen", "Elara", "Thorne", "Lyra"]:
+            _is_human_init = data.get("is_human", False)
+            
+            # Conteneur pour l'avatar/webcam (taille identique aux visages standards)
+            avatar_area = tk.Frame(face_frame, bg=char_bg, width=112, height=148)
+            avatar_area.pack(pady=(10, 5))
+            avatar_area.pack_propagate(False)
+
+            try:
+                from app_config import load_app_config
+                from webcam_widget import WebcamWidget
+                cam_index = load_app_config().get("devices", {}).get("webcam_index", 0)
+                win.webcam_widget = WebcamWidget(avatar_area, camera_index=cam_index, width=112, height=148)
+            except ImportError:
+                win.webcam_widget = None
+
+            btn_control = tk.Button(
+                face_frame,
+                font=("Arial", 10, "bold"),
+                relief="flat",
+                cursor="hand2",
+                padx=10, pady=5
+            )
+            btn_control.pack(pady=(0, 10))
+
+            btn_settings = tk.Button(
+                face_frame,
+                text="⚙️",
+                font=("Arial", 10),
+                bg="#252535", fg="white",
+                relief="flat",
+                cursor="hand2"
+            )
+
+            def _on_webcam_select(idx):
+                from app_config import load_app_config, save_app_config
+                acfg = load_app_config()
+                acfg.setdefault("devices", {})["webcam_index"] = idx
+                save_app_config(acfg)
+                if win.webcam_widget:
+                    win.webcam_widget.set_camera(idx)
+
+            def _open_settings():
+                try:
+                    from app_config import load_app_config
+                    from webcam_widget import WebcamSettingsDialog
+                    current_idx = load_app_config().get("devices", {}).get("webcam_index", 0)
+                    WebcamSettingsDialog(win, current_idx, _on_webcam_select)
+                except ImportError:
+                    pass
+
+            btn_settings.config(command=_open_settings)
+
+            def _update_control_btn(is_human):
+                if is_human:
+                    btn_control.config(text="👤 Contrôle : Humain", bg="#4CAF50", fg="white")
+                    btn_settings.place(relx=1.0, rely=0.0, anchor="ne", x=-5, y=5)
+                    if win.webcam_widget:
+                        win.webcam_widget.pack(fill=tk.BOTH, expand=True)
+                        if win.state() != "withdrawn":
+                            win.webcam_widget.start()
+                else:
+                    btn_control.config(text="🤖 Contrôle : IA", bg="#9C27B0", fg="white")
+                    btn_settings.place_forget()
+                    if win.webcam_widget:
+                        win.webcam_widget.stop()
+                        win.webcam_widget.pack_forget()
+
+            def _toggle_control():
+                s = load_state()
+                c_data = s.setdefault("characters", {}).setdefault(char_name, {})
+                new_val = not c_data.get("is_human", False)
+                c_data["is_human"] = new_val
+                save_state(s)
+                
+                _update_control_btn(new_val)
+                
+                mode_str = "Humain" if new_val else "IA"
+                self.msg_queue.put({
+                    "sender": "⚙️ Système",
+                    "text": f"🎮 {char_name} est maintenant contrôlé par : {mode_str}",
+                    "color": "#888899"
+                })
+
+            btn_control.config(command=_toggle_control)
+            _update_control_btn(_is_human_init)
+
+            # --- Optimisation de la Webcam (Arrêt automatique si fenêtre masquée) ---
+            def _on_map_webcam(e):
+                if e.widget == win and load_state().get("characters", {}).get(char_name, {}).get("is_human", False):
+                    if win.webcam_widget:
+                        win.webcam_widget.start()
+                        
+            def _on_unmap_webcam(e):
+                if e.widget == win:
+                    if win.webcam_widget:
+                        win.webcam_widget.stop()
+            
+            def _on_destroy_webcam(e):
+                if e.widget == win and win.webcam_widget:
+                    win.webcam_widget.stop()
+                    
+            win.bind("<Map>", _on_map_webcam, add="+")
+            win.bind("<Unmap>", _on_unmap_webcam, add="+")
+            win.bind("<Destroy>", _on_destroy_webcam, add="+")
+
+            # --- Optimisation de la Webcam (Arrêt automatique si fenêtre masquée) ---
+            def _on_map_webcam(e):
+                if e.widget == win and load_state().get("characters", {}).get(char_name, {}).get("is_human", False):
+                    if webcam_widget:
+                        webcam_widget.start()
+                        
+            def _on_unmap_webcam(e):
+                if e.widget == win:
+                    if webcam_widget:
+                        webcam_widget.stop()
+            
+            def _on_destroy_webcam(e):
+                if e.widget == win and webcam_widget:
+                    webcam_widget.stop()
+                    
+            win.bind("<Map>", _on_map_webcam, add="+")
+            win.bind("<Unmap>", _on_unmap_webcam, add="+")
+            win.bind("<Destroy>", _on_destroy_webcam, add="+")
 
         # ── Bouton « Faire parler » ───────────────────────────────────────────
         speak_bar = tk.Frame(win, bg=char_bg)
@@ -280,17 +407,31 @@ class CharacterMixin:
 
         # ── Tooltip helper ────────────────────────────────────────────────────
         _tip_win = [None]
-        def _show_tip(event=None):
+        def _show_tip(event, text=""):
             if _tip_win[0]:
-                return
+                _hide_tip()
+            if not text: return
             tw = tk.Toplevel(win)
             tw.wm_overrideredirect(True)
             tw.attributes("-topmost", True)
-            tw.geometry(f"+{event.x_root + 4}+{event.y_root + 16}")
-            tk.Label(tw, text="Cliquer pour changer le modèle LLM",
+            
+            display_text = text[:300] + ("..." if len(text) > 300 else "")
+            
+            tk.Label(tw, text=display_text, justify=tk.LEFT,
                      bg="#333344", fg="#ccccff", font=("Arial", 8),
-                     padx=6, pady=3, relief="solid", bd=1).pack()
+                     padx=6, pady=3, relief="solid", bd=1, wraplength=350).pack()
+                     
+            x = event.x_root + 15
+            y = event.y_root + 15
+            tw.geometry(f"+{x}+{y}")
             _tip_win[0] = tw
+
+        def _move_tip(event):
+            if _tip_win[0]:
+                x = event.x_root + 15
+                y = event.y_root + 15
+                _tip_win[0].geometry(f"+{x}+{y}")
+
         def _hide_tip(event=None):
             if _tip_win[0]:
                 try:
@@ -298,7 +439,8 @@ class CharacterMixin:
                 except Exception:
                     pass
                 _tip_win[0] = None
-        llm_label.bind("<Enter>", _show_tip)
+                
+        llm_label.bind("<Enter>", lambda e: _show_tip(e, "Cliquer pour changer le modèle LLM"))
         llm_label.bind("<Leave>", _hide_tip)
 
         def _apply_llm_override(new_model: str):
@@ -483,16 +625,16 @@ class CharacterMixin:
                 race_frame.pack(fill=tk.BOTH, expand=True)
                 btn_race.config(bg=color, fg="#0d0d0d")
 
-        btn_stats  = tk.Button(tabs_bar, text="📊 Stats",  font=("Arial", 9, "bold"),
+        btn_stats  = tk.Button(tabs_bar, text="Stats",  font=("Arial", 9, "bold"),
                                relief="flat", padx=10, pady=5, cursor="hand2",
                                command=lambda: _show_tab("stats"))
-        btn_spells = tk.Button(tabs_bar, text="✨ Sorts",  font=("Arial", 9, "bold"),
+        btn_spells = tk.Button(tabs_bar, text="Sorts",  font=("Arial", 9, "bold"),
                                relief="flat", padx=10, pady=5, cursor="hand2",
                                command=lambda: _show_tab("spells"))
-        btn_class  = tk.Button(tabs_bar, text="⚔ Classe", font=("Arial", 9, "bold"),
+        btn_class  = tk.Button(tabs_bar, text="Classe", font=("Arial", 9, "bold"),
                                relief="flat", padx=10, pady=5, cursor="hand2",
                                command=lambda: _show_tab("class"))
-        btn_race   = tk.Button(tabs_bar, text="🧬 Race",  font=("Arial", 9, "bold"),
+        btn_race   = tk.Button(tabs_bar, text="Race",  font=("Arial", 9, "bold"),
                                relief="flat", padx=10, pady=5, cursor="hand2",
                                command=lambda: _show_tab("race"))
         btn_stats.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -829,6 +971,53 @@ class CharacterMixin:
                 spx.bind("<Escape>",   lambda e: (_end(),))
                 return lbl, spx
 
+            # ── Caractéristiques (Stats) ──────────────────────────────────────
+            stats_sec = tk.Frame(body, bg="#1e1e2e")
+            stats_sec.pack(fill=tk.X, pady=(0, 10))
+            
+            stat_keys = [("str", "FOR"), ("dex", "DEX"), ("con", "CON"), 
+                         ("int", "INT"), ("wis", "SAG"), ("cha", "CHA")]
+            
+            stat_widgets_popout = {}
+
+            for key, label in stat_keys:
+                col = tk.Frame(stats_sec, bg="#1e1e2e")
+                col.pack(side=tk.LEFT, expand=True, fill=tk.X)
+                
+                tk.Label(col, text=label, bg="#1e1e2e", fg="#888888", font=("Consolas", 8)).pack()
+                
+                score = data.get(key, 10)
+                mod = data.get(f"{key}_mod", 0)
+                mod_str = f"+{mod}" if mod >= 0 else str(mod)
+
+                score_lbl = tk.Label(col, text=str(score), bg="#1e1e2e", fg="#dddddd", font=("Consolas", 10, "bold"))
+                score_lbl.pack()
+                
+                save_lbl = tk.Label(col, text=mod_str, bg="#252535", fg="#aaccff", font=("Consolas", 9), cursor="hand2")
+                save_lbl.pack(fill=tk.X, padx=2, pady=(2, 0))
+
+                def make_roll_cmd(stat_label=label, stat_key=key):
+                    def _roll(e):
+                        from state_manager import load_state
+                        import random
+                        current_state = load_state()
+                        char_data = current_state.get("characters", {}).get(char_name, {})
+                        stat_mod = char_data.get(f"{stat_key}_mod", 0)
+                        r = random.randint(1, 20)
+                        tot = r + stat_mod
+                        m_str = f"+{stat_mod}" if stat_mod >= 0 else str(stat_mod)
+                        
+                        self.msg_queue.put({
+                            "sender": char_name,
+                            "text": f"🎲 Jet de sauvegarde {stat_label} : 1d20 ({r}) {m_str} = {tot}",
+                            "color": self.CHAR_COLORS.get(char_name, "#aaaaaa")
+                        })
+                    return _roll
+
+                save_lbl.bind("<Button-1>", make_roll_cmd())
+                
+                stat_widgets_popout[key] = {"score": score_lbl, "save": save_lbl}
+
             # ── Points de vie ─────────────────────────────────────────────────
             hp_row = tk.Frame(body, bg="#1e1e2e")
             hp_row.pack(fill=tk.X, pady=(0, 2))
@@ -1075,6 +1264,15 @@ class CharacterMixin:
             def _refresh_all():
                 try:
                     d2 = load_state().get("characters", {}).get(char_name, {})
+                    
+                    # Mise à jour des caractéristiques
+                    for key, w in stat_widgets_popout.items():
+                        score = d2.get(key, 10)
+                        mod = d2.get(f"{key}_mod", 0)
+                        mod_str = f"+{mod}" if mod >= 0 else str(mod)
+                        w["score"].config(text=str(score))
+                        w["save"].config(text=mod_str)
+
                     h, mh = d2.get("hp", 0), d2.get("max_hp", 0)
                     p  = max(0, min(1, h / mh)) if mh else 0
                     hp_lbl.config(text=str(h), fg=self._hp_color(p))
@@ -1100,6 +1298,14 @@ class CharacterMixin:
                     current_short = _fmt_llm(_get_actual_llm())
                     if llm_label.cget("text") != current_short:
                         llm_label.config(text=current_short)
+                        
+                    # ── Synchro avec la webcam par défaut globale ───────────────
+                    if getattr(win, "webcam_widget", None):
+                        from app_config import load_app_config
+                        glob_cam = load_app_config().get("devices", {}).get("webcam_index", 0)
+                        if win.webcam_widget.camera_index != glob_cam:
+                            win.webcam_widget.set_camera(glob_cam)
+
                 except Exception:
                     pass
 
@@ -1503,12 +1709,23 @@ class CharacterMixin:
             try:
                 _all_races = get_available_races()
             except Exception:
-                _all_races =[]
+                _all_races = []
 
             def _on_race_changed(val):
-                _refresh_subrace_menu(val)
+                from race_data import split_race_source
+                r_name, _ = split_race_source(val)
+                _refresh_subrace_menu(r_name)
 
-            race_var = tk.StringVar(value=race_name)
+            # Cherche la valeur formatée correspondante pour le menu déroulant
+            default_race_val = race_name
+            for r in _all_races:
+                from race_data import split_race_source
+                r_name, _ = split_race_source(r)
+                if r_name == race_name:
+                    default_race_val = r
+                    break
+
+            race_var = tk.StringVar(value=default_race_val)
             race_combo = tk.OptionMenu(sel_fr, race_var, *(_all_races or ["—"]), command=_on_race_changed)
             race_combo.config(bg=_race_sec, fg="#cccccc", activebackground="#3a3a5a",
                               font=("Arial", 9), relief="flat", highlightthickness=0,
@@ -1558,7 +1775,9 @@ class CharacterMixin:
                 _refresh_subrace_menu(race_name)
 
             def _on_race_apply():
-                new_race = race_var.get()
+                from race_data import split_race_source
+                new_race_full = race_var.get()
+                new_race, _ = split_race_source(new_race_full)
                 new_sub  = subrace_var.get() if _subraces_cache["list"] else ""
                 _save_race(new_race, new_sub)
                 _build_race_tab(new_race, new_sub)
@@ -1612,11 +1831,15 @@ class CharacterMixin:
             # Vitesse
             try:
                 spd = get_race_speed(race_name)
-                spd_str = ", ".join(
-                    (f"{v} pi." if k == "walk" else f"{k.title()} {v} pi.")
-                    for k, v in spd.items()
-                )
-                _quick_items.append(("🏃 Vitesse", spd_str))
+                walk_spd = spd.get("walk", 30)
+                spd_parts = []
+                for k, v in spd.items():
+                    val = walk_spd if v is True else v
+                    if k == "walk":
+                        spd_parts.append(f"{val} pi.")
+                    else:
+                        spd_parts.append(f"{k.title()} {val} pi.")
+                _quick_items.append(("🏃 Vitesse", ", ".join(spd_parts)))
             except Exception:
                 pass
 
@@ -1679,54 +1902,8 @@ class CharacterMixin:
                          ).pack(side=tk.LEFT, padx=(4, 0))
 
             # ── Traits raciaux ───────────────────────────────────────────────
-            def _open_trait_popup(trait_name, trait_data):
-                popup = tk.Toplevel(win)
-                popup.title(f"{trait_name} — {race_name}")
-                popup.geometry("520x420")
-                popup.configure(bg="#1a1a2e")
-                popup.attributes("-topmost", True)
-
-                phdr = tk.Frame(popup, bg=color, pady=6)
-                phdr.pack(fill=tk.X)
-                tk.Label(phdr, text=trait_name, bg=color, fg="#0d0d0d",
-                         font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=12)
-                _badge = f"[{trait_data.get('source','?')}]"
-                if trait_data.get("type") == "subrace":
-                    _badge += f"  {subrace_name}"
-                tk.Label(phdr, text=_badge, bg=color, fg="#333333",
-                         font=("Consolas", 9)).pack(side=tk.RIGHT, padx=12)
-
-                txt_fr = tk.Frame(popup, bg="#1a1a2e")
-                txt_fr.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-                txt_sc = tk.Scrollbar(txt_fr)
-                txt_sc.pack(side=tk.RIGHT, fill=tk.Y)
-                txt_w = tk.Text(txt_fr, wrap=tk.WORD, bg="#1a1a2e", fg="#cccccc",
-                                font=("Consolas", 10), padx=12, pady=8,
-                                relief="flat", highlightthickness=0,
-                                yscrollcommand=txt_sc.set, state=tk.NORMAL, cursor="arrow")
-                txt_w.pack(fill=tk.BOTH, expand=True)
-                txt_sc.config(command=txt_w.yview)
-
-                txt_w.tag_configure("heading", font=("Arial", 10, "bold"), foreground=color)
-                txt_w.tag_configure("body", font=("Consolas", 10), foreground="#cccccc")
-                txt_w.tag_configure("bullet", font=("Consolas", 10), foreground="#aabbcc")
-
-                for line in trait_data.get("text", "").split("\n"):
-                    s = line.strip()
-                    if s.startswith("▸ "):
-                        txt_w.insert(tk.END, s + "\n", "heading")
-                    elif s.startswith("• "):
-                        txt_w.insert(tk.END, "  " + s + "\n", "bullet")
-                    else:
-                        txt_w.insert(tk.END, s + "\n\n" if s else "\n", "body")
-                txt_w.config(state=tk.DISABLED)
-
-                tk.Button(popup, text="Fermer", bg="#333344", fg="#cccccc",
-                          font=("Arial", 9), relief="flat", padx=12, pady=4,
-                          command=popup.destroy).pack(pady=(0, 8))
-
             try:
-                _traits = get_race_traits(race_name, subrace_name)
+                _traits = get_race_traits(race_name, subrace_name, source=_src)
             except Exception:
                 _traits = []
 
@@ -1740,15 +1917,20 @@ class CharacterMixin:
                 if _n_sub:  _tp.append(f"{_n_sub} sous-race")
                 tk.Label(tr_sec, text=f"⭐ Traits ({' + '.join(_tp)})",
                          bg=_race_sec, fg=color, font=("Arial", 10, "bold")).pack(anchor="w")
-                tk.Label(tr_sec, text="Cliquer pour voir les détails", bg=_race_sec,
+                tk.Label(tr_sec, text="Cliquer pour afficher, survoler pour aperçu", bg=_race_sec,
                          fg="#555566", font=("Arial", 8, "italic")).pack(anchor="w")
 
                 for _t in _traits:
                     _is_sub = (_t["type"] == "subrace")
                     _fg = "#ddbbaa" if _is_sub else "#ccddee"
                     _icon = "🔥" if _is_sub else "⭐"
-                    _fr2 = tk.Frame(tr_sec, bg=_race_sec)
-                    _fr2.pack(fill=tk.X, pady=1)
+                    
+                    _trait_container = tk.Frame(tr_sec, bg=_race_sec)
+                    _trait_container.pack(fill=tk.X, pady=1)
+                    
+                    _fr2 = tk.Frame(_trait_container, bg=_race_sec)
+                    _fr2.pack(fill=tk.X)
+                    
                     _lbl2 = tk.Label(_fr2, text=f"  {_icon}  {_t['name']}",
                                      bg=_race_sec, fg=_fg, font=("Arial", 9),
                                      cursor="hand2", anchor="w")
@@ -1756,68 +1938,155 @@ class CharacterMixin:
                     tk.Label(_fr2, text=f"[{_t['source']}]", bg=_race_sec, fg="#444455",
                              font=("Consolas", 7)).pack(side=tk.RIGHT)
 
-                    def _on_trait_click(e, td=_t):
-                        _open_trait_popup(td["name"], td)
-                    def _on_te(e, lb=_lbl2):
+                    _text_fr = tk.Frame(_trait_container, bg="#1a1a24")
+                    
+                    _desc_w = tk.Text(_text_fr, wrap=tk.WORD, bg="#1a1a24", fg="#cccccc",
+                                      font=("Consolas", 9), relief="flat", highlightthickness=0)
+                    
+                    lines = _t["text"].split("\n")
+                    _desc_w.config(height=min(10, len(lines) + 1))
+                    
+                    for line in lines:
+                        s = line.strip()
+                        if s.startswith("▸ "):
+                            _desc_w.insert(tk.END, s + "\n", "heading")
+                        elif s.startswith("• "):
+                            _desc_w.insert(tk.END, "  " + s + "\n", "bullet")
+                        else:
+                            _desc_w.insert(tk.END, s + "\n\n" if s else "\n")
+                    
+                    _desc_w.tag_configure("heading", font=("Arial", 9, "bold"), foreground=color)
+                    _desc_w.tag_configure("bullet", foreground="#aabbcc")
+                    _desc_w.config(state=tk.DISABLED)
+                    
+                    _desc_w.pack(fill=tk.X, expand=True, padx=16, pady=4)
+                    
+                    # Ajout d'un ou plusieurs champs pour les choix si détectés
+                    from race_data import extract_trait_choices
+                    choices_extracted = extract_trait_choices(_t["text"])
+                    if choices_extracted:
+                        _choice_container = tk.Frame(_text_fr, bg="#1a1a24")
+                        _choice_container.pack(fill=tk.X, padx=16, pady=(0, 6))
+                        
+                        for choice in choices_extracted:
+                            _choice_row = tk.Frame(_choice_container, bg="#1a1a24")
+                            _choice_row.pack(fill=tk.X, pady=1)
+                            
+                            tk.Label(_choice_row, text=f"↳ {choice['label']} :", bg="#1a1a24", fg="#ffb74d", font=("Arial", 9, "italic")).pack(side=tk.LEFT)
+                            
+                            choice_key = f"{_t['name']} ({choice['label']})"
+                            s_data = load_state().get("characters", {}).get(char_name, {})
+                            existing_choice = s_data.get("racial_choices", {}).get(choice_key, "")
+                            
+                            _choice_var = tk.StringVar(value=existing_choice)
+                            from tkinter import ttk
+                            _choice_ent = ttk.Combobox(_choice_row, textvariable=_choice_var, values=choice['options'], font=("Consolas", 9))
+                            _choice_ent.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+                            
+                            def _save_choice(e, tn=choice_key, v=_choice_var):
+                                s = load_state()
+                                c_data = s.setdefault("characters", {}).setdefault(char_name, {})
+                                
+                                old_choice = c_data.setdefault("racial_choices", {}).get(tn, "")
+                                new_choice = v.get().strip()
+                                
+                                c_data["racial_choices"][tn] = new_choice
+                                
+                                # Synchronisation mécanique (ex: Grimoire de sorts)
+                                if "cantrip" in tn.lower() or "spell" in tn.lower() or "sort" in tn.lower():
+                                    spells = c_data.setdefault("spells_prepared", [])
+                                    if old_choice and old_choice in spells:
+                                        spells.remove(old_choice)
+                                    if new_choice and new_choice not in spells:
+                                        spells.append(new_choice)
+                                        
+                                save_state(s)
+                                
+                            _choice_ent.bind("<FocusOut>", _save_choice)
+                            _choice_ent.bind("<Return>", lambda e, cb=_save_choice: (e.widget.master.focus_set(), cb(e)))
+                            _choice_ent.bind("<<ComboboxSelected>>", _save_choice)
+                    
+                    # Prevent text widget from stealing mouse scroll
+                    def _redirect_scroll(e):
+                        rc_canvas.yview_scroll(int(-1*(e.delta or (1 if e.num == 4 else -1))*3), "units")
+                        return "break"
+                    _desc_w.bind("<MouseWheel>", _redirect_scroll)
+                    _desc_w.bind("<Button-4>", _redirect_scroll)
+                    _desc_w.bind("<Button-5>", _redirect_scroll)
+
+                    def _on_trait_click(e, fr=_text_fr):
+                        if fr.winfo_ismapped():
+                            fr.pack_forget()
+                        else:
+                            fr.pack(fill=tk.X, expand=True)
+                        rc_inner.update_idletasks()
+                        rc_canvas.configure(scrollregion=rc_canvas.bbox("all"))
+                        _hide_tip()
+
+                    def _on_te(e, lb=_lbl2, text=_t["text"]):
                         lb.config(fg=color, font=("Arial", 9, "bold"))
+                        _show_tip(e, text)
+                        
                     def _on_tl(e, lb=_lbl2, fg=_fg):
                         lb.config(fg=fg, font=("Arial", 9))
+                        _hide_tip()
+                        
+                    def _on_tm(e):
+                        _move_tip(e)
+
                     _lbl2.bind("<Button-1>", _on_trait_click)
                     _lbl2.bind("<Enter>", _on_te)
                     _lbl2.bind("<Leave>", _on_tl)
+                    _lbl2.bind("<Motion>", _on_tm)
 
             # ── Lore (fluff) ─────────────────────────────────────────────────
             try:
-                _fluff = get_race_fluff(race_name)
+                _fluff = get_race_fluff(race_name, source=_src)
             except Exception:
                 _fluff = ""
 
             if _fluff:
                 lore_sec = tk.Frame(rc_inner, bg=_race_sec, padx=8, pady=6)
                 lore_sec.pack(fill=tk.X, padx=8, pady=(0, 8))
-                tk.Label(lore_sec, text="📖 Lore", bg=_race_sec, fg=color,
-                         font=("Arial", 10, "bold")).pack(anchor="w")
-                # Afficher les 3 premières lignes avec bouton "Voir plus"
-                _lore_lines = [l for l in _fluff.split("\n") if l.strip()][:4]
-                _lore_preview = "\n".join(_lore_lines)
-                tk.Label(lore_sec, text=_lore_preview, bg=_race_sec, fg="#aaaaaa",
-                         font=("Arial", 8, "italic"), wraplength=240,
-                         justify=tk.LEFT).pack(anchor="w", pady=(2, 4))
-
-                def _show_full_lore():
-                    lp = tk.Toplevel(win)
-                    lp.title(f"Lore — {race_name}")
-                    lp.geometry("560x500")
-                    lp.configure(bg="#1a1a2e")
-                    lp.attributes("-topmost", True)
-                    phdr2 = tk.Frame(lp, bg=color, pady=6)
-                    phdr2.pack(fill=tk.X)
-                    tk.Label(phdr2, text=f"📖 {race_name}", bg=color, fg="#0d0d0d",
-                             font=("Arial", 12, "bold")).pack(side=tk.LEFT, padx=12)
-                    tf2 = tk.Frame(lp, bg="#1a1a2e")
-                    tf2.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
-                    sc2 = tk.Scrollbar(tf2)
-                    sc2.pack(side=tk.RIGHT, fill=tk.Y)
-                    tw2 = tk.Text(tf2, wrap=tk.WORD, bg="#1a1a2e", fg="#cccccc",
-                                  font=("Consolas", 10), padx=12, pady=8,
-                                  relief="flat", highlightthickness=0,
-                                  yscrollcommand=sc2.set, cursor="arrow")
-                    tw2.pack(fill=tk.BOTH, expand=True)
-                    sc2.config(command=tw2.yview)
-                    for line in _fluff.split("\n"):
-                        s = line.strip()
-                        if s.startswith("▸ "):
-                            tw2.insert(tk.END, s + "\n", )
-                        else:
-                            tw2.insert(tk.END, s + "\n\n" if s else "\n")
-                    tw2.config(state=tk.DISABLED)
-                    tk.Button(lp, text="Fermer", bg="#333344", fg="#cccccc",
-                              font=("Arial", 9), relief="flat", padx=12, pady=4,
-                              command=lp.destroy).pack(pady=(0, 8))
-
-                tk.Button(lore_sec, text="Lire tout →", bg="#1a1a2e", fg=color,
-                          font=("Arial", 8), relief="flat", cursor="hand2",
-                          command=_show_full_lore).pack(anchor="w")
+                
+                lore_title = f"📖 Lore [{_src}]" if _src and _src != "?" else "📖 Lore"
+                tk.Label(lore_sec, text=lore_title, bg=_race_sec, fg=color,
+                         font=("Arial", 10, "bold")).pack(anchor="w", pady=(0, 4))
+                
+                txt_fr = tk.Frame(lore_sec, bg=_race_sec)
+                txt_fr.pack(fill=tk.X, expand=True)
+                
+                # Zone de texte défilable intégrée
+                txt_w = tk.Text(txt_fr, wrap=tk.WORD, bg="#1a1a2e", fg="#aaaaaa",
+                                font=("Arial", 9, "italic"), height=8,
+                                relief="flat", highlightthickness=0)
+                sc = tk.Scrollbar(txt_fr, command=txt_w.yview)
+                txt_w.configure(yscrollcommand=sc.set)
+                
+                txt_w.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                sc.pack(side=tk.RIGHT, fill=tk.Y)
+                
+                txt_w.tag_configure("heading", font=("Arial", 9, "bold"), foreground="#ffb74d")
+                txt_w.tag_configure("bullet", foreground="#cccccc")
+                
+                for line in _fluff.split("\n"):
+                    s = line.strip()
+                    if s.startswith("▸ "):
+                        txt_w.insert(tk.END, s + "\n\n", "heading")
+                    elif s.startswith("• "):
+                        txt_w.insert(tk.END, "  " + s + "\n", "bullet")
+                    else:
+                        txt_w.insert(tk.END, s + "\n\n" if s else "\n")
+                        
+                txt_w.config(state=tk.DISABLED)
+                
+                # Empêcher le widget Text d'intercepter la molette quand on veut scroller la fenêtre globale
+                def _redirect_scroll(e):
+                    rc_canvas.yview_scroll(int(-1*(e.delta or (1 if e.num == 4 else -1))*3), "units")
+                    return "break"
+                txt_w.bind("<MouseWheel>", _redirect_scroll)
+                txt_w.bind("<Button-4>", _redirect_scroll)
+                txt_w.bind("<Button-5>", _redirect_scroll)
 
             # Spacer bas
             tk.Frame(rc_inner, bg=_race_bg, height=20).pack(fill=tk.X)
@@ -1852,16 +2121,15 @@ class CharacterMixin:
         def _do_show():
             if not win.winfo_exists():
                 return
+            if _saved_geom:
+                _apply_win_geometry(win, _saved_geom, "300x680")
             win.deiconify()
             win.lift()
             if _saved_geom:
                 def _correct_drift():
                     try:
                         if win.winfo_exists():
-                            win.geometry(
-                                f"{_saved_geom['w']}x{_saved_geom['h']}"
-                                f"+{_saved_geom['x']}+{_saved_geom['y']}"
-                            )
+                            _apply_win_geometry(win, _saved_geom, "")
                     except Exception:
                         pass
                 win.after(300, _correct_drift)

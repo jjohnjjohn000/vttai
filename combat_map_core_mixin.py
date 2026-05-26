@@ -120,6 +120,12 @@ class CoreMixin:
         self._obs_color:     str           = "#cc4400"  # couleur courante
         self._obs_pil:       "Image.Image | None" = None  # calque PIL composité
 
+        # Chaque mur : {"p1": (x, y), "p2": (x, y)} en coordonnées monde
+        self._walls:          list          = []
+        self._wall_pts:       list          = []   # sommets du mur en cours
+        self._wall_ids:       list          = []   # canvas ids des lignes preview
+        self._wall_pil:       "Image.Image | None" = None  # calque PIL composité
+
         # ── Sélection multiple ────────────────────────────────────────────────
         self._selected_tokens:   set          = set()
         self._drag_origins:      dict         = {}

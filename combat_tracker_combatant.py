@@ -64,6 +64,9 @@ class Combatant:
         self.reaction_used= False
         self.move_used    = 0        # pieds dépensés
 
+        # Sorts (e.g., {"1": {"max": 4, "used": 0}})
+        self.spell_slots: dict = {}
+
         # Conditions actives {nom: True}
         self.conditions: dict = {}
         # Statuts tactiques {nom: True}
@@ -149,6 +152,7 @@ class Combatant:
             "action_used":        self.action_used,
             "bonus_used":         self.bonus_used,
             "reaction_used":      self.reaction_used,
+            "spell_slots":        self.spell_slots,
         }
 
     @classmethod
@@ -182,6 +186,7 @@ class Combatant:
         c.action_used         = d.get("action_used", False)
         c.bonus_used          = d.get("bonus_used", False)
         c.reaction_used       = d.get("reaction_used", False)
+        c.spell_slots         = d.get("spell_slots", {})
         for cond in d.get("conditions",[]):
             c.conditions[cond] = True
         for tac in d.get("tactics",[]):

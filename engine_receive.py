@@ -322,6 +322,8 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
         if _tr["action"]:
             _opts_a = "\n    - ".join([opt.replace("{_speed}", str(_speed)) for opt in _action_options])
             a_str  = f"✅ disponible\n    Options suggérées :\n    - {_opts_a}"
+        elif _tr.get("extra_attack_available", False):
+            a_str  = "❌ utilisée (MAIS ⚔️ Extra Attack DISPONIBLE !)"
         else:
             a_str  = "❌ utilisée"
 
@@ -351,8 +353,8 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
         else:
             mv_str = "❌ épuisé"
 
-        _any_left = _tr["action"] or _tr["bonus"] or _mv_rem > 0
-        _any_action_left = _tr["action"] or _tr["bonus"]
+        _any_left = _tr["action"] or _tr["bonus"] or _mv_rem > 0 or _tr.get("extra_attack_available", False)
+        _any_action_left = _tr["action"] or _tr["bonus"] or _tr.get("extra_attack_available", False)
 
         # Court-circuit : rien ne reste → prompt minimal, pas de bloc détaillé
         if not _any_left:
@@ -643,6 +645,11 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
             name       = sender.name
             tool_calls = None
 
+        if name in PLAYER_NAMES:
+            _ap = getattr(_app, "_pending_auto_prompt", None)
+            if _ap and _ap.startswith(f"[MJ → {name}]"):
+                _app._pending_auto_prompt = None
+
         if content and name in PLAYER_NAMES:
             _thoughts = _re.findall(r'<(?:thought|think)>(.*?)(?:</(?:thought|think)>|$)', str(content), flags=_re.IGNORECASE | _re.DOTALL)
             if _thoughts:
@@ -725,7 +732,8 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
         if (not is_system
                 and name in PLAYER_NAMES
                 and content
-                and str(content).strip() not in ("[SILENCE]", "")):
+                and str(content).strip() not in ("[SILENCE]", "")
+                and not COMBAT_STATE.get("active", False)):
             import re as _re_copy
             def _word_set(t):
                 return set(_re_copy.findall(r"[a-zA-ZÀ-ÿ]{4,}", t.lower()))
@@ -1299,7 +1307,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                     def _end_t1(_ev=_turn_advanced):
                         _trk = getattr(_app, "_combat_tracker_win", None) or getattr(_app, "_combat_tracker", None)
                         if _trk and hasattr(_trk, "_next_turn"):
-                            _trk._next_turn()   # appel direct : on est déjà sur le thread Tk
+                            _trk._next_turn(from_mj=False)   # appel direct : on est déjà sur le thread Tk
                         elif _trk and hasattr(_trk, "advance_turn"):
                             _trk.advance_turn() # fallback si _next_turn absent
                         _ev.set()
@@ -1365,8 +1373,10 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                 if COMBAT_STATE["active"]:
                     _tr_pre = _get_turn_res(name)
                     _req_type = (_sub.get("type_label") or "").lower()
+                    _req_intent = (_sub.get("intention") or "").lower()
+                    _req_regle = (_sub.get("regle") or "").lower()
                     
-                    _is_extra = any(k in _req_type for k in ("extra", "supplémentaire", "seconde", "deuxième"))
+                    _is_extra = any(k in _req_type + " " + _req_intent + " " + _req_regle for k in ("extra", "supplémentaire", "seconde", "deuxième"))
                     _is_req_act = "action" in _req_type and "action bonus" not in _req_type and "bonus" not in _req_type and not _is_extra
                     _is_req_ba = "action bonus" in _req_type or "bonus action" in _req_type or "bonus" in _req_type
                     
@@ -1438,22 +1448,23 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                 _t_low_spellcheck = (_sub.get("type_label") or "").lower()
                 _sk_combined_pre = (_sub.get("intention", "") + " " + _sub.get("regle", "") + " " + _t_low_spellcheck).lower()
                 _SKILL_OVERRIDE_PRE = ("se cacher", "cacher", "discrétion", "stealth", "aim", "steady aim", "visée", "viser", "jet de compétence", "skill check")
-                _is_physical_attack = (
-                    "attaque" in _t_low_spellcheck 
-                    and "sort" not in _t_low_spellcheck 
-                    and "magie" not in _t_low_spellcheck
-                    and not any(k in _sk_combined_pre for k in _SKILL_OVERRIDE_PRE)
-                )
-
-                _pre_is_spell = not _is_physical_attack and any(
-                    k in _sub["regle"].lower() or k in _sub["intention"].lower()
+                
+                _pre_is_spell = any(
+                    k in _sk_combined_pre
                     for k in (
                         "sort","magie","incant","invoque","appelle","convoque","projette","déclenche",
                         "boule","projectile","éclair","feu","dard","rayon","missile","flamme","froid",
                         "nécro","acide","tonnerre","soin","soigne","heal","cure","guéri","restaure",
                         "parole","bénédic","sanctif","gardien","arme spirit","bannit","contresort",
                         "dissip","mur de","bouclier","protection","résistance","balise",
+                        "trait","blast","bolt","givre","sacré","sacred"
                     )
+                )
+
+                _is_physical_attack = (
+                    "attaque" in _t_low_spellcheck 
+                    and not _pre_is_spell
+                    and not any(k in _sk_combined_pre for k in _SKILL_OVERRIDE_PRE)
                 )
                 
                 # ── EXEMPTION CAPACITÉS DE CLASSE ──
@@ -1731,37 +1742,91 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                         else:
                             _supers2 = _slots_superieurs_disponibles(name, _pre_lvl)
                             _spell_nm = extract_spell_name_llm(f"{_sub.get('intention', '')} {_sub.get('regle', '')}", name) or "ce sort"
+                            
+                            _upcast_granted = False
+                            
                             if _supers2:
-                                _upcast_hint2 = (
-                                    f"\n  ↑ UPCAST DISPONIBLE : tu peux lancer {_spell_nm} "
-                                    f"avec un slot de niveau supérieur.\n"
-                                    f"  Niveaux disponibles : {', '.join(str(l) for l in _supers2)}\n"
-                                    f"  → Fais un nouveau bloc [ACTION] en précisant le niveau voulu dans 'Règle 5e' (ex: {_spell_nm} niv.{_supers2[0]})."
+                                _next_lvl = _supers2[0]
+                                _prompt = (
+                                    f"Le personnage {name} tente de lancer le sort '{_spell_nm}' (niveau {_pre_lvl}), "
+                                    f"mais n'a plus d'emplacement de ce niveau. Il possède des emplacements de niveau supérieur : {', '.join(str(l) for l in _supers2)}. "
+                                    f"L'intention était : '{_sub.get('intention', '')}'.\n"
+                                    f"Le système peut utiliser automatiquement l'emplacement de niveau {_next_lvl} pour ne pas bloquer l'action.\n"
+                                    f"Es-tu d'accord pour que le sort soit lancé au niveau {_next_lvl} ? "
+                                    f"Réponds UNIQUEMENT par OUI ou NON."
                                 )
-                            else:
-                                _upcast_hint2 = (
-                                    f"\n  Aucun emplacement de niveau supérieur disponible non plus."
-                                )
-                            _no_slot_fb = (
-                                f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE — {name}]\n"
-                                f"{name} n'a plus d'emplacement de sort de niveau {_pre_lvl}. "
-                                f"Ce sort ne peut pas être lancé à ce niveau.\n"
-                                f"{_upcast_hint2}\n\n"
-                                f"[INSTRUCTION]\n"
-                                f"Choisis parmi : upcast (slot sup. si ✅ ci-dessus), "
-                                f"sort de niveau inférieur, tour de magie, ou attaque physique."
-                            )
-                            _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_slot_fb, "color": "#cc4444"})
-                            _app._pending_combat_trigger = _no_slot_fb
-                            _app._pending_impossible_retrigger = None  # FIX : stale après request_reply=True
-                            _refus_public = f"{name} : tentative de sort impossible (plus d'emplacement de ce niveau). Nouvelle déclaration requise."
-                            _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
-                            _original_receive(self_mgr, {"role": "user", "content": _refus_public, "name": "Alexis_Le_MJ"}, sender, request_reply=False, silent=False)
-                            _original_receive(self_mgr, {"role": "user", "content": f"Continue ton tour, {name}. Déclare une action différente.", "name": "Alexis_Le_MJ"}, sender, request_reply=True, silent=False)
-                            _sub_ev.set()
-                            return
+                                try:
+                                    from llm_probe import chronicler_llm_call_with_probe
+                                    from app_config import get_chronicler_config
+                                    from agent_logger import log_chronicler_prompt, log_chronicler_response
+                                    
+                                    _chron_cfg = get_chronicler_config()
+                                    _model_chron = _chron_cfg.get("model", _default_model)
+                                    _full_cfg_chron = build_llm_config(_model_chron, temperature=0.0)
+                                    
+                                    log_chronicler_prompt("Upcast Probe", "Analyse de la demande d'Upcast automatique.", [{"role": "user", "content": _prompt}])
+                                    
+                                    _raw_llm = chronicler_llm_call_with_probe(
+                                        config_list=_full_cfg_chron["config_list"],
+                                        messages=[{"role": "user", "content": _prompt}],
+                                        context_label="Upcast Decision",
+                                        temperature=0.0,
+                                        max_tokens=20
+                                    )
+                                    
+                                    log_chronicler_response("Upcast Probe", _raw_llm)
+                                    
+                                    if _raw_llm:
+                                        import re as _re_up
+                                        _raw_clean = _re_up.sub(r'<(?:thought|think)>.*?</(?:thought|think)>', '', _raw_llm, flags=_re_up.IGNORECASE | _re_up.DOTALL)
+                                        if "OUI" in _raw_clean.upper():
+                                            _upcast_granted = True
+                                            _old_lvl = _pre_lvl
+                                            _pre_lvl = _next_lvl  # On met à jour le niveau pour tout le reste du processus
+                                            _app.msg_queue.put({
+                                                "sender": "⚙️ Système", 
+                                                "text": f"✨ [Upcast Automatique] {name} n'avait plus de slot niv.{_old_lvl}. Le Chroniqueur a approuvé l'upcast au niv.{_next_lvl} pour {_spell_nm}.", 
+                                                "color": "#aa88cc"
+                                            })
+                                except Exception as e:
+                                    print(f"[UpcastProbe] Erreur : {e}")
 
-                _pre_spell_candidate = extract_spell_name_llm(f"{_sub.get('intention', '')} {_sub.get('regle', '')}", name)
+                            # Si l'upcast a été refusé ou s'il n'y a pas de slot supérieur, on rejette le sort
+                            if not _upcast_granted:
+                                if _supers2:
+                                    _upcast_hint2 = (
+                                        f"\n  ↑ UPCAST DISPONIBLE : tu peux lancer {_spell_nm} "
+                                        f"avec un slot de niveau supérieur.\n"
+                                        f"  Niveaux disponibles : {', '.join(str(l) for l in _supers2)}\n"
+                                        f"  → Fais un nouveau bloc [ACTION] en précisant le niveau voulu dans 'Règle 5e' (ex: {_spell_nm} niv.{_supers2[0]})."
+                                    )
+                                else:
+                                    _upcast_hint2 = (
+                                        f"\n  Aucun emplacement de niveau supérieur disponible non plus."
+                                    )
+                                _no_slot_fb = (
+                                    f"[RÉSULTAT SYSTÈME — SORT IMPOSSIBLE — {name}]\n"
+                                    f"{name} n'a plus d'emplacement de sort de niveau {_pre_lvl}. "
+                                    f"Ce sort ne peut pas être lancé à ce niveau.\n"
+                                    f"{_upcast_hint2}\n\n"
+                                    f"[INSTRUCTION]\n"
+                                    f"Choisis parmi : upcast (slot sup. si ✅ ci-dessus), "
+                                    f"sort de niveau inférieur, tour de magie, ou attaque physique."
+                                )
+                                _app.msg_queue.put({"sender": "⚙️ Système", "text": _no_slot_fb, "color": "#cc4444"})
+                                _app._pending_combat_trigger = _no_slot_fb
+                                _app._pending_impossible_retrigger = None  # FIX : stale après request_reply=True
+                                _refus_public = f"{name} : tentative de sort impossible (plus d'emplacement de ce niveau). Nouvelle déclaration requise."
+                                _original_receive(self_mgr, message, sender, request_reply=False, silent=True)
+                                _original_receive(self_mgr, {"role": "user", "content": _refus_public, "name": "Alexis_Le_MJ"}, sender, request_reply=False, silent=False)
+                                _original_receive(self_mgr, {"role": "user", "content": f"Continue ton tour, {name}. Déclare une action différente.", "name": "Alexis_Le_MJ"}, sender, request_reply=True, silent=False)
+                                _sub_ev.set()
+                                return
+
+                _pre_spell_candidate = None
+                if _pre_is_spell:
+                    _pre_spell_candidate = extract_spell_name_llm(f"{_sub.get('intention', '')} {_sub.get('regle', '')}", name)
+                
                 if _pre_spell_candidate:
                     if not is_spell_prepared(name, _pre_spell_candidate):
                         _avail2 = get_prepared_spell_names(name)
@@ -2273,8 +2338,48 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 print(f"[Caché/Invisible Status] Erreur retrait automatique : {e}")
 
                     _is_single_atk = _sub.get("single_attack", False)
+                    
+                    # ── FORCER LE FLOW DE SORT SI C'EST UN SORT DÉTECTÉ ──
+                    if _pre_spell_candidate:
+                        _BUFF_SPELLS = {
+                            "divine favor", "faveur divine", "hex", "maléfice", "hunter's mark",
+                            "marque du chasseur", "holy weapon", "arme sainte", "crusader's mantle",
+                            "manteau du croisé", "magic weapon", "arme magique", "elemental weapon",
+                            "arme élémentaire", "absorb elements", "absorption d'éléments",
+                            "enlarge/reduce", "agrandissement/rapetissement", "shadow blade",
+                            "lame de l'ombre", "flame blade", "lame de flammes",
+                            "bless", "bénédiction", "guidance", "assistance", "bane", "fléau"
+                        }
+                        # Si le sort détecté est juste un enchantement/buff appliqué sur 
+                        # une attaque physique (ex: Divine Favor), on PRÉSERVE l'attaque physique !
+                        if _pre_spell_candidate.strip().lower() not in _BUFF_SPELLS:
+                            _is_single_atk = False
 
                     if _is_single_atk:
+                        # ── Extra Attack : activer/désactiver le flag ──
+                        # DOIT ÊTRE ICI AU DÉBUT, car si l'attaque rate (Nat.1 ou raté classique),
+                        # le code fait un 'continue' et saute la fin du bloc. L'agent pourrait
+                        # alors lancer des Extra Attacks à l'infini si le flag n'est pas mis à jour !
+                        _ea_combined = (_sub.get("type_label","") + " " + _sub.get("intention","") + " " + _sub.get("regle","")).lower()
+                        _is_extra_atk = any(k in _ea_combined for k in (
+                            "extra attack", "seconde attaque", "deuxième attaque",
+                            "2e attaque", "2ème attaque",
+                        ))
+                        _req_type_ea = (_sub.get("type_label") or "").lower()
+                        _is_req_act_ea = "action" in _req_type_ea and "action bonus" not in _req_type_ea and "bonus" not in _req_type_ea and not _is_extra_atk
+
+                        _has_extra_attack = _CM.get(name, {}).get("extra_attack", False)
+                        if _has_extra_attack and not _is_extra_atk and _is_req_act_ea:
+                            _tr_ea = _get_turn_res(name)
+                            if not _tr_ea.get("extra_attack_available", False) and not _tr_ea.get("extra_attack_used", False):
+                                _tr_ea["extra_attack_available"] = True
+                                if hasattr(_app, "_update_agent_combat_prompts"):
+                                    _app._update_agent_combat_prompts()
+                        elif _is_extra_atk:
+                            _get_turn_res(name)["extra_attack_available"] = False
+                            _get_turn_res(name)["extra_attack_used"] = True
+                        # ────────────────────────────────────────────────────
+
                         # ── FLOW ATTAQUE INDIVIDUELLE (Phase 1 / 2 / 3) ──────
                         _narr_sa = _build_action_narrative(
                             name, _sub["type_label"], _sub["intention"], _sub["cible"]
@@ -2370,6 +2475,7 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                 "branding smite":   ("2d6", "radiant",   "Branding Smite"),
                                 "frappe lumière":   ("2d6", "radiant",   "Branding Smite"),
                             }
+                            _sm_found = False
                             for _kw, (_dice, _typ, _lbl) in _inline_smite_table.items():
                                 if (_kw in _sub_i_low or _kw in _sub_r_low or _kw in _full_msg_low):
                                     _sm_lvl = None
@@ -2384,8 +2490,36 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                         _sm_lvl = 1
                                     if _dice is None:
                                         _dice = f"{_sm_lvl + 1}d8"
-                                    ctx.pending_smite[name] = {"dice": _dice, "type": _typ, "label": _lbl}
+                                    ctx.pending_smite[name] = {"dice": _dice, "type": _typ, "label": _lbl, "slot_level": _sm_lvl}
+                                    _sm_found = True
                                     break
+                            
+                            # Si aucun smite hardcodé n'est trouvé, on cherche dynamiquement un sort préparé lié à l'attaque
+                            if not _sm_found:
+                                _attached_spell = extract_spell_name_llm(_sub.get('intention', '') + ' ' + _sub.get('regle', ''), name)
+                                if _attached_spell:
+                                    _sm_lvl = None
+                                    for _pat in (r"niv(?:eau)?\.?\s*(\d+)", r"\bniv(\d+)",
+                                                 r"slot\s+(?:de\s+)?(?:niveau\s+)?(\d)",
+                                                 r"emplacement\s+(?:de\s+)?(?:niveau\s+)?(\d)"):
+                                        _pm = _re.search(_pat, _sub_i_low + " " + _sub_r_low, _re.IGNORECASE)
+                                        if _pm:
+                                            _sm_lvl = int(_pm.group(1))
+                                            break
+                                    if _sm_lvl is None:
+                                        try:
+                                            from spell_data import get_spell as _gs_lvl
+                                            _sp_data = _gs_lvl(_attached_spell)
+                                            _sm_lvl = int(_sp_data.get("level", 1)) if _sp_data else 1
+                                        except Exception:
+                                            _sm_lvl = 1
+                                            
+                                    ctx.pending_smite[name] = {
+                                        "dice": "Voir sort", 
+                                        "type": "Magie", 
+                                        "label": _attached_spell, 
+                                        "slot_level": _sm_lvl
+                                    }
 
                         if name in ctx.pending_smite:
                             _sm_candidate = ctx.pending_smite[name]
@@ -2425,11 +2559,12 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                                     "color": "#cc4444",
                                 })
                             else:
+                                _action_verb = "appliquer le smite" if "smite" in _sm_candidate['label'].lower() else "consommer l'emplacement"
                                 _smite_txt = (
-                                    f"{name} a {_sm_candidate['label']} actif.\n"
-                                    f"Dés : {_sm_candidate['dice']} dégâts {_sm_candidate['type']}\n"
+                                    f"{name} a {_sm_candidate['label']} actif/détecté.\n"
+                                    f"Effet/Dés : {_sm_candidate['dice']} ({_sm_candidate['type']})\n"
                                     f"Slots disponibles : {_slots_avail_str}\n"
-                                    f"L'attaque a touché — appliquer le smite ?"
+                                    f"L'attaque a touché — {_action_verb} ?"
                                 )
                                 _app._register_approval_event(_smite_ev)
                                 _app.msg_queue.put({
@@ -2642,26 +2777,6 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             sender, request_reply=False, silent=True,
                         )
 
-                        # ── Extra Attack : activer si c'est la 1re attaque
-                        # d'action (pas une Extra Attack elle-même) et que
-                        # le perso a la capacité Extra Attack.
-                        _ea_combined = (_sub.get("intention","") + " " + _sub.get("regle","")).lower()
-                        _is_extra_atk = any(k in _ea_combined for k in (
-                            "extra attack", "seconde attaque", "deuxième attaque",
-                            "2e attaque", "2ème attaque",
-                        ))
-                        _has_extra_attack = _CM.get(name, {}).get("extra_attack", False)
-                        if _has_extra_attack and not _is_extra_atk:
-                            _tr_ea = _get_turn_res(name)
-                            if not _tr_ea.get("extra_attack_available", False):
-                                _tr_ea["extra_attack_available"] = True
-                                if hasattr(_app, "_update_agent_combat_prompts"):
-                                    _app._update_agent_combat_prompts()
-                        elif _is_extra_atk:
-                            _get_turn_res(name)["extra_attack_available"] = False
-                            _get_turn_res(name)["extra_attack_used"] = True
-                        # ────────────────────────────────────────────────────
-
                     else:
                         # ── FLOW NON-ATTAQUE ──────────────────────────────────
 
@@ -2840,6 +2955,22 @@ def build_patched_receive(ctx: EngineContext, groupchat_ref: list):
                             try:
                                 _consumed_slot = False
                                 if _pre_is_spell and _pre_spell_candidate:
+                                    # ── SÉCURITÉ ANTI-DÉGÂTS POUR LES BUFFS ──
+                                    # Empêche le parseur de fallback de prendre les dés de buff (ex: 1d4 radiant)
+                                    # pour des dégâts directs (ce qui déclencherait un auto-hit erroné).
+                                    _NON_DMG_SPELLS = {
+                                        "divine favor", "faveur divine", "hex", "maléfice", "hunter's mark",
+                                        "marque du chasseur", "holy weapon", "arme sainte", "crusader's mantle",
+                                        "manteau du croisé", "magic weapon", "arme magique", "elemental weapon",
+                                        "arme élémentaire", "absorb elements", "absorption d'éléments",
+                                        "enlarge/reduce", "agrandissement/rapetissement", "shadow blade",
+                                        "lame de l'ombre", "flame blade", "lame de flammes",
+                                        "bless", "bénédiction", "guidance", "assistance", "bane", "fléau"
+                                    }
+                                    if _pre_spell_candidate.strip().lower() in _NON_DMG_SPELLS:
+                                        _sub["regle"] = _re.sub(r'\b\d+d\d+(?:\s*[+\-]\s*\d+)?\b', '', _sub.get("regle", ""), flags=_re.IGNORECASE)
+                                        _sub["intention"] = _re.sub(r'\b\d+d\d+(?:\s*[+\-]\s*\d+)?\b', '', _sub.get("intention", ""), flags=_re.IGNORECASE)
+
                                     from spell_data import get_spell as _get_sp_fi
                                     _sp_fi = _get_sp_fi(_pre_spell_candidate)
                                     if _sp_fi:

@@ -24,6 +24,7 @@ class ToolEventMixin:
         """
         self._poly_cancel()
         self._obs_cancel()
+        self._wall_cancel()
         
         # --- NOUVEAU : Annuler un glisser-déposer de token en cours ---
         if getattr(self, "_drag_token", None) is not None:
@@ -33,6 +34,31 @@ class ToolEventMixin:
             self._redraw_all_tokens()  # Remet les tokens à leur place d'origine
             
         self._set_tool("select")
+
+    def _middle_click_action(self, event):
+        """Change automatiquement d'outil selon l'élément cliqué."""
+        cx, cy = self._canvas_xy(event)
+        
+        # 1. Porte
+        if hasattr(self, "_door_handle_at") and self._door_handle_at(cx, cy):
+            self._set_tool("door")
+            return
+        if hasattr(self, "_door_at") and self._door_at(cx, cy):
+            self._set_tool("door")
+            return
+            
+        # 2. Note
+        if hasattr(self, "_note_at") and self._note_at(cx, cy):
+            self._set_tool("note")
+            return
+            
+        # 3. Token
+        if hasattr(self, "_tok_at") and self._tok_at(cx, cy):
+            self._set_tool("select")
+            return
+            
+        # 4. Par défaut (Brouillard, Obstacles, Murs)
+        self._set_tool("reveal")
 
     def _set_tool(self, tool: str):
         prev_tool = self.tool
@@ -44,7 +70,8 @@ class ToolEventMixin:
                     "add": "plus", "note": "pencil", "resize_map": "fleur",
                     "door": "hand2", "obstacle_poly": "crosshair",
                     "obstacle_free": "pencil",
-                    "erase_obs": "dotbox"}
+                    "erase_obs": "dotbox",
+                    "wall": "crosshair", "erase_wall": "dotbox"}
         statuses = {
             "select":        "Sélection — glisser tokens | double-clic : éditer | clic droit : menu contextuel",
             "pointer":       "Pointer — cliquer sur la carte pour ajouter un commentaire MJ + envoyer l'image au chat",
@@ -59,6 +86,8 @@ class ToolEventMixin:
             "obstacle_poly": "Obstacle (polygone) — clic gauche : sommet | clic droit : valider et nommer | Échap : annuler",
             "obstacle_free": "Obstacle (main levée) — cliquer-glisser pour dessiner | relâcher : valider | Échap : annuler | clic droit (select) : menu obstacle",
             "erase_obs":     "Efface — cliquer-glisser pour supprimer les obstacles touchés | le rayon contrôle la taille",
+            "wall":          "Mur — clic gauche : placer 1er point | 2e clic : créer le mur | clic droit : annuler | Échap : annuler",
+            "erase_wall":    "Eff. Mur — cliquer près d'un mur pour le supprimer",
             "resize_map":    "Carte — glisser une poignée pour redimensionner | "
                              "glisser le centre pour déplacer | Shift = ratio fixe",
         }
@@ -84,6 +113,10 @@ class ToolEventMixin:
         # Effacer le curseur d'efface si on quitte l'outil
         if prev_tool == "erase_obs" and tool != "erase_obs":
             self.canvas.delete("erase_preview")
+
+        # Annuler mur en cours si on change d'outil
+        if prev_tool in ("wall",) and tool != "wall":
+            self._wall_cancel()
 
         # Effacer la règle si on change d'outil
         if prev_tool == "ruler" and tool != "ruler":
@@ -132,6 +165,22 @@ class ToolEventMixin:
     def _mb1_down(self, event):
         cx, cy = self._canvas_xy(event)
         self._last_fog_cell = None
+
+        hit_handle = self._door_handle_at(cx, cy)
+        if hit_handle is not None:
+            self._drag_door_handle = hit_handle
+            self._drag_door_start_xy = (event.x, event.y)
+            return
+
+        hit_door = self._door_at(cx, cy)
+        if hit_door is not None:
+            if self.tool == "door":
+                self._drag_door = hit_door
+                self._drag_door_start_xy = (event.x, event.y)
+                cpx = hit_door.get("px", (hit_door.get("col", 0) + 0.5) * self.cell_px)
+                cpy = hit_door.get("py", (hit_door.get("row", 0) + 0.5) * self.cell_px)
+                self._drag_door_off = (cx - cpx * self.zoom, cy - cpy * self.zoom)
+
         if self.tool == "pointer":
             self._pointer_click(cx, cy)
             return
@@ -155,8 +204,7 @@ class ToolEventMixin:
                                        cy - hit["py"] * self.zoom)
             # sinon : on attend le release (pas de drag) pour créer
         elif self.tool == "door":
-            col, row = self._canvas_to_cell(cx, cy)
-            self._door_toggle_or_create(col, row)
+            pass # handled universally above
         elif self.tool == "obstacle_poly":
             self._obs_poly_add(cx, cy)
         elif self.tool == "obstacle_free":
@@ -164,6 +212,10 @@ class ToolEventMixin:
         elif self.tool == "erase_obs":
             self._obs_erase_at(cx, cy)
             self._draw_erase_cursor(cx, cy)
+        elif self.tool == "wall":
+            self._wall_click(cx, cy)
+        elif self.tool == "erase_wall":
+            self._wall_erase_at(cx, cy)
         elif self.tool == "select":
             if self._drag_token is None:
                 self._box_select_begin(cx, cy)
@@ -177,15 +229,78 @@ class ToolEventMixin:
             self._redraw_one_note(n)
         elif self._drag_token is not None:
             self._tok_drag(event, self._drag_token)
+        elif getattr(self, "_drag_door_handle", None) is not None:
+            import math
+            d = self._drag_door_handle
+            
+            d_px = d.get("px", (d.get("col", 0) + 0.5) * self.cell_px)
+            d_py = d.get("py", (d.get("row", 0) + 0.5) * self.cell_px)
+            scale = self._cp / self.cell_px
+            cx_ = d_px * scale
+            cy_ = d_py * scale
+            angle_rad = math.radians(d.get("rotation", 0))
+            
+            mirrored = d.get("mirrored", False)
+            m = 1 if not mirrored else -1
+            w = self._cp * d.get("length_scale", 1.0)
+            
+            hx, hy = m * (-w / 2), 0
+            cos_a = math.cos(angle_rad)
+            sin_a = math.sin(angle_rad)
+            hinge_x = cx_ + hx * cos_a - hy * sin_a
+            hinge_y = cy_ + hx * sin_a + hy * cos_a
+            
+            dx = cx - hinge_x
+            dy = cy - hinge_y
+            raw_angle = math.degrees(math.atan2(dy, dx))
+            local_angle = raw_angle - d.get("rotation", 0)
+            
+            if not mirrored:
+                sweep = (local_angle + 360) % 360
+                if sweep > 180: sweep -= 360
+                open_angle = max(0, min(90, sweep))
+            else:
+                sweep = (local_angle + 360) % 360
+                d_ang = 180 - sweep
+                if d_ang < -180: d_ang += 360
+                open_angle = max(0, min(90, d_ang))
+
+            if open_angle < 5:
+                d["open"] = False
+                d["open_angle"] = 0
+            else:
+                d["open"] = True
+                d["open_angle"] = open_angle
+            if open_angle > 85:
+                d["open_angle"] = 90
+                
+            self._redraw_one_door(d)
+        elif getattr(self, "_drag_door", None) is not None:
+            import math
+            d = self._drag_door
+            if event.state & 0x0001:  # Shift held down
+                dx = cx - (d.get("px", 0) * self.zoom)
+                dy = cy - (d.get("py", 0) * self.zoom)
+                angle = math.degrees(math.atan2(dy, dx))
+                d["rotation"] = angle
+            else:
+                d["px"] = (cx - self._drag_door_off[0]) / self.zoom
+                d["py"] = (cy - self._drag_door_off[1]) / self.zoom
+            self._redraw_one_door(d)
         elif self.tool in ("brush_reveal", "brush_hide"):
             self._brush_fog(cx, cy)
         elif self.tool == "erase_obs":
             self._obs_erase_at(cx, cy)
             self._draw_erase_cursor(cx, cy)
+        elif self.tool == "erase_wall":
+            self._wall_erase_at(cx, cy)
+            self._draw_erase_cursor(cx, cy)
         elif self.tool == "ruler" and getattr(self, "_ruler_start_pt", None) is not None:
             self._ruler_update(cx, cy)
         elif self.tool == "obstacle_free" and self._obs_free_pts:
             self._obs_free_move(cx, cy)
+        elif self.tool == "wall" and self._wall_pts:
+            self._wall_preview_move(cx, cy)
         elif self._box_select_start is not None:
             self._box_select_update(cx, cy)
         elif self.tool == "resize_map":
@@ -204,6 +319,10 @@ class ToolEventMixin:
             self.canvas.delete("erase_preview")
             self._save_state()
             return
+        if self.tool == "erase_wall":
+            self.canvas.delete("erase_preview")
+            self._save_state()
+            return
         if self.tool == "ruler":
             self._ruler_end()
             return
@@ -215,6 +334,36 @@ class ToolEventMixin:
             # Pas de drag → créer une nouvelle note
             if not self._note_at(cx, cy):
                 self._create_note(cx, cy)
+        elif getattr(self, "_drag_door_handle", None) is not None:
+            d = getattr(self, "_drag_door_handle", None)
+            start_xy = getattr(self, "_drag_door_start_xy", None)
+            if start_xy:
+                dx = abs(event.x - start_xy[0])
+                dy = abs(event.y - start_xy[1])
+                if dx <= 3 and dy <= 3:
+                     # toggle
+                     was_open = d.get("open", False)
+                     d["open"] = not was_open
+                     d["open_angle"] = 90 if d["open"] else 0
+                     self._redraw_one_door(d)
+                self._cut_walls_with_door(d)
+            self._save_state()
+            self._drag_door_handle = None
+            self._drag_door_start_xy = None
+        elif getattr(self, "_drag_door", None) is not None:
+            d = getattr(self, "_drag_door", None)
+            start_xy = getattr(self, "_drag_door_start_xy", None)
+            if start_xy:
+                dx = abs(event.x - start_xy[0])
+                dy = abs(event.y - start_xy[1])
+                if dx > 3 or dy > 3:
+                    self._cut_walls_with_door(d)
+            self._save_state()
+            self._drag_door = None
+            self._drag_door_start_xy = None
+        elif self.tool == "door" and getattr(self, "_drag_door", None) is None:
+            if getattr(self, "_clicked_door", None) is None and not self._door_at(cx, cy):
+                self._door_create(cx, cy)
         elif self._drag_token is not None:
             self._tok_release(event, self._drag_token)
         elif self._box_select_start is not None:
@@ -233,6 +382,10 @@ class ToolEventMixin:
         if self.tool in ("reveal", "hide"):
             self._poly_apply()
             return
+        # Mur en cours → valider
+        if self.tool == "wall":
+            self._wall_apply()
+            return
         # Obstacle poly en cours → valider
         if self.tool == "obstacle_poly":
             self._obs_poly_apply()
@@ -242,8 +395,7 @@ class ToolEventMixin:
             self._obs_delete_at(cx, cy)
             return
         # Clic droit sur une porte → menu contextuel
-        col, row = self._canvas_to_cell(cx, cy)
-        door_hit = self._door_at(col, row)
+        door_hit = self._door_at(cx, cy)
         if door_hit is not None:
             self._show_door_context_menu(event, door_hit)
             return
@@ -274,13 +426,9 @@ class ToolEventMixin:
                 break
 
         if hit_tok is not None:
-            # Si le token touché fait partie d'une sélection (≥1 token)
-            # → menu contextuel pour toute la sélection
-            if id(hit_tok) in self._selected_tokens and len(self._selected_tokens) >= 1:
-                self._show_selection_context_menu(event, hit_tok)
-                return
-            # Token isolé → menu contextuel (renommer, déplacer, supprimer)
+            # Appel du menu unifié qui gère seul la sélection (simple ou multiple)
             self._show_token_context_menu(event, hit_tok)
+            return
 
     def _drop_drag_anchor(self, event):
         """Dépose un point de passage sur la case survolée pendant un drag."""
@@ -303,16 +451,60 @@ class ToolEventMixin:
     # ─── Menus contextuels ────────────────────────────────────────────────────
 
     def _show_token_context_menu(self, event, tok):
-        """Menu contextuel clic droit sur un token isolé (non sélectionné)."""
+        """Menu contextuel unifié clic droit sur un token (gère la sélection simple/multiple)."""
+        if not hasattr(self, "_selected_tokens"):
+            self._selected_tokens = set()
+
+        # Si le token cliqué n'est pas dans la sélection, on le sélectionne
+        if id(tok) not in self._selected_tokens:
+            if hasattr(self, "_clear_selection"):
+                self._clear_selection()
+            else:
+                self._selected_tokens.clear()
+            self._selected_tokens.add(id(tok))
+            self._redraw_all_tokens()
+
+        targets = [t for t in self.tokens if id(t) in self._selected_tokens]
+        valid_targets = [t for t in targets if t.get("type") != "hero"]
+
         menu = tk.Menu(self.canvas, tearoff=0,
                        bg="#1a1a2e", fg="#dde0e8",
                        activebackground="#2a2a4e", activeforeground="#ffffff",
                        font=("Consolas", 9))
-        name = tok.get("name", "?")
-        hp, max_hp = tok.get("hp", -1), tok.get("max_hp", -1)
-        hp_txt = f"  PV {hp}/{max_hp}" if hp >= 0 else ""
-        menu.add_command(label=f"── {name} ({tok['type']}){hp_txt} ──", state="disabled")
+                       
+        if len(targets) > 1:
+            menu.add_command(label=f"── Sélection ({len(targets)} tokens) ──", state="disabled")
+        else:
+            name = tok.get("name", "?")
+            hp, max_hp = tok.get("hp", -1), tok.get("max_hp", -1)
+            hp_txt = f"  PV {hp}/{max_hp}" if hp >= 0 else ""
+            menu.add_command(label=f"── {name} ({tok['type']}){hp_txt} ──", state="disabled")
+
         menu.add_separator()
+
+        # ── MASQUER / RÉVÉLER (SÉLECTION MULTIPLE) ──
+        if not valid_targets:
+            menu.add_command(label="👻 Masquer/Révéler (Ignoré sur Héros)", state=tk.DISABLED)
+        else:
+            any_visible = any(not t.get("hidden", False) for t in valid_targets)
+            action_label = "👻 Masquer la sélection" if any_visible else "👁️ Révéler la sélection"
+
+            def _toggle_hidden():
+                for t in valid_targets:
+                    t["hidden"] = any_visible
+                    t.pop("_fp", None)
+                    action_str = "Masqué (Invisible)" if any_visible else "Révélé (Visible)"
+                    color = "#b388ff" if any_visible else "#ffd54f"
+                    if hasattr(self, "spawn_floating_text"):
+                        self.spawn_floating_text(t, f"[{action_str}]", color=color)
+                self._redraw_all_tokens()
+                if hasattr(self, "_save_state"):
+                    self._save_state()
+
+            menu.add_command(label=action_label, command=_toggle_hidden)
+            
+        menu.add_separator()
+
         menu.add_command(label="✏  Renommer",
                          command=lambda: self._rename_token(tok))
         menu.add_command(label="❤  Modifier PV",
@@ -346,28 +538,43 @@ class ToolEventMixin:
         # ─── TRACKER / BESTIARY ──────────────────────────────────────────────
         menu.add_separator()
 
-        # Fiche de monstre — visible seulement si bestiary_name est connu
         bname = tok.get("bestiary_name", "").strip()
         if not bname:
-            # Tentative de résolution à la volée pour l'affichage du menu
-            bname, _ = self._resolve_bestiary_name(tok)
-            if bname:
-                tok["bestiary_name"] = bname   # mise en cache immédiate
+            if hasattr(self, "_resolve_bestiary_name"):
+                bname, _ = self._resolve_bestiary_name(tok)
+                if bname:
+                    tok["bestiary_name"] = bname
 
         if bname:
             menu.add_command(
                 label=f"📋  Fiche : {bname}",
-                command=lambda b=bname, n=name:
+                command=lambda b=bname, n=tok.get("name", "?"):
                     self._open_monster_sheet_for_token(n, b))
 
-        # Envoyer au tracker — toujours disponible (gère les cas dégradés)
         menu.add_command(
             label="⚔️  Envoyer au Tracker",
             command=lambda: self._send_token_to_tracker(tok))
 
         menu.add_separator()
-        menu.add_command(label="✕  Supprimer",
-                         command=lambda: self._delete_single_token(tok))
+        # ─── VISION ───
+        if hasattr(self, "_get_token_darkvision_ft"):
+            dv_ft = self._get_token_darkvision_ft(tok)
+            menu.add_command(label=f"👁  Révéler la vision [{dv_ft}ft]",
+                             command=lambda: self._reveal_vision_menu_action(tok))
+        if hasattr(self, "_edit_token_darkvision"):
+            menu.add_command(label="👁  Modifier darkvision",
+                             command=lambda: self._edit_token_darkvision(tok))
+        
+        menu.add_separator()
+        
+        # ── Supprimer (gère la sélection multiple) ──
+        def _delete_selection():
+            for t in targets:
+                self._delete_single_token(t)
+                
+        del_lbl = "✕  Supprimer" if len(targets) == 1 else f"✕  Supprimer la sélection ({len(targets)})"
+        menu.add_command(label=del_lbl, command=_delete_selection)
+        
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -406,6 +613,9 @@ class ToolEventMixin:
         toggle_lbl = "Fermer" if door["open"] else "Ouvrir"
         menu.add_command(label=f"🚪  {toggle_lbl}",
                          command=lambda: self._door_toggle_open(door))
+        mirror_lbl = "🔄  Miroir (inverser charnière)"
+        menu.add_command(label=mirror_lbl,
+                         command=lambda: self._door_toggle_mirror(door))
         menu.add_command(label="✏  Éditer le label",
                          command=lambda: self._edit_door_label(door))
         menu.add_separator()
@@ -415,6 +625,12 @@ class ToolEventMixin:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _door_toggle_mirror(self, door):
+        """Inverse la charnière de la porte (gauche ↔ droite)."""
+        door["mirrored"] = not door.get("mirrored", False)
+        self._redraw_one_door(door)
+        self._save_state()
 
     def _show_obstacle_context_menu(self, event, obs):
         """Menu contextuel clic droit sur un obstacle (outil select)."""

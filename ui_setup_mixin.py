@@ -244,6 +244,9 @@ class UISetupMixin:
         tk.Button(action_frame, text="📖 Chroniques & Mémoires", bg="#1e1a3a", fg="#c8b8ff",
                   font=("Arial", 10, "bold"), command=self.open_campaign_log_viewer).pack(fill=tk.X, pady=3)
 
+        tk.Button(action_frame, text="📖 Compendium D&D 5e", bg="#1a2e2a", fg="#c8a820",
+                  font=("Arial", 10, "bold"), command=lambda: __import__('compendium_window').open_compendium(self.root)).pack(fill=tk.X, pady=3)
+
         tk.Button(action_frame, text="🃏 Tirage Tarokka", bg="#4a1e3a", fg="#ffb8c6",
                   font=("Arial", 10, "bold"), command=self.open_tarokka_window).pack(fill=tk.X, pady=3)
 
@@ -274,6 +277,9 @@ class UISetupMixin:
 
         tk.Button(action_frame, text="⚙️ Configuration", bg="#2a2a3a", fg="#aaaacc",
                   font=("Arial", 10, "bold"), command=self.open_config_panel).pack(fill=tk.X, pady=3)
+
+        tk.Button(action_frame, text="👥 Gérer les Personnages", bg="#2b5740", fg="#81c784",
+                  font=("Arial", 10, "bold"), command=self.open_character_manager).pack(fill=tk.X, pady=3)
 
         tk.Button(action_frame, text="⚙️ Gérer les PNJs", bg="#4a3060", fg="#c77dff",
                   font=("Arial", 10, "bold"), command=self.open_npc_manager).pack(fill=tk.X, pady=3)
@@ -460,9 +466,12 @@ class UISetupMixin:
     # ─── Fiches personnages (sidebar) ─────────────────────────────────────────
 
     def _build_char_cards(self):
-        """Construit les 4 cartes compactes dans la sidebar. Appelé une seule fois."""
+        """Construit les cartes compactes dans la sidebar."""
         state = load_state()
         for name, data in state.get("characters", {}).items():
+            if not data.get("in_party", True):
+                continue
+                
             color   = self.CHAR_COLORS.get(name, "#aaaaaa")
             active  = data.get("active", True)
 
@@ -494,6 +503,53 @@ class UISetupMixin:
             bar_fill = tk.Frame(bar_bg, bg=bar_color, height=5)
             bar_fill.place(relx=0, rely=0, relwidth=pct if active else 1.0, relheight=1)
 
+            # --- Nouvelle section Stats ---
+            stats_row = tk.Frame(card, bg="#1e2030")
+            stats_row.pack(fill=tk.X, pady=(4, 0))
+
+            stat_keys = [("str", "FOR"), ("dex", "DEX"), ("con", "CON"), ("int", "INT"), ("wis", "SAG"), ("cha", "CHA")]
+            stat_widgets = {}
+
+            for key, label in stat_keys:
+                col = tk.Frame(stats_row, bg="#1e2030")
+                col.pack(side=tk.LEFT, expand=True, fill=tk.X)
+                
+                lbl_name = tk.Label(col, text=label, bg="#1e2030", fg="#888888", font=("Consolas", 7))
+                lbl_name.pack()
+                
+                score = data.get(key, 10)
+                mod = data.get(f"{key}_mod", 0)
+                mod_str = f"+{mod}" if mod >= 0 else str(mod)
+                
+                lbl_score = tk.Label(col, text=str(score), bg="#1e2030", fg="#dddddd", font=("Consolas", 8, "bold"))
+                lbl_score.pack()
+                
+                lbl_save = tk.Label(col, text=mod_str, bg="#2a2a3a", fg="#aaccff", font=("Consolas", 8), cursor="hand2")
+                lbl_save.pack(fill=tk.X, padx=1, pady=(1, 0))
+
+                def make_roll_cmd(char_name=name, stat_label=label, stat_key=key):
+                    def _roll(e):
+                        from state_manager import load_state
+                        import random
+                        current_state = load_state()
+                        char_data = current_state.get("characters", {}).get(char_name, {})
+                        stat_mod = char_data.get(f"{stat_key}_mod", 0)
+                        r = random.randint(1, 20)
+                        tot = r + stat_mod
+                        mod_str = f"+{stat_mod}" if stat_mod >= 0 else str(stat_mod)
+                        
+                        self.msg_queue.put({
+                            "sender": char_name,
+                            "text": f"🎲 Sauvegarde {stat_label} : 1d20 ({r}) {mod_str} = {tot}",
+                            "color": self.CHAR_COLORS.get(char_name, "#aaaaaa")
+                        })
+                    return _roll
+
+                lbl_save.bind("<Button-1>", make_roll_cmd())
+                
+                stat_widgets[key] = {"score": lbl_score, "save": lbl_save, "col": col, "name": lbl_name}
+            # -------------------------------
+
             # Griser la carte si inactive
             if not active:
                 card.config(bg="#181820")
@@ -503,13 +559,23 @@ class UISetupMixin:
                 badge_lbl.config(bg="#181820")
                 bar_bg.config(bg="#2a2a2a")
                 bar_fill.config(bg="#444444")
+                stats_row.config(bg="#181820")
+                for w in stat_widgets.values():
+                    w["col"].config(bg="#181820")
+                    w["name"].config(bg="#181820", fg="#555566")
+                    w["score"].config(bg="#181820", fg="#555566")
+                    w["save"].config(bg="#22222a", fg="#555566")
 
-            # Clic gauche → fiche popout
-            for widget in (card, top_row, name_lbl, hp_lbl, bar_bg):
+            # Clic gauche → fiche popout (on exclut lbl_save pour ne pas déclencher le popout lors d'un jet)
+            for widget in (card, top_row, name_lbl, hp_lbl, bar_bg, stats_row):
                 widget.bind("<Button-1>", lambda e, n=name: self.open_char_popout(n))
+            for key, w in stat_widgets.items():
+                w["col"].bind("<Button-1>", lambda e, n=name: self.open_char_popout(n))
+                w["name"].bind("<Button-1>", lambda e, n=name: self.open_char_popout(n))
+                w["score"].bind("<Button-1>", lambda e, n=name: self.open_char_popout(n))
 
             # Clic droit → menu contextuel
-            for widget in (card, top_row, name_lbl, hp_lbl, bar_bg, badge_lbl):
+            for widget in (card, top_row, name_lbl, hp_lbl, bar_bg, badge_lbl, stats_row):
                 widget.bind("<Button-3>", lambda e, n=name: self._show_char_context_menu(e, n))
 
             self._char_cards[name] = {
@@ -517,6 +583,8 @@ class UISetupMixin:
                 "name_lbl": name_lbl, "hp_lbl": hp_lbl,
                 "badge_lbl": badge_lbl,
                 "bar_bg": bar_bg, "bar_fill": bar_fill,
+                "stats_row": stats_row,
+                "stat_widgets": stat_widgets,
             }
 
     def _show_char_context_menu(self, event, char_name: str):
@@ -679,6 +747,9 @@ class UISetupMixin:
         hp, max_hp = data.get("hp", 0), data.get("max_hp", 1)
         pct = max(0, min(1, hp / max_hp)) if max_hp else 0
 
+        stats_row = card_widgets.get("stats_row")
+        stat_widgets = card_widgets.get("stat_widgets", {})
+
         if active:
             card_widgets["card"].config(bg="#1e2030")
             card_widgets["top_row"].config(bg="#1e2030")
@@ -689,6 +760,13 @@ class UISetupMixin:
             card_widgets["bar_bg"].config(bg="#3a3a3a")
             card_widgets["bar_fill"].config(bg=self._hp_color(pct))
             card_widgets["bar_fill"].place(relwidth=pct)
+            
+            if stats_row: stats_row.config(bg="#1e2030")
+            for w in stat_widgets.values():
+                w["col"].config(bg="#1e2030")
+                w["name"].config(bg="#1e2030", fg="#888888")
+                w["score"].config(bg="#1e2030", fg="#dddddd")
+                w["save"].config(bg="#2a2a3a", fg="#aaccff")
         else:
             card_widgets["card"].config(bg="#181820")
             card_widgets["top_row"].config(bg="#181820")
@@ -699,6 +777,13 @@ class UISetupMixin:
             card_widgets["bar_bg"].config(bg="#2a2a2a")
             card_widgets["bar_fill"].config(bg="#444444")
             card_widgets["bar_fill"].place(relwidth=1.0)
+
+            if stats_row: stats_row.config(bg="#181820")
+            for w in stat_widgets.values():
+                w["col"].config(bg="#181820")
+                w["name"].config(bg="#181820", fg="#555566")
+                w["score"].config(bg="#181820", fg="#555566")
+                w["save"].config(bg="#22222a", fg="#555566")
 
     def _append_tool_confirm_link(self, char_name: str, tool_name: str,
                                    tool_args: dict, callback):
@@ -797,6 +882,18 @@ class UISetupMixin:
                     card_widgets["bar_fill"].config(bg=self._hp_color(pct))
                     card_widgets["bar_fill"].place(relwidth=pct)
                 # Si inactif, la barre reste grisée (gérée par _refresh_char_card)
+
+                # Mise à jour des caractéristiques
+                stat_widgets = card_widgets.get("stat_widgets")
+                if stat_widgets:
+                    for key in ["str", "dex", "con", "int", "wis", "cha"]:
+                        if key in stat_widgets:
+                            score = data.get(key, 10)
+                            mod = data.get(f"{key}_mod", 0)
+                            mod_str = f"+{mod}" if mod >= 0 else str(mod)
+                            stat_widgets[key]["score"].config(text=str(score))
+                            stat_widgets[key]["save"].config(text=mod_str)
+
         except Exception as e:
             print(f"[update_stats_panel] Erreur : {e}")
         self.root.after(2000, self.update_stats_panel)

@@ -256,9 +256,37 @@ class CombatTrackerRowMixin:
         # Bouton Fiche pour les PNJ ayant un bestiary_name
         if not c.is_pc and _BESTIARY_OK and c.bestiary_name:
             def _open_fiche(cb=c):
-                MonsterSheetWindow(self.root, cb.name,
-                                   bestiary_name=cb.bestiary_name,
-                                   chat_queue=self.chat_queue)
+                # ── Singleton : réutiliser la fenêtre existante ──────────
+                if not hasattr(self, "_npc_sheets"):
+                    self._npc_sheets = {}
+                existing = self._npc_sheets.get(cb.uid)
+                if existing is not None:
+                    try:
+                        if existing.win.winfo_exists():
+                            existing.win.deiconify()
+                            existing.win.lift()
+                            existing.win.focus_force()
+                            return
+                    except Exception:
+                        pass
+                # ── Hydrater spell_slots si vides (combatant pré-existant) ──
+                if not cb.spell_slots and cb.bestiary_name:
+                    try:
+                        from npc_bestiary_manager import get_monster as _gm
+                        _mon = _gm(cb.bestiary_name)
+                        if _mon and _mon.get("spellcasting"):
+                            for _sc in _mon["spellcasting"]:
+                                if "spells" in _sc:
+                                    for _lk, _ld in _sc["spells"].items():
+                                        if "slots" in _ld and int(_lk) > 0:
+                                            cb.spell_slots[_lk] = {"max": _ld["slots"], "used": 0}
+                    except Exception as _e:
+                        print(f"[Fiche] Hydratation spell_slots : {_e}")
+                sheet = MonsterSheetWindow(self.root, cb.name,
+                                           bestiary_name=cb.bestiary_name,
+                                           chat_queue=self.chat_queue,
+                                           combatant=cb)
+                self._npc_sheets[cb.uid] = sheet
             tk.Button(btn_row, text="Fiche",
                       bg=_darken(C["gold"], 0.55), fg=C["gold"],
                       font=("Consolas", 7, "bold"), bd=0, relief="flat",
@@ -544,6 +572,24 @@ class CombatTrackerRowMixin:
         if ds_frame is not None:
             self._row_widgets[c.uid]["death_saves_frame"] = ds_frame
 
+        # ── Col 6.5 : Sorts ───────────────────────────────────────────────
+        # Auto-hydrater spell_slots depuis le bestiaire si vides (combatant pré-existant)
+        if not c.is_pc and not getattr(c, "spell_slots", None) and c.bestiary_name:
+            try:
+                from npc_bestiary_manager import get_monster as _gm_row
+                _mon_row = _gm_row(c.bestiary_name)
+                if _mon_row and _mon_row.get("spellcasting"):
+                    for _sc_r in _mon_row["spellcasting"]:
+                        if "spells" in _sc_r:
+                            for _lk_r, _ld_r in _sc_r["spells"].items():
+                                if "slots" in _ld_r and int(_lk_r) > 0:
+                                    c.spell_slots[_lk_r] = {"max": _ld_r["slots"], "used": 0}
+            except Exception:
+                pass
+        if getattr(c, "spell_slots", None):
+            spell_f = _col(110)
+            self._build_spell_slots(spell_f, c, row_bg)
+
         # ── Col 7 : Concentration ─────────────────────────────────────────
         conc_f = _col(58)
 
@@ -784,6 +830,47 @@ class CombatTrackerRowMixin:
         # Le bouton "↺ Réinit. actions" est ajouté par _build_row (actif)
         # ou par _update_active_rows (changement de tour) — pas ici.
         return inner, {"action": v_act, "bonus": v_bon, "react": v_rea, "move": mv_var}
+
+    def _build_spell_slots(self, parent, c, row_bg: str):
+        """Grille de cases à cocher pour les emplacements de sorts du PNJ."""
+        inner = tk.Frame(parent, bg=row_bg)
+        inner.pack(fill=tk.BOTH, expand=True)
+
+        if not hasattr(c, "spell_slots"):
+            return
+
+        levels = sorted(c.spell_slots.keys(), key=lambda k: int(k))
+        for lvl in levels:
+            lvl_data = c.spell_slots[lvl]
+            max_slots = lvl_data.get("max", 0)
+            if max_slots <= 0:
+                continue
+
+            row_f = tk.Frame(inner, bg=row_bg)
+            row_f.pack(anchor="w")
+
+            tk.Label(row_f, text=f"N{lvl}:", bg=row_bg, fg=C.get("blue_bright", "#00ffff"),
+                     font=("Consolas", 7, "bold")).pack(side=tk.LEFT, padx=(0, 2))
+
+            for i in range(max_slots):
+                is_used = i < lvl_data.get("used", 0)
+                text = "■" if is_used else "□"
+                fg = C.get("red_bright", "#ff4444") if is_used else C.get("fg", "#e0e0e0")
+
+                btn = tk.Button(row_f, text=text, bg=row_bg, fg=fg,
+                                font=("Consolas", 9), relief="flat", bd=0, padx=1, pady=0, cursor="hand2")
+                btn.pack(side=tk.LEFT)
+
+                def _toggle(lvl_key=lvl, slot_idx=i, btn_w=btn, c_obj=c):
+                    used = c_obj.spell_slots[lvl_key].get("used", 0)
+                    if btn_w.cget("text") == "□":
+                        c_obj.spell_slots[lvl_key]["used"] = min(c_obj.spell_slots[lvl_key]["max"], used + 1)
+                    else:
+                        c_obj.spell_slots[lvl_key]["used"] = max(0, used - 1)
+                    self._schedule_save()
+                    self._refresh_list()
+
+                btn.config(command=_toggle)
 
     def _confirm_npc_death(self, cb):
         """Boîte de confirmation quand un PNJ tombe à 0 PV.

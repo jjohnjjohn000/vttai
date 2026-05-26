@@ -340,12 +340,15 @@ class AdventureSearchWindow:
                     "Cite les règles officielles ou le lore pertinent de la campagne."
                 )
                 
+                from agent_logger import log_chronicler_prompt, log_chronicler_response
+                log_chronicler_prompt("AI Search", sys_prompt, messages=[{"role": "user", "content": f"Voici ma recherche :\n{full_query}"}])
                 response = client.create(messages=[
                     {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": f"Voici ma recherche :\n{full_query}"}
                 ])
                 
                 answer = (response.choices[0].message.content or "").strip()
+                log_chronicler_response("AI Search", answer)
                 self.top.after(0, lambda: self._show_ai_result(answer))
                 
             except Exception as e:

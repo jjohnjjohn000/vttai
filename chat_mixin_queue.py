@@ -138,22 +138,22 @@ class ChatMixinQueue:
                     )
                 elif action == "result_confirm":
                     self._append_result_confirm(
-                        msg["char_name"],
-                        msg["type_label"],
-                        msg["results_text"],
-                        msg["resume_callback"],
+                        msg.get("char_name", "?"),
+                        msg.get("type_label", "Résultat"),
+                        msg.get("results_text", ""),
+                        msg.get("resume_callback") or (lambda *a, **k: None),
                         mode=msg.get("mode", "damage"),
                         target=msg.get("target"),
                         damage=msg.get("damage"),
                     )
                 elif action == "action_confirm":
                     self._append_action_confirm(
-                        msg["char_name"],
+                        msg.get("char_name", "?"),
                         msg.get("type_label", "Action"),
-                        msg["intention"],
-                        msg["regle"],
-                        msg["cible"],
-                        msg["resume_callback"],
+                        msg.get("intention", ""),
+                        msg.get("regle", ""),
+                        msg.get("cible", ""),
+                        msg.get("resume_callback") or (lambda *a, **k: None),
                         sub_index=msg.get("sub_index"),
                         sub_total=msg.get("sub_total"),
                         chain_abort_callback=msg.get("chain_abort_callback"),
@@ -246,15 +246,15 @@ class ChatMixinQueue:
                         # ── FIN DE L'INTERCEPTION ──
 
                         self._append_skill_check_confirm(
-                            msg["char_name"],
-                            msg["skill_label"],
+                            msg.get("char_name", "?"),
+                            msg.get("skill_label", "Compétence"),
                             msg.get("stat_label", ""),
                             msg.get("bonus", 0),
                             msg.get("dc"),
                             msg.get("has_advantage", False),
                             msg.get("has_disadvantage", False),
                             msg.get("intention", ""),
-                            msg["resume_callback"],
+                            msg.get("resume_callback") or (lambda *a, **k: None),
                         )
                     except Exception as _e_sc:
                         import traceback as _tb_sc
@@ -266,10 +266,10 @@ class ChatMixinQueue:
                             pass
                 elif action == "tool_confirm":
                     self._append_tool_confirm_link(
-                        msg["sender"],
-                        msg["tool_name"],
+                        msg.get("sender", "?"),
+                        msg.get("tool_name", "Outil"),
                         msg.get("tool_args", {}),
-                        msg["resume_callback"],
+                        msg.get("resume_callback") or (lambda *a, **k: None),
                     )
                 elif action == "set_llm_running":
                     running = msg["value"]
@@ -323,6 +323,15 @@ class ChatMixinQueue:
             return
             
         formatted = f"[{npc_name}] : {text}"
+        
+        if getattr(self, "_llm_running", False) and not getattr(self, "_waiting_for_mj", False):
+            self._pending_interrupt_input = formatted
+            self._pending_interrupt_display = None
+            if hasattr(self, "_inject_stop"):
+                self._inject_stop()
+        else:
+            self.user_input = formatted
+            self.input_event.set()
 
     def _append_tarokka_speak(self, msg: dict):
         text = msg["text"]

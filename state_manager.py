@@ -365,11 +365,11 @@ DEFAULT_SPELLS = {
 
 
 DEFAULT_NPCS =[
-    {"name": "Ismark",    "voice": "fr-FR-AlainNeural",    "speed": "+0%",  "color": "#a0c4ff"},
-    {"name": "Ireena",    "voice": "fr-FR-CelesteNeural",  "speed": "+5%",  "color": "#ffc8dd"},
-    {"name": "Strahd",    "voice": "fr-FR-ClaudeNeural",   "speed": "-5%",  "color": "#c77dff"},
-    {"name": "Madam Eva", "voice": "fr-FR-BrigitteNeural", "speed": "-10%", "color": "#e9c46a"},
-    {"name": "Rahadin",   "voice": "fr-FR-JeromeNeural",   "speed": "+0%",  "color": "#ff6b6b"},
+    {"name": "Ismark",    "voice": "fr-FR-AlainNeural",    "speed": "+0%",  "pitch": "+0%", "color": "#a0c4ff"},
+    {"name": "Ireena",    "voice": "fr-FR-CelesteNeural",  "speed": "+5%",  "pitch": "+0%", "color": "#ffc8dd"},
+    {"name": "Strahd",    "voice": "fr-FR-ClaudeNeural",   "speed": "-5%",  "pitch": "+0%", "color": "#c77dff"},
+    {"name": "Madam Eva", "voice": "fr-FR-BrigitteNeural", "speed": "-10%", "pitch": "+0%", "color": "#e9c46a"},
+    {"name": "Rahadin",   "voice": "fr-FR-JeromeNeural",   "speed": "+0%",  "pitch": "+0%", "color": "#ff6b6b"},
 ]
 
 _STATE_CACHE = None
@@ -1472,6 +1472,21 @@ def get_memories_prompt_compact(importance_min: int = 2) -> str:
             lines.append(f"  {meta['icon']} {m['titre']} : {short_text}")
 
     return "\n".join(lines)
+
+def get_menace_prompt_combat() -> str:
+    """
+    Retourne un bloc de prompt contondant décrivant les menaces connues (ennemis),
+    conçu pour être injecté dans les prompts de combat.
+    """
+    mems = get_memories(categorie="menace", importance_min=1, visible_only=True)
+    if not mems:
+        return ""
+    
+    lines = ["\n[INFORMATIONS SUR LES ENNEMIS / MENACES]"]
+    for m in mems:
+        lines.append(f"- {m['titre']} : {m['contenu']}")
+    lines.append("Utilise ces informations pour adapter ta tactique et tes cibles en combat.")
+    return "\n".join(lines) + "\n"
 
 # ============================================================
 # --- MÉMOIRES CONTEXTUELLES (injection dynamique) ---

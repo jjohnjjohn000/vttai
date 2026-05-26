@@ -105,9 +105,13 @@ class MapManagerMixin:
 
         for d in data.get("doors", []):
             self._doors.append({
-                "col":   int(d.get("col", 0)),
-                "row":   int(d.get("row", 0)),
+                "px":    float(d.get("px", (d.get("col", 0) + 0.5) * self.cell_px)),
+                "py":    float(d.get("py", (d.get("row", 0) + 0.5) * self.cell_px)),
+                "rotation": float(d.get("rotation", 0)),
+                "length_scale": float(d.get("length_scale", 1.0)),
+                "mirrored": bool(d.get("mirrored", False)),
                 "open":  bool(d.get("open", False)),
+                "open_angle": float(d.get("open_angle", 90 if d.get("open", False) else 0)),
                 "label": d.get("label", ""),
                 "canvas_ids": [],
             })
@@ -121,6 +125,15 @@ class MapManagerMixin:
                     "label": obs.get("label", ""),
                     "type":  obs.get("type", "poly"),
                 })
+
+        for w in data.get("walls", []):
+            p1 = w.get("p1", [0, 0])
+            p2 = w.get("p2", [0, 0])
+            self._walls.append({
+                "p1": tuple(p1),
+                "p2": tuple(p2),
+            })
+
 
     def _save_state(self):
         """Sauvegarde la carte active dans son fichier JSON + win_state."""
@@ -242,12 +255,20 @@ class MapManagerMixin:
                                   "text": n["text"], "color": n["color"],
                                   "hotlink_data": n.get("hotlink_data")}
                                  for n in self._notes],
-            "doors":[{"col": d["col"], "row": d["row"],
-                                  "open": d["open"], "label": d["label"]}
+            "doors":            [{"px": d.get("px", (d.get("col", 0) + 0.5) * self.cell_px),
+                                  "py": d.get("py", (d.get("row", 0) + 0.5) * self.cell_px),
+                                  "rotation": d.get("rotation", 0),
+                                  "length_scale": d.get("length_scale", 1.0),
+                                  "mirrored": d.get("mirrored", False),
+                                  "open": d["open"],
+                                  "open_angle": d.get("open_angle", 90 if d["open"] else 0),
+                                  "label": d["label"]}
                                  for d in self._doors],
             "obstacles":        [{"pts": obs["pts"], "color": obs["color"],
                                   "label": obs["label"], "type": obs["type"]}
                                  for obs in self._obstacles],
+            "walls":            [{"p1": list(w["p1"]), "p2": list(w["p2"])}
+                                 for w in self._walls],
         }
 
     def _save_current_map(self):
@@ -306,6 +327,8 @@ class MapManagerMixin:
         self._notes     = []
         self._doors     = []
         self._obstacles = []
+        self._walls     = []
+        self._wall_pil  = None
         self._map_pil_cache_dict = {}
         self._fog_undo_stack = []
         self._selected_tokens.clear()

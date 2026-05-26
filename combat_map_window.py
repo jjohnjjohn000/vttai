@@ -12,6 +12,7 @@ from combat_map_notes_doors import NotesDoorsMixin
 from combat_map_navigation import NavigationMixin
 from combat_map_selection import SelectionMixin
 from combat_map_ruler import RulerMixin
+from combat_map_wall_vision import WallVisionMixin
 
 class CombatMapWindow(
     CoreMixin,
@@ -26,6 +27,7 @@ class CombatMapWindow(
     NotesDoorsMixin,
     NavigationMixin,
     SelectionMixin,
-    RulerMixin
+    RulerMixin,
+    WallVisionMixin
 ):
     pass

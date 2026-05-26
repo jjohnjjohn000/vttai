@@ -37,6 +37,7 @@ KNOWN_MODELS = [
     "ollama/qwen3.5:9b",
 
     # Gemini — modèles actifs
+    "gemini-3.5-flash",
     "gemini-3.1-flash-lite",
     "gemini-3.1-flash-lite-preview",
     "gemini-3-flash-preview",
@@ -51,6 +52,8 @@ KNOWN_MODELS = [
     "deepseek/deepseek-reasoner",   # V3.2 thinking — CoT, ignorer temperature
     # Qwen direct (QWEN_API_KEY)
     "qwen/qwen3.6-flash",
+    # Zyphra direct (ZYPHRA_API_KEY)
+    "zyphra/ZAYA1-8B",
     # Groq
     "groq/meta-llama/llama-4-scout-17b-16e-instruct",
     "groq/llama-3.3-70b-versatile",
@@ -88,7 +91,7 @@ DEFAULTS: dict = {
         },
     },
     "chronicler": {
-        "model":              "gemini-2.5-flash",
+        "model":              "gemini-3.1-flash-lite-preview",
         "temperature":        0.3,
         "memories_importance": 1,      # importance_min des mémoires passées au Chroniqueur
         "system_prompt":      (
@@ -157,20 +160,21 @@ DEFAULTS: dict = {
         "hotkey": "F12",   # keysym Tk — ex: "F12", "space", "Insert", "grave"
     },
     "combat": {
-        "model": "gemini-3.1-flash-lite",   # LLM utilisé par TOUS les PJ en mode combat
+        "model": "gemini-3.1-flash-lite-preview",   # LLM utilisé par TOUS les PJ en mode combat
     },
     "fallback_chain": [
         # Ordre de tentative quand le modèle principal (Gemini) est épuisé.
         # Modifiable depuis l'onglet Agents du panneau de configuration.
+        "gemini-3-flash-preview",
+        "gemini-3.1-flash-lite-preview",
+        "gemini-3.1-flash-lite",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
+        "gemini-3.5-flash",
         "gemma-4-31b-it",
         "gemma-4-26b-a4b-it",
-        "gemini-3-flash-preview",
-        "gemini-3.1-flash-lite-preview",
         "groq/meta-llama/llama-4-scout-17b-16e-instruct",
-        "openrouter/meta-llama/llama-3.3-70b-instruct:free",
         "openrouter/mistralai/mistral-small-3.1-24b-instruct:free",
         "openrouter/arcee-ai/trinity-large-preview:free",
     ],

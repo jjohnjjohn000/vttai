@@ -7,12 +7,12 @@ Préfixes reconnus dans le champ "llm" de campaign_state.json :
   openrouter/*           → OpenRouter      (OPENROUTER_API_KEY) modèles :free disponibles
   deepseek/*             → DeepSeek direct (DEEPSEEK_API_KEY)  pas de frais OpenRouter
   qwen/*                 → Alibaba Cloud   (QWEN_API_KEY) via DashScope
+  zyphra/*               → Zyphra Cloud    (ZYPHRA_API_KEY)
   ollama/*               → Ollama local    (aucune clé requise, localhost:11434)
 
 Exemples de valeurs :
   "gemini-2.5-flash"
   "groq/llama-3.3-70b-versatile"
-  "openrouter/meta-llama/llama-3.3-70b-instruct:free"
   "deepseek/deepseek-chat"      ← DeepSeek V3.2, supporte tool calls
   "deepseek/deepseek-reasoner"  ← DeepSeek V3.2 mode thinking (pas de temperature)
   "ollama/gemma4:e4b"           ← Gemma 4 local via Ollama (RX 6700 XT, 12 GB VRAM)
@@ -55,7 +55,9 @@ class _NoKeepaliveHttpClient(httpx.Client):
                 max_keepalive_connections=0,
                 max_connections=10,
             ),
-            timeout=httpx.Timeout(120.0),
+            # timeout connect : échec rapide si serveur injoignable (~3s)
+            # timeout read : délai max entre deux tokens (TTFT inclus, natif)
+            timeout=httpx.Timeout(connect=3.0, read=10.0, write=5.0, pool=5.0),
         )
 
     def __deepcopy__(self, memo):
@@ -93,13 +95,14 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
       intervention manuelle.
 
     Ordre de fallback (après le modèle principal demandé) :
-      1. gemini-3-flash-preview        (toutes les clés)
-      2. gemini-3.1-flash-lite         (toutes les clés)
-      3. gemini-3.1-flash-lite-preview (toutes les clés)
-      4. gemini-2.5-flash              (toutes les clés)
-      5. gemini-2.5-flash-lite         (toutes les clés)
-      6. groq/meta-llama/llama-4-scout-17b-16e-instruct
-      7. OpenRouter (llama + mistral + arcee trinity)
+      1. gemini-3.5-flash
+      2. gemini-3-flash-preview        (toutes les clés)
+      3. gemini-3.1-flash-lite         (toutes les clés)
+      4. gemini-3.1-flash-lite-preview (toutes les clés)
+      5. gemini-2.5-flash              (toutes les clés)
+      6. gemini-2.5-flash-lite         (toutes les clés)
+      7. groq/meta-llama/llama-4-scout-17b-16e-instruct
+      8. OpenRouter (llama + mistral + arcee trinity)
 
     Modèles Ollama (préfixe "ollama/") :
       Pas de fallback cloud — Ollama est intentionnellement isolé.
@@ -159,6 +162,17 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
         if _k and _k not in _qwen_keys:
             _qwen_keys.append(_k)
     qwen_key = _qwen_keys[0] if _qwen_keys else ""
+
+    # ── Collecte de toutes les clés Zyphra disponibles ─────────────────────────
+    _zyphra_keys: list = []
+    _zyphra_legacy = os.getenv("ZYPHRA_API_KEY", "")
+    if _zyphra_legacy:
+        _zyphra_keys.append(_zyphra_legacy)
+    for _i in range(1, 10):
+        _k = os.getenv(f"ZYPHRA_API_KEY_{_i}", "")
+        if _k and _k not in _zyphra_keys:
+            _zyphra_keys.append(_k)
+    zyphra_key = _zyphra_keys[0] if _zyphra_keys else ""
 
     def _gemini(model: str, api_key: str = None) -> dict:
         return {
@@ -222,6 +236,23 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
         if not _qwen_keys:
             return[]
         return [_qwen(model, key) for key in _qwen_keys]
+
+    def _zyphra(model: str, api_key: str = None) -> dict:
+        # Reconstruit le préfixe si le routage l'a enlevé, pour correspondre à "zyphra/ZAYA1-8B"
+        full_model = model if model.startswith("zyphra/") else f"zyphra/{model}"
+        return {
+            "model":       full_model,
+            "api_key":     api_key or zyphra_key,
+            "base_url":    "https://api.zyphracloud.com/api/v1",
+            "api_type":    "openai",
+            "http_client": _make_no_keepalive_http_client(),
+        }
+
+    def _zyphra_all_keys(model: str) -> list:
+        """Une entrée config_list par clé Zyphra dispo pour ce modèle."""
+        if not _zyphra_keys:
+            return []
+        return [_zyphra(model, key) for key in _zyphra_keys]
 
     def _openrouter(model: str, api_key: str = None) -> dict:
         return {
@@ -292,6 +323,9 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
     elif m.startswith("qwen/"):
         config_list.extend(_qwen_all_keys(m[len("qwen/"):]))
 
+    elif m.startswith("zyphra/"):
+        config_list.extend(_zyphra_all_keys(m[len("zyphra/"):]))
+
     else:  # Gemini — une entrée par clé disponible (rotation multi-comptes)
         config_list.extend(_gemini_all_keys(m))
 
@@ -325,6 +359,9 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
     elif m.startswith("qwen/"):
         pass  # pas de fallback Qwen
 
+    elif m.startswith("zyphra/"):
+        pass  # pas de fallback Zyphra
+
     else:
         # Modèle Gemini : chaîne de fallback configurable avec rotation multi-comptes.
         # L'ordre est défini dans app_config.json → fallback_chain.
@@ -346,6 +383,8 @@ def build_llm_config(model_name: str, temperature: float = 0.4) -> dict:
                     config_list.append(_deepseek(fb[len("deepseek/"):]))
             elif fb.startswith("qwen/"):
                 config_list.extend(_qwen_all_keys(fb[len("qwen/"):]))
+            elif fb.startswith("zyphra/"):
+                config_list.extend(_zyphra_all_keys(fb[len("zyphra/"):]))
             else:
                 config_list.extend(_gemini_all_keys(fb))
 

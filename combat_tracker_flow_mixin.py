@@ -292,7 +292,76 @@ class CombatTrackerFlowMixin:
             except Exception:
                 pass
 
-    def _next_turn(self):
+    def _next_turn(self, from_mj: bool = True):
+        # Sécurité anti double-clic pendant l'attente
+        if getattr(self, "_next_turn_lock", False):
+            return
+            
+        if not self.combat_active:
+            return
+
+        # ── Annuler immédiatement tout appel LLM en cours (agent PJ) si MJ ─────
+        if from_mj:
+            try:
+                app = getattr(self, "app", None)
+                is_running = getattr(app, "_llm_running", False)
+                is_waiting = getattr(app, "_waiting_for_mj", False)
+                
+                # Si l'IA tourne MAIS qu'elle est déjà en attente d'une action de ta part,
+                # elle est endormie. Il ne faut surtout pas l'interrompre, sinon
+                # l'exception explosera au réveil et détruira le tour suivant !
+                if app is not None and is_running and not is_waiting:
+                    self._next_turn_lock = True
+                    if hasattr(app, "_inject_stop"):
+                        app._inject_stop()
+                    
+                    if hasattr(app, "msg_queue"):
+                        app.msg_queue.put({
+                            "sender": "⏹ Système",
+                            "text": "Tour suivant — interruption de l'IA en cours...",
+                            "color": "#FF9800",
+                        })
+                    
+                    # On passe en boucle d'attente asynchrone avant d'avancer le tour
+                    self._wait_for_llm_stop_and_advance()
+                    return
+            except Exception as _e:
+                print(f"[CombatTracker] Erreur arrêt LLM sur next_turn : {_e}")
+                self._next_turn_lock = False
+
+        # Pas d'IA au travail (soit endormie, soit en écoute) : on avance immédiatement
+        self._do_next_turn_logic()
+
+    def _wait_for_llm_stop_and_advance(self, timeout=50, phase=1):
+        """Boucle d'attente asynchrone multi-phases pour s'assurer que le LLM est prêt."""
+        app = getattr(self, "app", None)
+        if app is None or timeout <= 0:
+            self._do_next_turn_logic()
+            return
+            
+        if phase == 1:
+            # Phase 1 : On attend que l'IA signale qu'elle ne tourne plus
+            if getattr(app, "_llm_running", False):
+                self.root.after(100, lambda: self._wait_for_llm_stop_and_advance(timeout - 1, 1))
+            else:
+                self._wait_for_llm_stop_and_advance(timeout, 2)
+                
+        elif phase == 2:
+            # Phase 2 : On s'assure que le moteur est bien repassé en mode "écoute"
+            if not getattr(app, "_waiting_for_mj", False):
+                self.root.after(100, lambda: self._wait_for_llm_stop_and_advance(timeout - 1, 2))
+            else:
+                # Le moteur est en écoute. On lance la Phase 3 (sas de sécurité).
+                self.root.after(250, lambda: self._wait_for_llm_stop_and_advance(timeout, 3))
+
+        elif phase == 3:
+            # Phase 3 : On est sûr et certain que wait_for_input() a purgé les events 
+            # et bloque la boucle en arrière-plan. On peut avancer l'initiative !
+            self._do_next_turn_logic()
+
+    def _do_next_turn_logic(self):
+        """Logique centrale de l'avancement de l'initiative."""
+        self._next_turn_lock = False
         if not self.combat_active:
             return
 
@@ -315,7 +384,7 @@ class CombatTrackerFlowMixin:
         COMBAT_STATE["round_num"] = self.round_num
         active_c = self.combatants[self.current_idx] if self.combatants else None
         COMBAT_STATE["active_combatant"] = active_c.name if active_c else None
-        COMBAT_STATE["turn_spells"] =[]
+        COMBAT_STATE["turn_spells"] = []
         if active_c and "turn_res" in COMBAT_STATE:
             COMBAT_STATE["turn_res"].pop(active_c.name, None)
 
@@ -367,7 +436,7 @@ class CombatTrackerFlowMixin:
     def advance_turn(self):
         """Appelé par le moteur IA quand un PJ déclare [FIN_DE_TOUR]."""
         if self.combat_active:
-            self.root.after(0, self._next_turn)
+            self.root.after(0, lambda: self._next_turn(from_mj=False))
 
     def _end_combat(self):
 
@@ -536,7 +605,7 @@ class CombatTrackerFlowMixin:
                                 "text": f"{c.name} est {etat_fr}. Son tour est passé.",
                                 "color": "#aaaaaa"
                             })
-                        self.root.after(1500, self._next_turn)
+                        self.root.after(1500, lambda: self._next_turn(from_mj=False))
                 except Exception:
                     pass
 
@@ -665,7 +734,7 @@ class CombatTrackerFlowMixin:
                 self.pc_turn_callback(c.name)
             else:
                 # Sinon on passe automatiquement au prochain personnage
-                self.root.after(1500, self._next_turn)
+                self.root.after(1500, lambda: self._next_turn(from_mj=False))
             
             dw.destroy()
 

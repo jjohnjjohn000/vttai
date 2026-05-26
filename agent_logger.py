@@ -302,6 +302,97 @@ def log_agent_response(name: str, response):
     _print("\n".join(lines))
 
 
+# ─── Logs détaillés des prompts CHRONICLER ───────────────────────────────────
+
+_COL_CHRON = "\033[93m"   # jaune/or — Chroniqueur
+
+def _write_file_log(prefix: str, agent_or_context: str, content: str):
+    import os
+    import time
+    import re
+    
+    log_dir = "logs/prompts"
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Nettoyage du contexte pour un nom de fichier valide
+    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', agent_or_context)
+    filename = f"{log_dir}/{prefix}_{safe_name}_{int(time.time()*1000)}.txt"
+    
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(content)
+    except Exception:
+        pass
+        
+    # Nettoyage pour ne garder que les 50 derniers fichiers texte au total 
+    # (pour ne pas saturer le dossier à long terme)
+    try:
+        all_logs = sorted(
+            [os.path.join(log_dir, x) for x in os.listdir(log_dir) if x.endswith(".txt")], 
+            key=os.path.getmtime
+        )
+        while len(all_logs) > 50:
+            oldest = all_logs.pop(0)
+            os.remove(oldest)
+    except Exception:
+        pass
+
+
+def log_chronicler_prompt(context: str, system_msg: str, messages: list):
+    """
+    Affiche dans le terminal le prompt envoyé au Chroniqueur IA et écrit un log physique.
+    """
+    sep = f"{_DIM}{'─' * 60}{_RESET}"
+    lines = [
+        sep,
+        f"{_COL_TIME}{_now()}{_RESET}  "
+        f"{_COL_CHRON}📤 {_BOLD}CHRONICLER PROMPT → {context}{_RESET}",
+    ]
+
+    # System message (tronqué pour la console)
+    if system_msg:
+        preview = system_msg[:300].replace('\n', ' ↵ ')
+        lines.append(f"  {_DIM}[system]{_RESET} {preview}{'…' if len(system_msg) > 300 else ''}")
+
+    # Messages pour la console
+    for m in messages:
+        role = m.get("name", m.get("role", "?"))
+        content = str(m.get("content", ""))[:200].replace('\n', ' ↵ ')
+        lines.append(f"  {_DIM}[{role}]{_RESET} {content}{'…' if len(str(m.get('content', ''))) > 200 else ''}")
+
+    lines.append(sep)
+    _print("\n".join(lines))
+    
+    # ── Écriture dans le fichier physique ──
+    prompt_file_content = f"=== SYSTEM MESSAGE ({context}) ===\n{system_msg}\n\n=== CHAT HISTORY ===\n"
+    for m in messages:
+        role = m.get("name", m.get("role", "unknown"))
+        msg_content = m.get("content", "")
+        prompt_file_content += f"[{role}]: {msg_content}\n\n"
+        
+    _write_file_log("prompt_chronicler", context, prompt_file_content)
+
+
+def log_chronicler_response(context: str, response_text: str):
+    """
+    Affiche dans le terminal la réponse reçue du Chroniqueur IA et écrit un log physique.
+    """
+    sep = f"{_DIM}{'─' * 60}{_RESET}"
+    preview = (response_text or "(vide)")[:300].replace('\n', ' ↵ ')
+    lines = [
+        sep,
+        f"{_COL_TIME}{_now()}{_RESET}  "
+        f"{_COL_CHRON}📥 {_BOLD}CHRONICLER RESPONSE ← {context}{_RESET}",
+        f"  {preview}{'…' if len(response_text or '') > 300 else ''}",
+        sep,
+    ]
+    _print("\n".join(lines))
+    
+    # ── Écriture dans le fichier physique ──
+    resp_file_content = f"=== CHRONICLER RESPONSE ({context}) ===\n{response_text}\n"
+    _write_file_log("response_chronicler", context, resp_file_content)
+
+
 # ─── OpenRouter : affichage du solde après chaque réponse ────────────────────
 
 _COL_CREDITS = "\033[96m"   # cyan — infos crédits

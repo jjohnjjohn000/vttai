@@ -10,6 +10,13 @@ import re
 import queue as _queue
 from dotenv import load_dotenv
 
+def _clean_env():
+    import os
+    e = os.environ.copy()
+    e.pop("LD_LIBRARY_PATH", None)
+    e.pop("LD_PRELOAD", None)
+    return e
+
 load_dotenv()
 
 # ─── Logger TTS avec timestamps ──────────────────────────────────────────────
@@ -54,6 +61,15 @@ SPEED_MAPPING = {
     "Lyra":    "+20%",
     "Alexis_Le_MJ": "+15%",
     "default": "+10%",
+}
+
+PITCH_MAPPING = {
+    "Kaelen":  "+0%",
+    "Elara":   "+0%",
+    "Thorne":  "+0%",
+    "Lyra":    "+0%",
+    "Alexis_Le_MJ": "+0%",
+    "default": "+0%",
 }
 
 # --- Detection des backends ---
@@ -126,6 +142,26 @@ def _normalize_rate(rate):
     if not m: return "+0%"
     return f"{max(-50, min(100, int(m.group(1)))):+d}%"
 
+def _normalize_pitch(pitch_str):
+    m = re.match(r'^([+-]?\d+)%$', pitch_str.strip())
+    if not m: return "+0%"
+    return f"{max(-50, min(100, int(m.group(1)))):+d}%"
+
+def _rate_to_float(rate_str):
+    try:
+        val = float(rate_str.replace('%', '').replace('+', '').strip())
+        return max(0.2, min(3.0, 1.0 + (val / 100.0)))
+    except:
+        return 1.0
+
+def _pitch_to_semitones(pitch_str):
+    try:
+        val = float(pitch_str.replace('%', '').replace('+', '').strip())
+        # e.g +10% becomes 1.0 semitones
+        return max(-12.0, min(12.0, val / 10.0))
+    except:
+        return 0.0
+
 # --- Split en phrases ---
 _SENTENCE_SPLIT = re.compile(
     r'(?<=[.!?»])\s+|(?<=[,;:])\s+(?=[A-ZÀÂÉÈÊËÎÏÔÙÛÜŒÆ])'
@@ -147,10 +183,10 @@ def _split_chunks(text):
     return chunks or [text]
 
 # --- Backend async ---
-async def _generate_async(voice_id, text, rate, out_path):
+async def _generate_async(voice_id, text, rate, pitch, out_path):
     try:
         import edge_tts as _edge_tts_module  # lazy : pas de C-thread au chargement du module
-        communicate = _edge_tts_module.Communicate(text, voice_id, rate=rate)
+        communicate = _edge_tts_module.Communicate(text, voice_id, rate=rate, pitch=pitch)
         await asyncio.wait_for(communicate.save(out_path), timeout=8.0)
         return os.path.exists(out_path) and os.path.getsize(out_path) > 0
     except asyncio.TimeoutError:
@@ -198,7 +234,7 @@ def _ensure_tts_loop() -> asyncio.AbstractEventLoop:
         _TTS_THREAD = t
     return _TTS_LOOP
 
-def _generate_chunk_async(voice_id, text, rate):
+def _generate_chunk_async(voice_id, text, rate, pitch):
     """Génère un chunk audio via edge_tts sur la boucle TTS persistante."""
     import edge_tts as _  # noqa — force l'import maintenant qu'on est hors de setup_ui
     loop = _ensure_tts_loop()
@@ -210,7 +246,7 @@ def _generate_chunk_async(voice_id, text, rate):
     t0 = time.perf_counter()
     preview = text[:50].replace("\n", " ")
     future = asyncio.run_coroutine_threadsafe(
-        _generate_async(voice_id, text, rate, tmp), loop
+        _generate_async(voice_id, text, rate, pitch, tmp), loop
     )
     try:
         ok = future.result(timeout=10)
@@ -226,7 +262,7 @@ def _generate_chunk_async(voice_id, text, rate):
     return tmp
 
 # --- Backend CLI ---
-def _generate_chunk_cli(voice_id, text, rate):
+def _generate_chunk_cli(voice_id, text, rate, pitch):
     t0      = time.perf_counter()
     preview = text[:50].replace("\n", " ")
     try:
@@ -235,25 +271,27 @@ def _generate_chunk_cli(voice_id, text, rate):
     except Exception:
         return None
     for r in [rate, "+0%"]:
-        try:
-            result = subprocess.run(
-                ["edge-tts", "--voice", voice_id, "--text", text,
-                 f"--rate={r}", "--write-media", tmp],
-                timeout=8, capture_output=True, text=True,
-            )
-            if result.returncode == 0 and os.path.getsize(tmp) > 0:
-                sz = os.path.getsize(tmp)
-                return tmp
-            if "NoAudioReceived" not in result.stderr:
-                _log("edge-cli", f"✗ returncode={result.returncode}  {_ms(t0)}", "red")
+        for p in [pitch, "+0%"]:
+            try:
+                result = subprocess.run(
+                    ["edge-tts", "--voice", voice_id, "--text", text,
+                     f"--rate={r}", f"--pitch={p}", "--write-media", tmp],
+                    timeout=8, capture_output=True, text=True,
+                    env=_clean_env()
+                )
+                if result.returncode == 0 and os.path.getsize(tmp) > 0:
+                    sz = os.path.getsize(tmp)
+                    return tmp
+                if "NoAudioReceived" not in result.stderr:
+                    _log("edge-cli", f"✗ returncode={result.returncode}  {_ms(t0)}", "red")
+                    break
+            except subprocess.TimeoutExpired:
+                _log("edge-cli", f"✗ timeout 8s  {_ms(t0)}", "red")
                 break
-        except subprocess.TimeoutExpired:
-            _log("edge-cli", f"✗ timeout 8s  {_ms(t0)}", "red")
-            break
-        except FileNotFoundError:
-            _log("edge-cli", "✗ edge-tts CLI introuvable", "red")
-            break
-        open(tmp, 'wb').close()
+            except FileNotFoundError:
+                _log("edge-cli", "✗ edge-tts CLI introuvable", "red")
+                break
+            open(tmp, 'wb').close()
     try: os.remove(tmp)
     except OSError: pass
     return None
@@ -300,7 +338,8 @@ def _play_file(tmp_path):
                 vol_path = tmp_path.replace(".wav", "_vol.wav")
                 subprocess.run(
                     ["ffmpeg", "-y", "-i", tmp_path, "-af", f"volume={vol/100.0}", vol_path],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    env=_clean_env()
                 )
                 # Si le traitement a réussi, on remplace le fichier original
                 if os.path.exists(vol_path) and os.path.getsize(vol_path) > 44:
@@ -318,7 +357,7 @@ def _play_file(tmp_path):
             _log(player, f"✗ lecteur {cmd[0]} introuvable", "red")
             return False
 
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_clean_env())
         with _proc_lock:
             _active_processes.append(proc)
         try:
@@ -362,6 +401,7 @@ def _prefetch_voice_edgetts(text: str, character_name: str) -> list[str]:
 
     voice_id    = VOICE_MAPPING.get(character_name, VOICE_MAPPING["default"])
     voice_speed = _normalize_rate(SPEED_MAPPING.get(character_name, SPEED_MAPPING["default"]))
+    voice_pitch = _normalize_pitch(PITCH_MAPPING.get(character_name, PITCH_MAPPING["default"]))
     clean_text  = _clean_for_tts(text)
     if clean_text is None:
         return []
@@ -371,11 +411,11 @@ def _prefetch_voice_edgetts(text: str, character_name: str) -> list[str]:
     n_workers = min(len(chunks), 4)
 
     if n_workers <= 1 or len(chunks) == 1:
-        files = [f for f in (_generate(voice_id, ch, voice_speed) for ch in chunks) if f]
+        files = [f for f in (_generate(voice_id, ch, voice_speed, voice_pitch) for ch in chunks) if f]
     else:
         results: list[str | None] = [None] * len(chunks)
         def _gen(idx, chunk):
-            results[idx] = _generate(voice_id, chunk, voice_speed)
+            results[idx] = _generate(voice_id, chunk, voice_speed, voice_pitch)
         with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="edgetss-pre") as ex:
             _fw([ex.submit(_gen, i, ch) for i, ch in enumerate(chunks)], return_when=ALL_COMPLETED)
         files = [f for f in results if f]
@@ -557,6 +597,7 @@ def _play_voice_edgetts(text, character_name):
 
     voice_id    = VOICE_MAPPING.get(character_name, VOICE_MAPPING["default"])
     voice_speed = _normalize_rate(SPEED_MAPPING.get(character_name, SPEED_MAPPING["default"]))
+    voice_pitch = _normalize_pitch(PITCH_MAPPING.get(character_name, PITCH_MAPPING["default"]))
 
     clean_text = _clean_for_tts(text)
     if clean_text is None:
@@ -571,7 +612,7 @@ def _play_voice_edgetts(text, character_name):
     def _generate_all():
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="edgetss-gen") as ex:
-            futures = [ex.submit(_generate, voice_id, chunk, voice_speed) for chunk in chunks]
+            futures = [ex.submit(_generate, voice_id, chunk, voice_speed, voice_pitch) for chunk in chunks]
             for i, fut in enumerate(futures):
                 try:
                     file_queue.put(fut.result(timeout=12))
@@ -754,9 +795,23 @@ def play_voice(text: str, character_name: str) -> bool:
     if _get_backend() == "piper":
         voice_id, models_dir = _get_piper_voice_id(character_name)
         from piper_tts import play_piper_voice
-        from app_config import get_piper_pitch, get_piper_volume
+        from app_config import get_piper_volume, get_piper_pitch, get_piper_config
+        
+        # Les Héros ont des vitesses "SPEED_MAPPING" calées pour Edge-TTS. 
+        # Pour Piper, on retombe sur la configuration globale par défaut.
+        if character_name in ["Kaelen", "Elara", "Thorne", "Lyra", "Alexis_Le_MJ"]:
+            speed_float = get_piper_config().get("speed", 1.0)
+            if character_name == "Alexis_Le_MJ":
+                speed_float = max(speed_float, 1.15)
+        else:
+            speed_float = _rate_to_float(SPEED_MAPPING.get(character_name, SPEED_MAPPING["default"]))
+        
+        # Combinaison : % défini dans l'UI (pour NPCs) + réglage app_config (pour Héros)
+        pitch_val = _pitch_to_semitones(PITCH_MAPPING.get(character_name, PITCH_MAPPING["default"]))
+        pitch_val += get_piper_pitch(character_name)
+
         return play_piper_voice(text, character_name, voice_id, models_dir,
-                                pitch_semitones=get_piper_pitch(character_name),
+                                pitch_semitones=pitch_val, speed=speed_float,
                                 volume_percent=get_piper_volume(character_name))
     return _play_voice_edgetts(text, character_name)
 
@@ -772,9 +827,21 @@ def prefetch_voice(text: str, character_name: str) -> list[str]:
     if _get_backend() == "piper":
         voice_id, models_dir = _get_piper_voice_id(character_name)
         from piper_tts import prefetch_piper_voice
-        from app_config import get_piper_pitch, get_piper_volume
+        from app_config import get_piper_volume, get_piper_pitch, get_piper_config
+        
+        if character_name in ["Kaelen", "Elara", "Thorne", "Lyra", "Alexis_Le_MJ"]:
+            speed_float = get_piper_config().get("speed", 1.0)
+            if character_name == "Alexis_Le_MJ":
+                speed_float = max(speed_float, 1.15)
+        else:
+            speed_float = _rate_to_float(SPEED_MAPPING.get(character_name, SPEED_MAPPING["default"]))
+        
+        # Combinaison : % défini dans l'UI (pour NPCs) + réglage app_config (pour Héros)
+        pitch_val = _pitch_to_semitones(PITCH_MAPPING.get(character_name, PITCH_MAPPING["default"]))
+        pitch_val += get_piper_pitch(character_name)
+        
         return prefetch_piper_voice(text, character_name, voice_id, models_dir,
-                                    pitch_semitones=get_piper_pitch(character_name),
+                                    pitch_semitones=pitch_val, speed=speed_float,
                                     volume_percent=get_piper_volume(character_name))
     return _prefetch_voice_edgetts(text, character_name)
 

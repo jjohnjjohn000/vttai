@@ -41,18 +41,32 @@ class ChatMixinCore:
 
         self.chat_display.insert(tk.END, "\n[", tag_name)
         self.chat_display.insert(tk.END, sender, (tag_name, tag_sender))
-        if (text.strip().startswith("[MISE À JOUR CARTE") 
+        # ── Auto-collapse system / engine messages ────────────────────────────
+        _SYSTEM_SENDERS = {
+            "⚙️ Système", "⚠️ Système", "⚠️ Règle", "📚 Mémoire",
+            "⏸ Session", "▶ Session", "⚔️ Combat", "⚔️ Tour",
+            "🖼️ Système", "🗺️ Système", "⚙️ Config"
+        }
+        _is_system_msg = (
+            sender in _SYSTEM_SENDERS
+            or text.strip().startswith("[MISE À JOUR CARTE")
             or "═══ CARTE DE COMBAT" in text.strip()
             or text.strip().startswith("[RÉSULTAT SYSTÈME")
             or text.strip().startswith("[TOUR EN COURS")
             or text.strip().startswith("[COMBO INTERDIT")
             or text.strip().startswith("[SYSTÈME — HORS TOUR")
+            or text.strip().startswith("[REFUS OUTIL")
+            or text.strip().startswith("[DIRECTIVE SYSTÈME")
             or "tool_use_failed" in text
             or "Tentative de récupération" in text
             or "PARAMÈTRE INVALIDE" in text
-            or "DIRECTIVE SYSTÈME" in text
             or "VIOLATION PNJ" in text
-            or "VIOLATION SYSTÈME" in text):
+            or "VIOLATION SYSTÈME" in text
+        )
+        # ── Exception : les bandeaux de tour de combat restent visibles ────
+        if "⚡ Tour de" in text:
+            _is_system_msg = False
+        if _is_system_msg:
             parts = text.strip().split("\n", 1)
             header_txt = parts[0].strip()
             body_txt   = "\n" + parts[1] if len(parts) > 1 else ""

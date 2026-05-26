@@ -37,6 +37,8 @@ class CombatTrackerUIMixin:
     """Mixin regroupant la construction de l'interface du tracker de combat."""
 
     def _build_window(self):
+        from combat_tracker_constants import C
+
         self.win = tk.Toplevel(self.root)
         self.win.withdraw()  # Fix XWayland mapping freeze
         self.win.title("⚔️  Suivi de Combat — D&D 5e")
@@ -50,9 +52,8 @@ class CombatTrackerUIMixin:
         self._build_list_area()
         self._build_bottom_panel()
 
-        # Mapping asynchrone
-        self.win.after(30, self.win.deiconify)
-        self.win.after(60, self.win.lift)
+        # Le mapping et le lift sont désormais gérés de manière centralisée par
+        # _track_window() dans window_state.py pour éviter la saturation du compositeur X11.
 
         # Raccourci clavier global : F3 → Tour suivant (actif même sans focus sur cette fenêtre)
         self.root.bind_all("<F3>", lambda e: self._next_turn())

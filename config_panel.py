@@ -1389,6 +1389,185 @@ def _tab_llm_resources(nb, cfg):
     return tab
 
 
+def _tab_devices(nb, cfg, vars_):
+    """Onglet : Périphériques matériels (Webcam, etc.)."""
+    tab = tk.Frame(nb, bg=BG)
+
+    header = tk.Frame(tab, bg="#0a1520", pady=8)
+    header.pack(fill=tk.X)
+    tk.Label(header, text="📷 Périphériques",
+             bg="#0a1520", fg=ACCENT, font=("Arial", 11, "bold")).pack(side=tk.LEFT, padx=16)
+    tk.Label(header, text="Webcams et matériels",
+             bg="#0a1520", fg=FG_DIM, font=("Arial", 8)).pack(side=tk.RIGHT, padx=16)
+
+    outer = tk.Frame(tab, bg=BG)
+    outer.pack(fill=tk.BOTH, expand=True)
+    content = _make_scrollable(outer)
+
+    # ════════════════════════════════════════════════════════════════════
+    # SECTION 1 — Webcam
+    # ════════════════════════════════════════════════════════════════════
+    _section(content, "Webcam principale", ACCENT)
+
+    dev_cfg = cfg.get("devices", {})
+    idx_var = tk.IntVar(value=dev_cfg.get("webcam_index", 0))
+
+    row = tk.Frame(content, bg=BG)
+    row.pack(fill=tk.X, padx=20, pady=3)
+    tk.Label(row, text="Webcam par défaut", bg=BG, fg=FG_DIM, font=FONT_LBL, width=28, anchor="w").pack(side=tk.LEFT)
+
+    combo_var = tk.StringVar()
+    combo = ttk.Combobox(row, textvariable=combo_var, state="readonly", width=35)
+    combo.pack(side=tk.LEFT)
+
+    tk.Label(content, text="  Sera utilisée par défaut pour tous les personnages contrôlés par un Humain.",
+             bg=BG, fg=FG_DIM, font=("Consolas", 8), justify=tk.LEFT).pack(anchor="w", padx=20, pady=4)
+
+    # ── Zone de test Webcam ──
+    preview_frame = tk.Frame(content, bg=BG2, bd=1, relief="solid")
+    preview_frame.pack(pady=10, padx=24, anchor="w")
+    
+    tk.Label(preview_frame, text="Aperçu en direct", bg=BG2, fg=ACCENT, font=("Arial", 9, "bold")).pack(pady=(5, 0))
+    
+    cam_widget = None
+
+    try:
+        from webcam_widget import get_available_cameras, WebcamWidget
+        import threading
+        
+        cam_widget = WebcamWidget(preview_frame, camera_index=idx_var.get(), width=168, height=222)
+        cam_widget.pack(padx=10, pady=10)
+
+        combo.set("Recherche en cours...")
+        
+        def _find_cams():
+            cams = get_available_cameras(active_index=idx_var.get())
+            cam_map = {display_name: idx for idx, display_name in cams}
+            values = list(cam_map.keys())
+            if not values:
+                values = ["Aucune caméra détectée"]
+            
+            def _update_ui():
+                if not combo.winfo_exists(): return
+                combo.config(values=values)
+                current_name = next((name for name, idx in cam_map.items() if idx == idx_var.get()), None)
+                if current_name in values:
+                    combo.set(current_name)
+                elif values:
+                    combo.set(values[0])
+                    if values[0] in cam_map:
+                        idx_var.set(cam_map[values[0]])
+            
+            combo.after(0, _update_ui)
+            
+            def _on_select(e):
+                val = combo_var.get()
+                if val in cam_map:
+                    idx = cam_map[val]
+                    idx_var.set(idx)
+                    if cam_widget:
+                        cam_widget.set_camera(idx)
+                    
+            combo.bind("<<ComboboxSelected>>", _on_select)
+
+        threading.Thread(target=_find_cams, daemon=True).start()
+    except ImportError:
+        combo.set("OpenCV / webcam_widget non installé")
+        tk.Label(preview_frame, text="OpenCV manquant", bg=BG2, fg=RED).pack(padx=20, pady=20)
+
+    # ── Optimisation : Ne faire tourner la webcam que si l'onglet est affiché ──
+    def _on_tab_map(e):
+        if e.widget == tab and cam_widget:
+            cam_widget.start()
+
+    def _on_tab_unmap(e):
+        if e.widget == tab and cam_widget:
+            cam_widget.stop()
+
+    tab.bind("<Map>", _on_tab_map)
+    tab.bind("<Unmap>", _on_tab_unmap)
+
+
+    # ════════════════════════════════════════════════════════════════════
+    # SECTION 2 — Microphone (Entrée Audio)
+    # ════════════════════════════════════════════════════════════════════
+    _section(content, "Microphone (Entrée audio)", ACCENT)
+
+    mic_idx_var = tk.IntVar(value=dev_cfg.get("mic_index", -1))  # -1 = Par défaut
+
+    mic_row = tk.Frame(content, bg=BG)
+    mic_row.pack(fill=tk.X, padx=20, pady=3)
+    tk.Label(mic_row, text="Microphone par défaut", bg=BG, fg=FG_DIM, font=FONT_LBL, width=28, anchor="w").pack(side=tk.LEFT)
+
+    mic_combo_var = tk.StringVar()
+    mic_combo = ttk.Combobox(mic_row, textvariable=mic_combo_var, state="readonly", width=45)
+    mic_combo.pack(side=tk.LEFT)
+
+    tk.Label(content, text="  Sera utilisé pour le Push-to-Talk et la capture vocale globale.",
+             bg=BG, fg=FG_DIM, font=("Consolas", 8), justify=tk.LEFT).pack(anchor="w", padx=20, pady=(4, 15))
+
+    mic_combo.set("Recherche en cours...")
+
+    def _find_mics():
+        devices = []
+        try:
+            import sounddevice as sd
+            for i, dev in enumerate(sd.query_devices()):
+                if dev['max_input_channels'] > 0:
+                    devices.append((i, dev['name']))
+        except ImportError:
+            try:
+                import pyaudio
+                p = pyaudio.PyAudio()
+                for i in range(p.get_device_count()):
+                    info = p.get_device_info_by_index(i)
+                    if info.get('maxInputChannels') > 0:
+                        devices.append((i, info.get('name')))
+                p.terminate()
+            except ImportError:
+                pass
+        except Exception:
+            pass
+        
+        mic_map = {f"{name} (Index {idx})": idx for idx, name in devices}
+        values = ["Par défaut (Système)"] + list(mic_map.keys())
+        
+        def _update_mic_ui():
+            if not mic_combo.winfo_exists(): return
+            mic_combo.config(values=values)
+            
+            if mic_idx_var.get() == -1:
+                mic_combo.set("Par défaut (Système)")
+            else:
+                current_name = next((name for name, idx in mic_map.items() if idx == mic_idx_var.get()), None)
+                if current_name in values:
+                    mic_combo.set(current_name)
+                else:
+                    mic_combo.set("Par défaut (Système)")
+                    mic_idx_var.set(-1)
+        
+        mic_combo.after(0, _update_mic_ui)
+        
+        def _on_mic_select(e):
+            val = mic_combo_var.get()
+            if val in mic_map:
+                mic_idx_var.set(mic_map[val])
+            else:
+                mic_idx_var.set(-1)
+                
+        mic_combo.bind("<<ComboboxSelected>>", _on_mic_select)
+
+    # ── Lancement du Thread pour les Micros ──
+    import threading
+    threading.Thread(target=_find_mics, daemon=True).start()
+
+    vars_["devices"] = {
+        "webcam_index": idx_var,
+        "mic_index": mic_idx_var
+    }
+    return tab
+
+
 # ─── Fonction principale ───────────────────────────────────────────────────────
 
 def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
@@ -1434,6 +1613,8 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
              font=("Arial", 14, "bold")).pack(side=tk.LEFT, padx=18)
     tk.Label(hdr, text="app_config.json", bg="#060d18", fg=FG_DIM,
              font=("Consolas", 9)).pack(side=tk.RIGHT, padx=18)
+             
+    tk.Button(hdr, text="📖 Compendium", bg="#2a3a4a", fg="#c8a820", font=("Arial", 10, "bold"), relief="flat", padx=10, command=lambda: __import__('compendium_window').open_compendium(win)).pack(side=tk.RIGHT, padx=10)
 
     # ── Onglets ttk (style dark) ──
     style = ttk.Style()
@@ -1453,7 +1634,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
     vars_: dict = {
         "agents": {}, "chronicler": {}, "groupchat": {},
         "memories": {}, "voice": {}, "ui": {}, "piper": {}, "ptt": {},
-        "combat": {}, "fallback_chain": {},
+        "combat": {}, "fallback_chain": {}, "devices": {},
     }
 
     # ── Lazy tab loading ──────────────────────────────────────────────────────
@@ -1468,6 +1649,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
         3: ("_tab_memories",      lambda: _tab_memories(nb, cfg, vars_)),
         4: ("_tab_voice_ui",      lambda: _tab_voice_ui(nb, cfg, vars_)),
         5: ("_tab_llm_resources", lambda: _tab_llm_resources(nb, cfg)),
+        6: ("_tab_devices",       lambda: _tab_devices(nb, cfg, vars_)),
     }
     _built_tabs: set = set()  # indices déjà construits
 
@@ -1484,18 +1666,39 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
 
     def _on_tab_changed(event):
         """Construit l'onglet au premier clic (lazy loading)."""
-        idx = nb.index(nb.select())
+        try:
+            selected = nb.select()
+            if not selected: return
+            idx = nb.index(selected)
+        except Exception:
+            return
+
         if idx in _tab_builders and idx not in _built_tabs:
+            # On marque cet index comme construit pour éviter les doublons
             _built_tabs.add(idx)
-            _, builder = _tab_builders[idx]
-            real_tab = builder()
-            # Remplacer le placeholder par le vrai contenu
-            old_ph = placeholder_tabs[idx]
-            tab_text = nb.tab(idx, "text")
-            nb.forget(idx)
-            old_ph.destroy()
-            nb.insert(idx, real_tab, text=tab_text)
-            nb.select(idx)
+            
+            def _build_and_swap():
+                try:
+                    _, builder = _tab_builders[idx]
+                    # Le constructeur crée l'onglet
+                    real_tab = builder()
+                    
+                    ph = placeholder_tabs[idx]
+                    
+                    # On vide le placeholder (on détruit le texte "Chargement...")
+                    for w in ph.winfo_children():
+                        w.destroy()
+                        
+                    # ASTUCE ULTIME TKINTER : Au lieu d'utiliser nb.insert() ou nb.forget() qui 
+                    # font crasher Tkinter pendant un event, on place visuellement le nouvel onglet
+                    # À L'INTÉRIEUR du placeholder existant. La structure du Notebook reste intacte !
+                    real_tab.pack(in_=ph, fill=tk.BOTH, expand=True)
+                    
+                except Exception as e:
+                    print(f"[Config] Erreur lors de la construction de l'onglet : {e}")
+
+            # Délai asynchrone pour laisser Tkinter finir son événement interne en paix
+            nb.after(50, _build_and_swap)
 
     nb.bind("<<NotebookTabChanged>>", _on_tab_changed)
 
@@ -1530,6 +1733,7 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
     nb.add(placeholder_tabs[3],   text=" 🧠 Mémoires ")
     nb.add(placeholder_tabs[4],   text=" 🎤 Voix & UI ")
     nb.add(placeholder_tabs[5],   text=" 🔑 Ressources LLM ")
+    nb.add(placeholder_tabs[6],   text=" 📷 Périphériques ")
 
     # ── Barre du bas ──
     bar = tk.Frame(win, bg="#060d18", pady=8)
@@ -1649,6 +1853,14 @@ def open_config_panel(root, win_state: dict, track_fn, on_saved=None):
         fb_lb = fb_v.get("listbox")
         if fb_lb:
             new_cfg["fallback_chain"] = [fb_lb.get(i) for i in range(fb_lb.size())]
+
+        dev_v = vars_.get("devices", {})
+        if dev_v:
+            if "devices" not in new_cfg: new_cfg["devices"] = {}
+            new_cfg["devices"].update({
+                "webcam_index": dev_v["webcam_index"].get(),
+                "mic_index": dev_v["mic_index"].get()
+            })
 
         save_app_config(new_cfg)
         reload_app_config()

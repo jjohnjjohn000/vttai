@@ -309,6 +309,21 @@ class CombatTrackerUtilsMixin:
                                         "(Le combat sera sauvegardé et reprendra à la prochaine ouverture.)"):  
                 return
         self._save_combat_state()
+        
+        # ── Désactiver les règles IA globalement quand la fenêtre est cachée ──
+        try:
+            from combat_tracker_state import COMBAT_STATE
+            COMBAT_STATE["active"] = False
+        except Exception as e:
+            print(f"[CombatTracker _on_close] Erreur désactivation COMBAT_STATE: {e}")
+
+        # ── Restaurer les configs LLM d'origine des agents PJ ───────────────
+        try:
+            if getattr(self, "app", None) is not None and hasattr(self.app, "_set_combat_llm"):
+                self.app._set_combat_llm(False)
+        except Exception as e:
+            print(f"[CombatTracker _on_close] Erreur restauration LLM : {e}")
+
         try:
             self.root.unbind_all("<F3>")
         except Exception:

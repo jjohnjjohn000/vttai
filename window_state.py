@@ -21,7 +21,6 @@ _save_timer: threading.Timer | None = None
 _save_lock = threading.Lock()
 _pending_state: dict | None = None
 
-
 # ─── Fonctions bas-niveau ──────────────────────────────────────────────────────
 
 def _load_window_state() -> dict:
@@ -61,24 +60,42 @@ def _get_win_geometry(win) -> dict | None:
     try:
         # Lecture hybride pour éviter deux types de dérive différents sur X11 :
         #
-        # — Axe Y : geometry() getter retourne le hint passé au WM (référentiel
-        #   du frame), cohérent avec geometry() setter → pas de dérive titre.
-        #   winfo_y() = y_hint + hauteur_barre_titre → drift 37 px à chaque cycle.
-        #   → On lit Y depuis la chaîne geometry().
-        #
         # — Axe X : geometry() getter retourne la valeur SETtée, pas la position
         #   réelle si le WM a snappé la fenêtre (ex. bord droit de moniteur).
-        #   geometry("...+3530") → WM snappe à 3540 → geometry() dit encore 3530
-        #   → drift non-cumulatif de 10 px à chaque restore.
         #   winfo_x() retourne la position client réelle APRÈS snap → stable.
-        #   La bordure gauche WM (1-2 px) est négligeable et non-cumulative.
         #   → On lit X depuis winfo_x().
+        #
+        # — Axe Y : la barre de titre GNOME fait ~37px (ou ~45px quand snappée
+        #   en haut). Lors d'un drag sans snap (ex. fenêtres en bas), XWayland 
+        #   omet souvent le ConfigureNotify, rendant geometry() totalement STALE.
+        #   Si la différence (client_y - geom_y) n'est pas dans l'intervalle
+        #   d'une barre de titre valide [30, 47], on ignore geometry() et on
+        #   déduit le Y frame depuis winfo_y() - 37 (barre par défaut).
         m = re.match(r'(\d+)x(\d+)([+-]\d+)([+-]\d+)', win.geometry())
         if m:
             w = int(m.group(1))
             h = int(m.group(2))
             x = win.winfo_x()   # position X réelle (WM snapping pris en compte)
-            y = int(m.group(4)) # hint Y depuis geometry() (évite la dérive barre de titre)
+            
+            geom_y = int(m.group(4))
+            client_y = win.winfo_y()
+            
+            delta = client_y - geom_y
+            
+            # La barre GNOME standard = ~37px. En haut d'écran (snap) = ~45px.
+            # Un drag vers le bas de 8px en bas d'écran donne un delta de 45px.
+            # Pour éviter de confondre un drag en bas avec un snap en haut,
+            # on vérifie si la fenêtre est physiquement proche du haut d'un écran.
+            # (Les écrans résolvent à des y proches des multiples de 1080).
+            is_top_edge = (client_y % 1080) < 60
+            
+            if is_top_edge and (30 <= delta <= 47):
+                y = geom_y        # Hint Y précis (fenêtre snappée en haut)
+            elif delta == 37:
+                y = geom_y        # Perfect match, pas de drag asynchrone
+            else:
+                y = client_y - 37 # Hint stale (drag foiré sur XWayland), on corrige
+
             if w > 1 and h > 1:
                 return {"w": w, "h": h, "x": x, "y": y}
     except Exception:

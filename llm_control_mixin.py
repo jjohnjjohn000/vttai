@@ -261,6 +261,12 @@ class LLMControlMixin:
             self._cmd_skill(_pskill.group(1))
             return
 
+        # ── Commande /save [nom] [caractéristique] [contexte_optionnel] [dc] ──
+        _psave = _re_msg.match(r'^/save(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
+        if _psave and _psave.group(1):
+            self._cmd_save(_psave.group(1))
+            return
+
         # ── Commande /round ───────────────────────────────────────────────────
         if _re_msg.match(r'^/round$', text, _re_msg.IGNORECASE):
             self._cmd_round()
@@ -931,6 +937,69 @@ class LLMControlMixin:
         bonus = (
             char_mods.get("skills", {}).get(skill_low)
             or char_mods.get("saves", {}).get(skill_low)
+            or 0
+        )
+
+        def _on_confirm(confirmed: bool, total: int, mj_note: str):
+            if not confirmed:
+                return
+            
+            dc_txt = f" (DC {dc})" if dc else ""
+            res_txt = "✅ Réussite" if dc and total >= dc else "❌ Échec" if dc else ""
+            inject_msg = f"[RÉSULTAT SYSTÈME] {char_name} a fait un jet de {skill_label} : Total {total}{dc_txt}. {res_txt} {mj_note}".strip()
+            
+            if self._llm_running and not self._waiting_for_mj:
+                self._pending_interrupt_input = inject_msg
+                self._pending_interrupt_display = None
+                self._inject_stop()
+            else:
+                self.user_input = inject_msg
+                self.input_event.set()
+
+        self.msg_queue.put({
+            "action": "skill_check_confirm",
+            "char_name": char_name,
+            "skill_label": skill_label,
+            "stat_label": "",
+            "bonus": bonus,
+            "dc": dc,
+            "has_advantage": False,
+            "has_disadvantage": False,
+            "intention": intention,
+            "resume_callback": _on_confirm
+        })
+
+    def _cmd_save(self, args: str):
+        """
+        /save [nom] [caractéristique] [contexte_optionnel] [dc]
+        Déclenche la boîte de jet de dés UI et injecte le résultat aux agents.
+        """
+        parts = args.strip().split()
+        if len(parts) < 2:
+            self.msg_queue.put({"sender": "⚠️ Système", "text": "Usage : /save [nom] [caractéristique] [contexte] [dc]", "color": "#FF9800"})
+            return
+
+        _all_names = list(getattr(self, 'CHAR_COLORS', {}).keys())
+        char_name = next((n for n in _all_names if n.lower().startswith(parts[0].lower())), parts[0])
+        # Force the label to contain "Sauvegarde" to trigger the shield badge in UI
+        skill_label = "Sauvegarde de " + parts[1].capitalize()
+        stat_low = parts[1].lower()
+        
+        dc = None
+        intention = ""
+        
+        if len(parts) > 2:
+            # Vérifie si le dernier argument est un nombre (DC)
+            try:
+                dc = int(parts[-1])
+                intention = " ".join(parts[2:-1])
+            except ValueError:
+                intention = " ".join(parts[2:])
+
+        char_mods = getattr(self, '_SKILL_MODIFIERS', {}).get(char_name, {})
+        bonus = (
+            char_mods.get("saves", {}).get(stat_low)
+            or char_mods.get("skills", {}).get(stat_low)
             or 0
         )
 

@@ -111,11 +111,14 @@ class SessionMixin:
                 f"Rédige maintenant le résumé de cette session."
             )
 
+            from agent_logger import log_chronicler_prompt, log_chronicler_response
+            log_chronicler_prompt("Session Summary", system_prompt, messages=[{"role": "user", "content": user_prompt}])
             response = client.create(messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": user_prompt},
             ])
             session_resume = response.choices[0].message.content
+            log_chronicler_response("Session Summary", session_resume)
 
         except Exception as e:
             session_resume = (

@@ -38,6 +38,13 @@ import queue as _queue
 import urllib.request
 from pathlib import Path
 
+def _clean_env():
+    e = os.environ.copy()
+    e.pop("LD_LIBRARY_PATH", None)
+    e.pop("LD_PRELOAD", None)
+    return e
+
+
 # ─── Logger TTS avec timestamps ──────────────────────────────────────────────
 
 _LOG_LOCK   = threading.Lock()
@@ -251,6 +258,12 @@ def _load_voice(voice_id: str, models_dir: str):
 
 # ─── Synthèse d'un chunk ────────────────────────────────────────────────────
 
+# VERROU GLOBAL STRICT pour espeak-ng.
+# espeak-ng phonemize maintient un état global non-thread-safe en C.
+# Appeler voice_obj.synthesize() depuis 2 threads différents en même temps
+# (ex: prefetch_thread + play_voice) provoque un Segmentation Fault immédiat.
+_ESPEAK_GLOBAL_LOCK = threading.Lock()
+
 def _process_audio(src: str, semitones: float, speed: float = 1.0, volume: float = 1.0) -> str:
     """
     Applique un pitch shift, un changement de vitesse et/ou de volume via ffmpeg.
@@ -281,7 +294,7 @@ def _process_audio(src: str, semitones: float, speed: float = 1.0, volume: float
         r = subprocess.run(["ffmpeg", "-y", "-i", src,
              "-af", ",".join(filters),
              dst],
-            capture_output=True, timeout=15,
+            capture_output=True, timeout=15, env=_clean_env()
         )
         if r.returncode == 0 and os.path.getsize(dst) > 44:
             try: os.remove(src)
@@ -313,8 +326,9 @@ def _synthesize_chunk(voice_obj, text: str, pitch_semitones: float = 0.0, speed:
             _os.dup2(_devnull_fd, 2)
             _os.close(_devnull_fd)
             try:
-                # Plus de length_scale ici pour éviter les crashs de l'API Piper
-                chunks = list(voice_obj.synthesize(text))
+                # Verrou global critique contre les segfaults espeak-ng :
+                with _ESPEAK_GLOBAL_LOCK:
+                    chunks = list(voice_obj.synthesize(text))
             finally:
                 _os.dup2(_saved_fd, 2)
                 _os.close(_saved_fd)
@@ -383,6 +397,7 @@ def _play_wav_aplay(path: str) -> bool:
         proc = subprocess.Popen(
             ["aplay", "-q", path],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=_clean_env()
         )
         if use_registry:
             with _proc_lock:
@@ -449,6 +464,7 @@ def _play_file(path: str) -> bool:
             ffplay_cmd,
             stdout=subprocess.DEVNULL,
             stderr=None if PIPER_DEBUG else subprocess.DEVNULL,
+            env=_clean_env()
         )
         if use_registry:
             with _proc_lock:
@@ -487,15 +503,11 @@ def _play_file(path: str) -> bool:
 
 def prefetch_piper_voice(text: str, character_name: str,
                           voice_id: str, models_dir: str = _DEFAULT_DIR,
-                          pitch_semitones: float = 0.0, volume_percent: int = 100) -> list[str]:
+                          pitch_semitones: float = 0.0, speed: float = 1.0, volume_percent: int = 100) -> list[str]:
     """
     Génère tous les chunks audio en avance (sans les jouer).
     Retourne une liste ORDONNÉE de chemins de fichiers WAV prêts à lire.
     """
-    speed = 1.0
-    if character_name == "Alexis_Le_MJ":
-        speed = 1.15  # Accélération via ffmpeg atempo
-
     from concurrent.futures import ThreadPoolExecutor, wait as _fw, ALL_COMPLETED
 
     t0 = time.perf_counter()
@@ -511,34 +523,23 @@ def prefetch_piper_voice(text: str, character_name: str,
         return[]
 
     chunks    = _split_chunks(clean)
-    n_workers = min(len(chunks), os.cpu_count() or 2, 4)
-
-    if n_workers <= 1 or len(chunks) == 1:
-        results =[_synthesize_chunk(voice_obj, ch, pitch_semitones, speed, volume_percent / 100.0) for ch in chunks]
-        files   = [f for f in results if f]
-    else:
-        ordered: list[str | None] = [None] * len(chunks)
-        def _synth(idx, chunk):
-            ordered[idx] = _synthesize_chunk(voice_obj, chunk, pitch_semitones, speed, volume_percent / 100.0)
-        with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="piper-pre") as ex:
-            _fw([ex.submit(_synth, i, ch) for i, ch in enumerate(chunks)],
-                return_when=ALL_COMPLETED)
-        files =[f for f in ordered if f]
+    
+    # Génération séquentielle obligatoire : PiperVoice (via espeak-ng) 
+    # n'est pas thread-safe et provoque des Segfaults si on synthétise
+    # plusieurs chunks en parallèle.
+    results = [_synthesize_chunk(voice_obj, ch, pitch_semitones, speed, volume_percent / 100.0) for ch in chunks]
+    files   = [f for f in results if f]
 
     elapsed = (time.perf_counter() - t0) * 1000
     return files
 
 def play_piper_voice(text: str, character_name: str,
                      voice_id: str, models_dir: str = _DEFAULT_DIR,
-                     pitch_semitones: float = 0.0, volume_percent: int = 100) -> bool:
+                     pitch_semitones: float = 0.0, speed: float = 1.0, volume_percent: int = 100) -> bool:
     """
     Synthétise et joue la voix via Piper TTS (hors-ligne).
     Pipeline pipeliné : génération chunk N+1 en parallèle de la lecture chunk N.
     """
-    speed = 1.0
-    if character_name == "Alexis_Le_MJ":
-        speed = 1.15  # Accélération via ffmpeg atempo
-
     t0 = time.perf_counter()
     if not shutil.which("ffplay"):
         _log("play_voice", "\u2717 ffplay introuvable \u2014 sudo apt install ffmpeg", "red")
@@ -565,25 +566,17 @@ def play_piper_voice(text: str, character_name: str,
     _stop  = threading.Event()
 
     def _gen_all():
-        from concurrent.futures import ThreadPoolExecutor
-
-        def _synth_safe(idx, chunk):
+        for i, chunk in enumerate(chunks):
             if _stop.is_set():
-                return idx, None
-            return idx, _synthesize_chunk(voice_obj, chunk, pitch_semitones, speed, volume_percent / 100.0)
-
-        with ThreadPoolExecutor(max_workers=n_workers, thread_name_prefix="piper-gen") as ex:
-            futures = [ex.submit(_synth_safe, i, ch) for i, ch in enumerate(chunks)]
-            for fut in futures:
-                if _stop.is_set():
-                    fut.cancel()
-                    continue
-                try:
-                    idx, result = fut.result(timeout=90)
-                    file_q.put(result, timeout=90)
-                except Exception as _e:
-                    _log("gen", f"  \u2717 chunk : {_e}", "red")
-                    file_q.put(None, timeout=5)
+                break
+            try:
+                result = _synthesize_chunk(voice_obj, chunk, pitch_semitones, speed, volume_percent / 100.0)
+                file_q.put(result, timeout=90)
+            except Exception as _e:
+                _log("gen", f"  \u2717 chunk : {_e}", "red")
+                try: file_q.put(None, timeout=5)
+                except _queue.Full: pass
+                
         try:
             file_q.put("__DONE__", timeout=5)
         except _queue.Full:

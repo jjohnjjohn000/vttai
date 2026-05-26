@@ -31,11 +31,9 @@ class ChatMixinSpellsMap:
         if pattern is None:
             return
 
-        # Déduplication : on ne traite chaque nom de sort qu'une seule fois par message
-        seen_names: set[str] = set()
-        matches = [m for m in pattern.finditer(text)
-                   if m.group(0).lower() not in seen_names
-                   and not seen_names.add(m.group(0).lower())]  # type: ignore[func-returns-value]
+        # On garde toutes les occurrences trouvées par Python (pas de déduplication au préalable),
+        # car on veut toutes les tagger !
+        matches = list(pattern.finditer(text))
         if not matches:
             return
 
@@ -45,6 +43,14 @@ class ChatMixinSpellsMap:
             return
         tag_start = str(ranges[0])
         tag_end   = str(ranges[-1])
+
+        # Trouve le début exact du 'text' à l'intérieur du bloc Tkinter complet
+        # pour s'affranchir du Tcl 'search' hyper buggé menant au Segmentation Fault
+        full_block = self.chat_display.get(tag_start, tag_end)
+        text_offset = full_block.find(text)
+        if text_offset == -1:
+            # Fallback en cas de manipulation asynchrone non anticipée
+            text_offset = max(0, len(full_block) - len(text))
 
         # Tags déjà posés dans ce widget (évite les doublons)
         _existing_tags: set[str] = set(self.chat_display.tag_names())
@@ -56,65 +62,42 @@ class ChatMixinSpellsMap:
                 if _total_tagged >= _MAX_SPELL_TAGS:
                     break
 
-                spell_name = match.group(0)   # casse originale dans le texte
+                spell_name = match.group(0)
                 sp = get_spell(spell_name)
                 if not sp:
                     continue
 
-                # Cherche UNE SEULE occurrence par nom de sort par message
-                # (pas de while True — évite la boucle infinie)
-                search_from = tag_start
-                _occurrences = 0
-                _MAX_OCC = 3   # max 3 occurrences du même sort dans un message
-                while _occurrences < _MAX_OCC and _total_tagged < _MAX_SPELL_TAGS:
-                    idx = self.chat_display.search(
-                        spell_name, search_from,
-                        stopindex=tag_end,
-                        nocase=True,
-                        exact=True
+                idx = f"{tag_start} + {text_offset + match.start()}c"
+                end_idx = f"{tag_start} + {text_offset + match.end()}c"
+
+                # Tag unique par NOM DE SORT (réutilisé pour toutes les occurrences)
+                spell_safe = "".join(c for c in spell_name if c.isalnum() or c == "_")
+                spell_tag = f"clickspell_{spell_safe}"
+
+                # Ne pas re-créer un tag ou dupliquer les bindings si le sort a déjà été taggé avant
+                if spell_tag not in _existing_tags:
+                    self.chat_display.tag_config(
+                        spell_tag,
+                        foreground="#e8c84a",
+                        underline=True,
+                        font=("Consolas", 10, "bold"),
                     )
-                    if not idx:
-                        break
+                    def _open_sheet(event, _sp=sp):
+                        SpellSheetWindow(self.root, _sp)
+                    self.chat_display.tag_bind(spell_tag, "<Button-1>", _open_sheet)
+                    self.chat_display.tag_bind(
+                        spell_tag, "<Enter>",
+                        lambda e: self.chat_display.config(cursor="hand2"),
+                    )
+                    self.chat_display.tag_bind(
+                        spell_tag, "<Leave>",
+                        lambda e: self.chat_display.config(cursor=""),
+                    )
+                    _existing_tags.add(spell_tag)
 
-                    end_idx = f"{idx}+{len(spell_name)}c"
+                self.chat_display.tag_add(spell_tag, idx, end_idx)
+                _total_tagged += 1
 
-                    # Vérifier que end_idx > search_from pour éviter boucle infinie
-                    try:
-                        if not self.chat_display.compare(end_idx, ">", search_from):
-                            break
-                    except tk.TclError:
-                        break
-
-                    # Tag unique par NOM DE SORT (réutilisé pour toutes les occurrences)
-                    spell_safe = "".join(c for c in spell_name if c.isalnum() or c == "_")
-                    spell_tag = f"clickspell_{spell_safe}"
-
-                    # Ne pas re-créer un tag ou dupliquer les bindings si le sort a déjà été taggé avant
-                    if spell_tag not in _existing_tags:
-                        self.chat_display.tag_config(
-                            spell_tag,
-                            foreground="#e8c84a",
-                            underline=True,
-                            font=("Consolas", 10, "bold"),
-                        )
-                        def _open_sheet(event, _sp=sp):
-                            SpellSheetWindow(self.root, _sp)
-                        self.chat_display.tag_bind(spell_tag, "<Button-1>", _open_sheet)
-                        self.chat_display.tag_bind(
-                            spell_tag, "<Enter>",
-                            lambda e: self.chat_display.config(cursor="hand2"),
-                        )
-                        self.chat_display.tag_bind(
-                            spell_tag, "<Leave>",
-                            lambda e: self.chat_display.config(cursor=""),
-                        )
-                        _existing_tags.add(spell_tag)
-
-                    self.chat_display.tag_add(spell_tag, idx, end_idx)
-                    _total_tagged += 1
-
-                    search_from = end_idx
-                    _occurrences += 1
         except tk.TclError:
             pass   # widget détruit ou état invalide — on abandonne silencieusement
         finally:

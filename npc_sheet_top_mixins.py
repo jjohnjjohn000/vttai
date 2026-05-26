@@ -148,6 +148,8 @@ class MonsterSheetImageSpeakMixin:
                         f"que {agent_name} ressent en apercevant ce personnage. "
                         f"Reste dans le personnage. Ne pose pas de question."
                     )
+                    from agent_logger import log_llm_start, log_llm_end
+                    log_llm_start(agent_name, prompt, context="pnj_image")
                     try:
                         resp = client.create(messages=[{
                             "role": "user",
@@ -159,12 +161,14 @@ class MonsterSheetImageSpeakMixin:
                             ]
                         }])
                         text = (resp.choices[0].message.content or "").strip()
+                        log_llm_end(agent_name, response_preview=text)
                         if text:
                             msg_queue.put({"sender": agent_name, "text": text,
                                            "color": "#e0e0e0"})
                             if audio_q:
                                 audio_q.put((text, agent_name))
                     except Exception as e:
+                        log_llm_end(agent_name, error=str(e))
                         msg_queue.put({"sender": "⚠ Image", "text": str(e),
                                        "color": "#F44336"})
             except Exception as e:

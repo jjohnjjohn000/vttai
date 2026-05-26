@@ -71,6 +71,31 @@ except Exception:
 # dont le contenu est None (réponse tool-call only sans texte).
 # AutoGen ne protège pas ce cas → TypeError: 'NoneType' object is not iterable.
 def _patch_autogen_message_retrieval():
+    # --- NOUVEAU LOG DÉTAILLÉ DES FALLBACKS POUR LES JOUEURS ---
+    try:
+        import openai
+        _orig_openai_create = openai.resources.chat.completions.Completions.create
+
+        def _logged_openai_create(self, *args, **kwargs):
+            model = kwargs.get("model", "unknown")
+            print(f"\033[94m[AutoGen API] Tentative sur le modèle : {model}...\033[0m")
+            import time
+            t0 = time.time()
+            try:
+                res = _orig_openai_create(self, *args, **kwargs)
+                print(f"\033[92m[AutoGen API] ✓ Succès sur {model} en {time.time()-t0:.2f}s\033[0m")
+                return res
+            except Exception as e:
+                err_msg = str(e)
+                err_type = "Quota (429)" if ("429" in err_msg or "quota" in err_msg.lower()) else type(e).__name__
+                print(f"\033[91m[AutoGen API] ✗ Échec sur {model} ({err_type}) en {time.time()-t0:.2f}s → Passage à l'index suivant\033[0m")
+                raise
+
+        openai.resources.chat.completions.Completions.create = _logged_openai_create
+        print("[engine_agents] Patch OpenAI logging: OK")
+    except Exception as e:
+        print(f"[engine_agents] Patch OpenAI logging: SKIPPED ({e})")
+
     try:
         import autogen.oai.client as _oai_client
         _OpenAIClient = _oai_client.OpenAIClient
@@ -139,6 +164,7 @@ _ACTION_FORMAT = (
 _ACTION_FORMAT_HORS_COMBAT = (
     "  [RÈGLES DU BLOC ACTION (HORS COMBAT)]\n"
     "  • Fais 1 Déplacement OU 1 Action OU 1 Action Bonus — jamais plusieurs à la fois.\n"
+    "  Tu dois ajouter un bloc [ACTION] à la fin de ton message si tu veux effectuer une action mécanique.\n"
     "  [ACTION]\n"
     "  Type      : <Action / Action Bonus / Réaction / Mouvement>\n"
     "  Intention : <Ce que ton personnage fait, en une phrase claire>\n"
@@ -156,8 +182,43 @@ _ACTION_MOUVEMENT_FORMAT = (
     "  Cible     : <Destination>\n"
 )
 
-def _get_regles_communes() -> str:
+def _get_regles_communes(char_name: str = "", combat_mode: bool = False) -> str:
     max_sentences = get_agent_max_sentences()
+    
+    if char_name in ["Kaelen", "Elara", "Lyra"] or not char_name:
+        action_prompt = "Pour lancer un sort ou attaquer" if combat_mode else "Pour lancer un sort ou accomplir une action mécanique"
+        mechanics_block = (
+            "\n\n3. MÉCANIQUES ET SORTS"
+            f"\n• {action_prompt}, utilise TOUJOURS un bloc [ACTION]."
+            "\n• ⚠️ ANTI-SPAM (RÈGLE ABSOLUE) : Ne lance JAMAIS un sort (détection, buff, etc.) s'il a déjà été lancé récemment et est toujours actif. Le MJ gère les compétences passivement (Perception passive, Investigation passive, etc.) — ne demande PAS de jet toi-même sauf si le MJ t'y invite."
+            "\n• ⚠️ UPCAST OBLIGATOIRE : Tu DOIS respecter les 'Sorts dispos' affichés dans ton [TOUR EN COURS]. Si tu n'as plus d'emplacement pour le niveau de base d'un sort et que tu veux lancer quand même, tu DOIS le lancer à un niveau supérieur en l'écrivant explicitement (ex: 'Règle 5e: Shield of Faith niv. 3')."
+            "\n• N'appelle pas les outils (update_hp, roll_dice) de ta propre initiative, sauf si une [DIRECTIVE SYSTÈME] te le demande explicitement."
+        )
+    else:
+        action_prompt = "Pour attaquer ou accomplir une action mécanique" if combat_mode else "Pour accomplir une action mécanique"
+        mechanics_block = (
+            "\n\n3. MÉCANIQUES ET SYSTÈME"
+            f"\n• {action_prompt}, utilise TOUJOURS un bloc [ACTION]."
+            "\n• Le MJ gère les compétences passivement (Perception passive, Investigation passive, etc.) — ne demande PAS de jet toi-même sauf si le MJ t'y invite."
+            "\n• N'appelle pas les outils (update_hp, roll_dice) de ta propre initiative, sauf si une [DIRECTIVE SYSTÈME] te le demande explicitement."
+        )
+
+    if combat_mode:
+        format_reponse = (
+            "\n\n4. FORMAT DE RÉPONSE"
+            "\n• Structure : 1 réplique dialoguée (avec ton attitude incrustée dedans) + 1 bloc [ACTION]."
+            "\n• Sois concis : pas de monologues, pas de descriptions entre parenthèses en paragraphe séparé."
+            "\n• N'utilise [SILENCE] que si tu es physiquement incapable de parler. Sinon, donne au moins une pensée ou une courte réaction."
+        )
+    else:
+        format_reponse = (
+            "\n\n4. FORMAT DE RÉPONSE"
+            "\n• Structure : 1 réplique dialoguée (avec ton attitude incrustée dedans) + 1 bloc [ACTION] UNIQUEMENT si le MJ le demande ou si tu as une action physique délibérée à déclarer."
+            "\n• N'inclus JAMAIS les en-têtes d'instructions comme[RÈGLES DU BLOC ACTION] ou [RÈGLES DU BLOC ACTION (HORS COMBAT)] dans ta réponse."
+            "\n• Sois concis : pas de monologues, pas de descriptions entre parenthèses en paragraphe séparé."
+            "\n• N'utilise [SILENCE] que si tu es physiquement incapable de parler. Sinon, donne au moins une pensée ou une courte réaction."
+        )
+
     return (
         "\n\n═══════════════════════════════════════════"
         "\n📜 CONTRAT DE JEU — LIS ATTENTIVEMENT"
@@ -172,16 +233,8 @@ def _get_regles_communes() -> str:
         "\n• Le système (MJ) lance les dés et gère les PV. N'invente jamais un résultat de ton côté."
         "\n• Après un[RÉSULTAT SYSTÈME] ou des dégâts reçus, narre UNIQUEMENT ta réaction physique ou mentale (douleur, effort, doute). Pas de chiffres dans ton roleplay."
         "\n• INTERDICTION DE COPIE : Ne paraphrase jamais le message d'un autre joueur. Sois unique."
-        "\n\n3. MÉCANIQUES ET SORTS"
-        "\n• Pour lancer un sort ou attaquer, utilise TOUJOURS un bloc [ACTION]."
-        "\n• ⚠️ ANTI-SPAM (RÈGLE ABSOLUE) : Ne lance JAMAIS un sort (détection, buff, etc.) s'il a déjà été lancé récemment et est toujours actif. Le MJ gère les compétences passivement (Perception passive, Investigation passive, etc.) — ne demande PAS de jet toi-même sauf si le MJ t'y invite."
-        "\n• ⚠️ UPCAST OBLIGATOIRE : Tu DOIS respecter les 'Sorts dispos' affichés dans ton [TOUR EN COURS]. Si tu n'as plus d'emplacement pour le niveau de base d'un sort et que tu veux lancer quand même, tu DOIS le lancer à un niveau supérieur en l'écrivant explicitement (ex: 'Règle 5e: Shield of Faith niv. 3')."
-        "\n• N'appelle pas les outils (update_hp, roll_dice) de ta propre initiative, sauf si une [DIRECTIVE SYSTÈME] te le demande explicitement."
-        "\n\n4. FORMAT DE RÉPONSE"
-        "\n• Structure : 1 réplique dialoguée (avec ton attitude incrustée dedans) + 1 bloc [ACTION] UNIQUEMENT si le MJ le demande ou si tu as une action physique délibérée à déclarer."
-        "\n• N'inclus JAMAIS les en-têtes d'instructions comme[RÈGLES DU BLOC ACTION] ou [RÈGLES DU BLOC ACTION (HORS COMBAT)] dans ta réponse."
-        "\n• Sois concis : pas de monologues, pas de descriptions entre parenthèses en paragraphe séparé."
-        "\n• N'utilise [SILENCE] que si tu es physiquement incapable de parler. Sinon, donne au moins une pensée ou une courte réaction."
+        + mechanics_block +
+        format_reponse +
         "\n\n5. EXPRESSIONS ET ÉMOTIONS"
         "\n• Ton avatar peut exprimer des émotions visuelles ('neutral', 'fear', 'surprise', 'disgust', 'impatient', 'tenderness', 'happy', 'sad', 'angry', 'focused')."
         "\n• Si tu veux changer ton expression faciale en réagissant à l'événement en cours, inclus N'IMPORTE OÙ dans ton message le tag: [EMOTION] type_emotion."
@@ -195,7 +248,7 @@ def _get_regles_communes() -> str:
         "\n═══════════════════════════════════════════\n"
     )
 
-def build_regle_outils(combat_mode: bool = False) -> str:
+def build_regle_outils(combat_mode: bool = False, char_name: str = "") -> str:
     """
     Retourne le bloc de règles absolues injecté dans le system_message de chaque PJ.
 
@@ -207,12 +260,12 @@ def build_regle_outils(combat_mode: bool = False) -> str:
     COMBAT_STATE["active"] passe à True, puis avec False à la fin du combat.
     """
     if combat_mode:
-        return _build_regle_en_combat()
+        return _build_regle_en_combat(char_name)
     else:
-        return _build_regle_hors_combat()
+        return _build_regle_hors_combat(char_name)
 
 
-def _build_regle_hors_combat() -> str:
+def _build_regle_hors_combat(char_name: str = "") -> str:
     allow_skills = get_groupchat_config().get("allow_skill_checks", True)
     
     if allow_skills:
@@ -237,7 +290,7 @@ def _build_regle_hors_combat() -> str:
         )
 
     return (
-        _get_regles_communes()
+        _get_regles_communes(char_name, combat_mode=False)
         # ── Section spécifique HORS COMBAT ──────────────────────────────────
         + "\n▶ HORS COMBAT — MODE ACTIF"
         "\nTu joues ton rôle : roleplay, dialogue, exploration, réflexion."
@@ -246,7 +299,7 @@ def _build_regle_hors_combat() -> str:
         "\nsauf si le MJ l'indique explicitement.\n"
         + skill_rules
         + "\n▶ ACTIONS MÉCANIQUES"
-        "\nUNIQUEMENT si le MJ te demande explicitement un jet ou une action mécanique, termine ton message par :\n\n"
+        "\nUNIQUEMENT si le MJ te demande explicitement un jet ou une action mécanique, utilise le format [ACTION] :\n\n"
         + _ACTION_FORMAT_HORS_COMBAT
         + "\n▶ MOUVEMENT SUR LA CARTE — HORS COMBAT"
         "\nLe bloc [ACTION] Type: Mouvement est réservé aux déplacements de 6 cases (9 m / 30 ft) ou plus."
@@ -259,12 +312,12 @@ def _build_regle_hors_combat() -> str:
     )
 
 
-def _build_regle_en_combat() -> str:
+def _build_regle_en_combat(char_name: str = "") -> str:
     allow_skills = get_groupchat_config().get("allow_skill_checks", True)
     skill_rule_combat = "" if allow_skills else "\n⛔ RAPPEL : Tu ne dois JAMAIS déclarer de jet de compétence de ta propre initiative, même en combat.\n"
 
     return (
-        _get_regles_communes()
+        _get_regles_communes(char_name, combat_mode=True)
         # ── Section spécifique EN COMBAT ─────────────────────────────────────
         + "\n▶ COMBAT EN COURS — RÈGLES D'INITIATIVE"
         "\n▶ RÈGLE FONDAMENTALE — UNE ACTION À LA FOIS"
@@ -418,10 +471,9 @@ def _filter_turn_private_messages(msgs: list, agent_name: str) -> list:
         # Message d'auto-continue dirigé vers un autre personnage
         r'|Tu as encore des actions disponibles\. Continue ton tour,(?!\s*' + _n + r'[\s\.,])'
         # Corrections privées de sort/action/mouvement adressées à un autre personnage.
-        # Format produit par engine_receive.py :[RÉSULTAT SYSTÈME — TYPE IMPOSSIBLE — NomAgent]
-        # Les résultats observables (ATTAQUE RÉSOLUE, SOIN, SAUVEGARDE…) n'ont PAS ce 3e segment
-        # et ne sont donc PAS filtrés par cette regex.
-        r'|\[RÉSULTAT SYSTÈME\s*—[^—\]\n]+—(?!\s*' + _n + r'[\s\]])',
+        r'|\[RÉSULTAT SYSTÈME\s*—[^—\]\n]+—(?!\s*' + _n + r'[\s\]])'
+        # Refus d'outil ou directive système formatée comme `[REFUS OUTIL...] AutreAgent :` ou `[DIRECTIVE SYSTÈME...] AutreAgent :`
+        r'|\[(?:REFUS OUTIL|DIRECTIVE SYSTÈME)[^\]]*\]\s*\n?\s*(?!\s*' + _n + r'\s*:)[A-Za-z0-9_]+\s*:',
         _re_f.IGNORECASE,
     )
     
@@ -434,7 +486,8 @@ def _filter_turn_private_messages(msgs: list, agent_name: str) -> list:
 
     filtered_msgs = []
     for m in msgs:
-        content = str(m.get("content", ""))
+        _raw = m.get("content")
+        content = "" if _raw is None else str(_raw)
         sender = str(m.get("name", ""))
         
         # 0. Retirer les blocs de pensée
@@ -449,9 +502,10 @@ def _filter_turn_private_messages(msgs: list, agent_name: str) -> list:
         if sender and sender != agent_name and sender not in ("Alexis_Le_MJ", "MJ"):
             content = _action_block_re.sub('', content).strip()
             
-        if content:
+        if content or m.get("tool_calls") or m.get("function_call"):
             new_m = dict(m)
-            new_m["content"] = content
+            if _raw is not None or content != "":
+                new_m["content"] = content if content else None
             filtered_msgs.append(new_m)
 
     # ── SUPPRESSION DE TOUT L'HISTORIQUE EN COMBAT ──
@@ -595,7 +649,75 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                     # Guard: None = pas de réponse (convention AutoGen : (False, None))
                     if result[0] is None:
                         result[0] = (False, None)
+                    else:
+                        # ── Auto-prompt pour les personnages interpellés ────────
+                        # Si le personnage qui vient de parler s'adresse nommément à un autre PJ,
+                        # on prépare un prompt automatique pour la prochaine demande d'input MJ.
+                        try:
+                            _reply_text = ""
+                            if isinstance(result[0], tuple) and len(result[0]) > 1:
+                                _reply_content = result[0][1]
+                                if isinstance(_reply_content, dict):
+                                    _reply_text = str(_reply_content.get("content", ""))
+                                else:
+                                    _reply_text = str(_reply_content)
+                            elif isinstance(result[0], dict):
+                                _reply_text = str(result[0].get("content", ""))
+                            else:
+                                _reply_text = str(result[0])
+                                
+                            if _reply_text:
+                                _ALL_PC = ["Kaelen", "Elara", "Thorne", "Lyra"]
+                                _other_pcs = [p for p in _ALL_PC if p != name]
+                                
+                                import re as _re_p
+                                _found_target = None
+                                
+                                # On s'assure qu'il y a un point d'interrogation dans le texte VISIBLE
+                                # (hors blocs <think>/<thought> du LLM) pour éviter les faux déclenchements.
+                                _visible_text = _re_p.sub(r'<think>.*?(?:</think>|$)', '', _reply_text, flags=_re_p.IGNORECASE | _re_p.DOTALL)
+                                _visible_text = _re_p.sub(r'<thought>.*?(?:</thought>|$)', '', _visible_text, flags=_re_p.IGNORECASE | _re_p.DOTALL)
+                                
+                                if "?" in _visible_text and not getattr(app_ref, "_session_paused", False):
+                                    # 1. Chercher dans les phrases contenant "?" (de la dernière à la première)
+                                    _sentences = _re_p.split(r'([.!?])', _visible_text)
+                                    _combined = []
+                                    for i in range(0, len(_sentences)-1, 2):
+                                        _combined.append(_sentences[i] + _sentences[i+1])
+                                    if len(_sentences) % 2 != 0 and _sentences[-1]:
+                                        _combined.append(_sentences[-1])
+                                        
+                                    _q_sentences = [s for s in _combined if '?' in s]
+                                    for _qs in reversed(_q_sentences):
+                                        _first_pos = -1
+                                        for _tgt in _other_pcs:
+                                            _m = _re_p.search(rf"\b{_tgt}\b", _qs, _re_p.IGNORECASE)
+                                            if _m:
+                                                if _first_pos == -1 or _m.start() < _first_pos:
+                                                    _first_pos = _m.start()
+                                                    _found_target = _tgt
+                                        if _found_target:
+                                            break
+                                            
+                                    # 2. Fallback: chercher le dernier nom mentionné avant le dernier '?'
+                                    if not _found_target:
+                                        _q_idx = _visible_text.rfind('?')
+                                        _text_before_q = _visible_text[:_q_idx] if _q_idx != -1 else _visible_text
+                                        _last_pos = -1
+                                        for _tgt in _other_pcs:
+                                            _matches = list(_re_p.finditer(rf"\b{_tgt}\b", _text_before_q, _re_p.IGNORECASE))
+                                            if _matches:
+                                                if _matches[-1].start() > _last_pos:
+                                                    _last_pos = _matches[-1].start()
+                                                    _found_target = _tgt
 
+                                    if _found_target:
+                                        # On prépare le message qui sera renvoyé par gui_get_human_input
+                                        _auto_msg = f"[MJ → {_found_target}] {name} s'est adressé à toi. Que réponds-tu ?"
+                                        app_ref._pending_auto_prompt = _auto_msg
+                        except Exception as _e_ap:
+                            print(f"[Auto-Prompt Error] {_e_ap}")
+                    
                     # Log du modèle ayant effectivement répondu
                     try:
                         _usage_after = getattr(self_agent.client, "actual_usage_summary", None) or {}
@@ -607,9 +729,16 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                         actual = _new[0] if _new else None
                         if actual:
                             _cs = load_state().get("characters", {}).get(name, {})
-                            configured = (_cs.get("llm", "")
-                                          or get_agent_config(name).get("model", "")
-                                          or "")
+                            
+                            # Correction du Faux Positif : Prendre en compte le modèle de combat
+                            if COMBAT_STATE.get("active"):
+                                from app_config import get_combat_config as _gcc_log
+                                configured = _gcc_log().get("model", "")
+                            else:
+                                configured = (_cs.get("llm", "")
+                                              or get_agent_config(name).get("model", "")
+                                              or "")
+                                              
                             log_llm_model_used(name, actual, configured)
 
                             # Log de l'utilisation des tokens pour cet appel
@@ -694,15 +823,11 @@ def make_thinking_wrapper(agent, name: str, app_ref):
                 except Exception:
                     pass
  
-                # ── AJOUT : distinguer interruption utilisateur vs sonde ──
-                probe_reason = getattr(app_ref._stop_event, "probe_failure_reason", None)
-                if probe_reason:
-                    # Effacer pour ne pas polluer le prochain appel
-                    app_ref._stop_event.probe_failure_reason = None
-                    raise LLMTimeoutError(probe_reason)
-                # ─────────────────────────────────────────────────────────
+                # Sonde (LLM Probe) devenue télémétrique uniquement.
+                # AutoGen gère lui-même timeout/quota en arrière-plan.
  
-                raise StopLLMRequested()
+                exc_box[0] = StopLLMRequested()
+                break
 
         if face:
             try:
@@ -715,7 +840,6 @@ def make_thinking_wrapper(agent, name: str, app_ref):
             _err_str = str(_e)
             _status_code = getattr(_e, "status_code", None)
             from agent_logger import log_llm_end as _log_end
-
             # 400 BadRequestError — tool_use_failed
             if type(_e).__name__ == "BadRequestError" and "tool_use_failed" in _err_str:
                 if not kwargs.get("__is_fallback_retry"):
@@ -950,10 +1074,14 @@ def combat_speaker_selector(last_speaker, groupchat):
         return responded
 
     def _next_pending(target_list, responded):
-        for name in target_list:
-            if name not in responded and name in eligible_names:
-                return next((a for a in eligible if a.name == name), None)
-        return None
+        pending_candidates = [
+            name for name in target_list
+            if name not in responded and name in eligible_names
+        ]
+        if not pending_candidates:
+            return None
+        chosen_name = random.choice(pending_candidates)
+        return next((a for a in eligible if a.name == chosen_name), None)
 
     last_mj_idx, last_mj_content = _find_last_mj_msg()
 
@@ -1030,11 +1158,20 @@ def combat_speaker_selector(last_speaker, groupchat):
         print(f"[SPEAKER DEBUG] last_mj_content={last_mj_content[:120]!r}")
 
         # Cas 1 — noms explicites dans le message du MJ
-        mentioned =[
-            name for name in _ALL_PLAYERS
-            if name.lower() in content_low
-            and name in _player_names_in_gc
-        ]
+        _direct_msg_match = _re_sel.match(r'^(?:\[.*?MJ.*?→\s*([a-zA-Z0-9_\-]+)\]|/msg\s+([a-zA-Z0-9_\-]+))', _stripped, _re_sel.IGNORECASE)
+        if _direct_msg_match:
+            _target = (_direct_msg_match.group(1) or _direct_msg_match.group(2)).lower()
+            mentioned = [
+                name for name in _ALL_PLAYERS
+                if name.lower() == _target
+                and name in _player_names_in_gc
+            ]
+        else:
+            mentioned =[
+                name for name in _ALL_PLAYERS
+                if name.lower() in content_low
+                and name in _player_names_in_gc
+            ]
         print(f"[SPEAKER DEBUG] Cas1 mentioned={mentioned}")
 
         # Cas 2 — question de groupe
@@ -1066,19 +1203,22 @@ def combat_speaker_selector(last_speaker, groupchat):
             return mj_agent_ref
 
     # MJ vient de parler sans cibler → Cas 3 : un seul PJ réagit (rotation)
-    # Exception : si c'est le tour d'un PNJ/ennemi, les héros ne parlent PAS
-    # spontanément — ils ne peuvent répondre que si le MJ les nomme explicitement.
+    # En combat : seul le PJ actif ou le MJ reprend la main.
     if last_name == "Alexis_Le_MJ":
         _active_cbt = COMBAT_STATE.get("active_combatant")
-        _active_is_npc = (
-            COMBAT_STATE.get("active")
-            and _active_cbt is not None
-            and _active_cbt not in _ALL_PLAYERS
-        )
-        if _active_is_npc:
-            # Tour PNJ : MJ reprend directement, les héros n'interviennent pas
-            print(f"[SPEAKER DEBUG] → RETURN MJ (tour PNJ {_active_cbt})")
-            return mj_agent_ref or eligible[0]
+        if COMBAT_STATE.get("active") and _active_cbt is not None:
+            if _active_cbt not in _ALL_PLAYERS:
+                # Tour PNJ : MJ reprend directement, les héros n'interviennent pas
+                print(f"[SPEAKER DEBUG] → RETURN MJ (tour PNJ {_active_cbt})")
+                return mj_agent_ref or eligible[0]
+            else:
+                # Tour d'un PJ : seul le PJ actif peut parler spontanément
+                _active_agent = next((a for a in eligible if a.name == _active_cbt), None)
+                if _active_agent:
+                    print(f"[SPEAKER DEBUG] → RETURN {_active_cbt} (tour PJ actif, Cas3 combat)")
+                    return _active_agent
+                print(f"[SPEAKER DEBUG] → RETURN MJ (PJ actif {_active_cbt} non trouvé)")
+                return mj_agent_ref or eligible[0]
         players_eligible =[a for a in eligible if a.name in _ALL_PLAYERS]
         if players_eligible:
             responded = _responded_since(last_mj_idx) if last_mj_idx is not None else set()
@@ -1127,7 +1267,6 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
         "all_player":     idem,
       }
     """
-    _regle = build_regle_outils()
     _mem_min = get_memories_config().get("compact_importance_min", 2)
 
     # ── MJ ───────────────────────────────────────────────────────────────────
@@ -1209,6 +1348,12 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
             app._pending_auto_roll = False
             return ""
 
+        # ── 3.b Auto-prompt pour les personnages interpellés ──────────────────
+        _auto_prompt = getattr(app, "_pending_auto_prompt", None)
+        if _auto_prompt is not None:
+            app._pending_auto_prompt = None
+            return _auto_prompt
+
         # ── 4. Attente MJ humain (cas normal hors combat / hors IMPOSSIBLE) ───
         app.msg_queue.put({"sender": "Système", "text": "En attente de votre action (Texte ou 🎤)...", "color": "#888888"})
         app._set_waiting_for_mj(True)
@@ -1239,25 +1384,12 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
     kaelen_agent = autogen.AssistantAgent(
         name="Kaelen",
         system_message=(
-            _regle +
             "Tu es Kaelen, un Paladin Humain de niveau 11, hanté par un serment passé.\n"
             "PERSONNALITÉ : Tu es économe en mots, fier et grave. Tes préoccupations sont toujours liées "
             "à l'honneur, aux serments, à qui mérite protection et à ce qui constitue une cause juste. "
             "Quand tu interviens, c'est pour évaluer la valeur morale de la mission ou jurer ta protection. "
             "Tu n'es pas curieux des mécaniques — tu veux savoir SI ça vaut le coup de mourir pour ça.\n"
             + _get_combat_prompt("paladin", "Devotion", 11) + "\n"
-            "⚔️ RÈGLE DES CHÂTIMENTS ET ATTAQUES — LIS ATTENTIVEMENT :\n"
-            "1. CHÂTIMENT DIVIN (Divine Smite - Capacité de classe) :\n"
-            "   Ce N'EST PAS une action ni un sort. Il s'ajoute simplement à une attaque réussie.\n"
-            "   Pour l'utiliser, ajoute '| Divine Smite niv.X si touche' à la fin de la ligne Règle 5e de ton attaque.\n"
-            "   NE FAIS JAMAIS de bloc [ACTION] séparé pour ça.\n"
-            "2. SORTS DE CHÂTIMENT (Wrathful Smite, Thunderous Smite, Faveur Divine) :\n"
-            "   Ce SONT des sorts qui coûtent une ACTION BONUS.\n"
-            "   Tu DOIS les lancer dans un bloc [ACTION] Type: Action Bonus SÉPARÉ, puis attendre le résultat avant d'attaquer au message suivant.\n"
-            "3. EXTRA ATTACK (Attaque Supplémentaire) :\n"
-            "   Tu as droit à 2 attaques par Action. Tu DOIS les déclarer SÉPARÉMENT.\n"
-            "   Fais ta première attaque ([ACTION] Type: Action), attends le résultat du MJ, "
-            "   puis fais ta seconde attaque dans un NOUVEAU message ([ACTION] Type: Extra Attack).\n"
         ),
         llm_config=cfg_fn("Kaelen"),
     )
@@ -1266,7 +1398,6 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
     elara_agent = autogen.AssistantAgent(
         name="Elara",
         system_message=(
-            _regle +
             "Tu es Elara, une Magicienne de niveau 11, froide et méthodique.\n"
             "PERSONNALITÉ : Tu analyses, tu quantifies, tu cherches les failles logiques. Tes questions portent "
             "toujours sur la mécanique précise des choses : comment fonctionne la magie du phare, quelle est "
@@ -1283,7 +1414,6 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
     thorne_agent = autogen.AssistantAgent(
         name="Thorne",
         system_message=(
-            _regle +
             "Tu es Thorne, un Voleur (Assassin) Tieffelin de niveau 11, cynique et pragmatique.\n"
             "PERSONNALITÉ : Tu vois le monde en termes de risques, de profits et de qui manipule qui. "
             "Tes questions portent sur les motivations cachées, les pièges potentiels, ce qu'on ne te dit pas, "
@@ -1305,21 +1435,6 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
             "qui tire les ficelles, est-ce un piège, qu'est-ce qu'on peut ramasser, "
             "comment sortir vivant de là. Tes observations sont tactiques et pragmatiques, "
             "jamais magiques ni théoriques.\n"
-            "FORMAT ATTAQUE OBLIGATOIRE — Tu te bats avec deux armes, tu n'es pas obligé de faire tes deux attaques:\n"
-            "  Tu dois déclarer chaque attaque SÉPARÉMENT dans des messages distincts.\n"
-            "  Message 1 (Première attaque) :\n"
-            "    [ACTION]\n"
-            "    Type      : Action\n"
-            "    Intention : Frapper avec ma première lame\n"
-            "    Règle 5e  : Attaque : corps-à-corps +11, 1d6+5\n"
-            "    Cible     : [la cible]\n"
-            "  Message 2 (après avoir reçu le résultat du MJ) :\n"
-            "    [ACTION]\n"
-            "    Type      : Action Bonus\n"
-            "    Intention : Frapper avec ma seconde lame\n"
-            "    Règle 5e  : Attaque : corps-à-corps +11, 1d6+5\n"
-            "    Cible     : [la cible]\n"
-            "  Ne déclare JAMAIS tes deux attaques dans le même bloc !\n"
             + _get_combat_prompt("rogue", "Assassin", 11) + "\n"
         ),
         llm_config=cfg_fn("Thorne"),
@@ -1329,7 +1444,6 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
     lyra_agent = autogen.AssistantAgent(
         name="Lyra",
         system_message=(
-            _regle +
             "Tu es Lyra, une Clerc (Domaine de la Vie) Demi-Elfe de niveau 11, bienveillante et implacable.\n"
             "PERSONNALITÉ : Tu penses d'abord aux innocents qui souffrent, à la dimension spirituelle et divine "
             "des événements, et à ce que les dieux pourraient vouloir ici. Tu poses des questions sur les victimes, "

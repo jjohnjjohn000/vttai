@@ -137,6 +137,10 @@ class FogManagerMixin:
             command=lambda: self._group_selection(sel_toks))
         menu.add_separator()
         menu.add_command(
+            label="👁  Révéler la vision (sélection)",
+            command=lambda: self._reveal_vision_for_selection(sel_toks))
+        menu.add_separator()
+        menu.add_command(
             label="✕  Supprimer la sélection",
             command=lambda: self._delete_selection(sel_toks))
         try:
@@ -292,6 +296,17 @@ class FogManagerMixin:
             self._pos_var.set(f"Col {col+1} / Lig {row+1}")
         else:
             self._pos_var.set("")
+            
+        if hasattr(self, "_door_handle_at"):
+            hover_handle = self._door_handle_at(cx, cy)
+            prev_hover = getattr(self, "_hovered_door_handle", None)
+            if hover_handle != prev_hover:
+                self._hovered_door_handle = hover_handle
+                if prev_hover and hasattr(self, "_redraw_one_door"):
+                    self._redraw_one_door(prev_hover)
+                if hover_handle and hasattr(self, "_redraw_one_door"):
+                    self._redraw_one_door(hover_handle)
+
         # Prévisualisation polygone fog
         if self.tool in ("reveal", "hide") and self._poly_points:
             self._poly_update_preview(cx, cy)

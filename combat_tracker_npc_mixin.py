@@ -78,6 +78,19 @@ class CombatTrackerNPCMixin:
             # Portrait pré-résolu — partagé entre tous les clones (même image)
             c.portrait = portrait_path
 
+            if bname:
+                try:
+                    from npc_bestiary_manager import get_monster
+                    monster = get_monster(bname)
+                    if monster and monster.get("spellcasting"):
+                        for sc in monster["spellcasting"]:
+                            if "spells" in sc:
+                                for lvl_key, lvl_data in sc["spells"].items():
+                                    if "slots" in lvl_data and int(lvl_key) > 0:
+                                        c.spell_slots[lvl_key] = {"max": lvl_data["slots"], "used": 0}
+                except Exception as e:
+                    print(f"[CombatTracker] Erreur lors du chargement des sorts pour {bname}: {e}")
+
             # Alignement choisi dans le sélecteur H/N/A du panel
             try:
                 c.alignment = self._npc_alignment.get() or "hostile"
@@ -361,8 +374,21 @@ class CombatTrackerNPCMixin:
             try:
                 # tracker est l'objet Python, tracker.win est le widget Tkinter
                 if tracker.win.winfo_exists():
+                    tracker.win.deiconify()
                     tracker.win.lift()
                     tracker.win.focus_force()
+                    if getattr(tracker, "combat_active", False):
+                        try:
+                            from combat_tracker_state import COMBAT_STATE
+                            COMBAT_STATE["active"] = True
+                        except Exception:
+                            pass
+                        # ── Restaurer le modèle LLM combat ──
+                        try:
+                            if hasattr(tracker, "app") and tracker.app is not None and hasattr(tracker.app, "_set_combat_llm"):
+                                tracker.app._set_combat_llm(True)
+                        except Exception:
+                            pass
                     return tracker
             except Exception:
                 pass  # fenêtre détruite, on en recrée une

@@ -55,10 +55,13 @@ class ChatMixin(
                 _cfg   = build_llm_config(_model, temperature=0.2)
                 client = _ag.OpenAIWrapper(config_list=_cfg["config_list"])
 
+                from agent_logger import log_chronicler_prompt, log_chronicler_response
+                log_chronicler_prompt("Memory Management", "", messages=[{"role": "user", "content": prompt}])
                 response = client.create(messages=[
                     {"role": "user", "content": prompt}
                 ])
                 raw = (response.choices[0].message.content or "").strip()
+                log_chronicler_response("Memory Management", raw)
 
                 raw = _re.sub(r"^```(?:json)?\s*", "", raw)
                 raw = _re.sub(r"\s*```$", "", raw.strip())

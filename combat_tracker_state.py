@@ -235,12 +235,23 @@ def get_combat_prompt(agent_name: str) -> str:
         # 6. Mouvement restant (en pieds)
         rem_mov = _tr.get("movement", base_speed)
 
+        # ── Vérification Extra Attack avant épuisement ───────────────────────
+        _ea_avail = COMBAT_STATE.get("turn_res", {}).get(agent_name, {}).get("extra_attack_available", False)
+        _ea_used  = COMBAT_STATE.get("turn_res", {}).get(agent_name, {}).get("extra_attack_used", False)
+        try:
+            from engine_mechanics import CHAR_MECHANICS as _CM_ea
+            _has_ea = _CM_ea.get(agent_name, {}).get("extra_attack", False)
+        except Exception:
+            _has_ea = False
+        
+        _pending_extra_attack = _has_ea and _ea_avail and not _ea_used and not has_action
+
         # ── Détection épuisement total → fin de tour automatique ─────────────
         _no_action  = not has_action
         _no_bonus   = not ba_list          # slot dispo mais rien à faire = inutile
         _no_move    = (rem_mov == 0)
 
-        if _no_action and _no_bonus and _no_move:
+        if _no_action and _no_bonus and _no_move and not _pending_extra_attack:
             return (
                 _goal_block
                 + f"\n\n⚔️ RONDE {rnd} — {agent_name} — TOUTES RESSOURCES ÉPUISÉES\n"
@@ -290,30 +301,31 @@ def get_combat_prompt(agent_name: str) -> str:
 
             lines.append(f"ACTION (1 par tour): {', '.join(act_list)}")
         else:
-            lines.append("ACTION: 🚫 DÉJÀ UTILISÉE (Tu n'as plus d'action normale disponible ce tour, utilise seulement action bonus ou mouvement)")
+            _sugg = []
+            if has_bonus:
+                _sugg.append("action bonus")
+            if rem_mov > 0:
+                _sugg.append("mouvement")
+            
+            if _sugg:
+                _sugg_str = " ou ".join(_sugg)
+                lines.append(f"ACTION: 🚫 DÉJÀ UTILISÉE (Tu n'as plus d'action normale disponible ce tour, utilise seulement {_sugg_str})")
+            else:
+                lines.append("ACTION: 🚫 DÉJÀ UTILISÉE (Tu n'as plus d'action normale disponible ce tour)")
 
-        if ba_list:
+        if not has_bonus:
+            lines.append("BONUS ACTION: 🚫 DÉJÀ UTILISÉE")
+        elif ba_list:
             lines.append(f"BONUS ACTION (1 par tour): {', '.join(ba_list)}")
 
         # FIX : vérifier que le personnage a RÉELLEMENT la capacité Extra Attack,
         # pas seulement n_attacks > 1 (qui peut être > 1 pour d'autres raisons).
         # FIX 2 : cacher si l'Extra Attack a déjà été utilisée ce tour.
-        try:
-            _has_ea_check = CHAR_MECHANICS.get(agent_name, {}).get("extra_attack", False)
-        except Exception:
-            _has_ea_check = False
-        _ea_used_check = COMBAT_STATE.get("turn_res", {}).get(agent_name, {}).get("extra_attack_used", False)
-        if n_atk > 1 and has_action and _has_ea_check and not _ea_used_check:
+        if n_atk > 1 and has_action and _has_ea and not _ea_used:
             lines.append("Special: EXTRA ATTACK (martial classes) AFTER ATTACK ACTION")
 
         # ── Extra Attack disponible après la 1re attaque d'action ────────
-        _ea_avail = COMBAT_STATE.get("turn_res", {}).get(agent_name, {}).get("extra_attack_available", False)
-        try:
-            from engine_mechanics import CHAR_MECHANICS as _CM_ea
-            _has_ea = _CM_ea.get(agent_name, {}).get("extra_attack", False)
-        except Exception:
-            _has_ea = False
-        if _has_ea and _ea_avail and not has_action:
+        if _pending_extra_attack:
             lines.append(
                 "\n⚔️ EXTRA ATTACK DISPONIBLE — Tu as attaqué avec ton Action ce tour."
                 "\n   Tu peux faire UNE attaque supplémentaire (fait partie de ton Action, PAS une Action Bonus)."

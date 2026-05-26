@@ -85,6 +85,9 @@ class RendererMixin:
             self._pan_drag(event)
         
     def _pan_end(self, event):
+        if not getattr(self, "_is_panning", False):
+            if hasattr(self, "_middle_click_action"):
+                self._middle_click_action(event)
         self._is_panning = False
         self._schedule_tile_refresh()
 
@@ -324,6 +327,15 @@ class RendererMixin:
             self._obs_pil = None
             bg_with_obs = self._bg_pil
 
+        # Walls (DM-only — entre obstacles et fog)
+        has_walls = bool(self._walls) and getattr(self, "_dm_view", True)
+        if has_walls:
+            if self._wall_pil is None or self._wall_pil.size != (W, H):
+                self._wall_pil = self._build_wall_pil(W, H)
+            bg_with_obs = Image.alpha_composite(bg_with_obs, self._wall_pil)
+        else:
+            self._wall_pil = None
+
         scene = Image.alpha_composite(bg_with_obs, self._fog_pil)
         self._scene_photo = ImageTk.PhotoImage(scene)
 
@@ -348,6 +360,7 @@ class RendererMixin:
         self._bg_pil  = None
         self._fog_pil = None
         self._obs_pil = None   # invalide le cache obstacles (zoom changé)
+        self._wall_pil = None  # invalide le cache murs
         self._img_id  = 0
         self.canvas.delete("scene")
         
@@ -361,6 +374,11 @@ class RendererMixin:
         self._composite()
         self._redraw_all_tokens()
         self._redraw_all_notes()
+        self._restore_wall_preview()
+        if hasattr(self, "_obs_poly_restore_preview"):
+            self._obs_poly_restore_preview()
+        if hasattr(self, "_obs_free_restore_preview"):
+            self._obs_free_restore_preview()
         self._zoom_lbl.config(text=f"{int(self.zoom * 100)}%")
         self._cellpx_lbl.config(text=f"{self.cell_px}px")
         self._dim_var.set(f"Grille : {self.cols}×{self.rows} cases  |  "
@@ -455,11 +473,14 @@ class RendererMixin:
         self._bg_pil  = None
         self._fog_pil = None
         self._obs_pil = None
+        self._wall_pil = None
         self._composite()
         # En mode vue joueurs (fenêtre principale), recalculer la visibilité
         # des tokens ennemis après chaque changement de fog.
         if not getattr(self, "_dm_view", True):
             self._redraw_all_tokens()
+        if hasattr(self, "_redraw_all_doors"):
+            self._redraw_all_doors()
 
     def _schedule_tile_refresh(self, delay: int = 16):
         """Planifie un re-rendu de la tuile visible (throttlé)."""

@@ -292,11 +292,14 @@ def speak_as_npc(npc_name: str, monster: dict | None, prompt: str,
             if scene_context.strip():
                 user_msg = f"[Contexte de scène : {scene_context.strip()}]\n\n{user_msg}"
 
+            from agent_logger import log_chronicler_prompt, log_chronicler_response
+            log_chronicler_prompt(f"NPC Speech — {npc_name}", persona, messages=[{"role": "user", "content": user_msg or "Introduis-toi brièvement."}])
             response = client.create(messages=[
                 {"role": "system", "content": persona},
                 {"role": "user",   "content": user_msg or "Introduis-toi brièvement."},
             ])
             text = (response.choices[0].message.content or "").strip()
+            log_chronicler_response(f"NPC Speech — {npc_name}", text)
             if text:
                 msg_queue.put({
                     "action": "npc_speak",

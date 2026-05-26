@@ -217,7 +217,10 @@ class ObstacleManagerMixin:
     def _draw_erase_cursor(self, cx: float, cy: float):
         """Dessine un cercle de prévisualisation du rayon de l'efface."""
         self.canvas.delete("erase_preview")
-        r = max(self._brush_var.get(), 1) * self._cp * 0.5
+        if getattr(self, "tool", None) == "erase_wall":
+            r = self._cp * 0.4
+        else:
+            r = max(self._brush_var.get(), 1) * self._cp * 0.5
         self.canvas.create_oval(
             cx - r, cy - r, cx + r, cy + r,
             outline="#ff6b6b", width=1, dash=(4, 3),
@@ -245,10 +248,60 @@ class ObstacleManagerMixin:
         """Annule le polygone/tracé en cours sans rien enregistrer."""
         self.canvas.delete("obs_preview")
         self.canvas.delete("obs_preview_cursor")
+        for iid in self._obs_poly_ids:
+            self.canvas.delete(iid)
+        if self._obs_free_id:
+            self.canvas.delete(self._obs_free_id)
         self._obs_poly_pts = []
         self._obs_poly_ids = []
         self._obs_free_pts = []
         self._obs_free_id  = 0
+
+    def _obs_poly_restore_preview(self):
+        """Redessine le polygone obstacle en cours (après zoom)."""
+        for iid in self._obs_poly_ids:
+            self.canvas.delete(iid)
+        self._obs_poly_ids.clear()
+        self.canvas.delete("obs_preview_cursor")
+        
+        if not self._obs_poly_pts:
+            return
+            
+        scale = self._cp / self.cell_px
+        col = self._obs_color
+        for i, pt in enumerate(self._obs_poly_pts):
+            cx, cy = pt[0] * scale, pt[1] * scale
+            r = 4
+            iid = self.canvas.create_oval(
+                cx-r, cy-r, cx+r, cy+r,
+                outline=col, fill="#1a1a1a", width=2, tags="obs_preview")
+            self._obs_poly_ids.append(iid)
+            if i > 0:
+                prev_x, prev_y = self._obs_poly_pts[i-1][0] * scale, self._obs_poly_pts[i-1][1] * scale
+                iid_line = self.canvas.create_line(
+                    prev_x, prev_y, cx, cy,
+                    fill=col, width=2, dash=(4, 2), tags="obs_preview")
+                self._obs_poly_ids.append(iid_line)
+
+    def _obs_free_restore_preview(self):
+        """Redessine le trait à main levée en cours (après zoom)."""
+        if self._obs_free_id:
+            self.canvas.delete(self._obs_free_id)
+            self._obs_free_id = 0
+            
+        if not self._obs_free_pts:
+            return
+            
+        scale = self._cp / self.cell_px
+        coords = []
+        for x, y in self._obs_free_pts:
+            coords.extend([x * scale, y * scale])
+            
+        if len(coords) >= 4:
+            self._obs_free_id = self.canvas.create_line(
+                coords, fill=self._obs_color, width=3,
+                capstyle=tk.ROUND, smooth=True, tags="obs_free"
+            )
 
     # ── Rendu PIL des obstacles ────────────────────────────────────────────────
 

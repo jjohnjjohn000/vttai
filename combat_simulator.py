@@ -1398,15 +1398,30 @@ FORMAT DE RÉPONSE : JSON pur, sans markdown, sans texte avant ou après.
 
         def _run():
             try:
-                import autogen as _ag
-                client = _ag.OpenAIWrapper(
-                    config_list=self._llm_config["config_list"]
+                from agent_logger import log_chronicler_prompt, log_chronicler_response
+                from llm_probe import chronicler_llm_call_with_probe
+                
+                log_chronicler_prompt("Combat Simulator (LLM)", system_prompt, 
+                                      [{"role": "user", "content": user_prompt}])
+                
+                raw = chronicler_llm_call_with_probe(
+                    config_list   = self._llm_config["config_list"],
+                    messages      = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": user_prompt},
+                    ],
+                    context_label = "Combat Simulator",
+                    temperature   = 0.7,
+                    max_tokens    = 4096,
                 )
-                response = client.create(messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_prompt},
-                ])
-                raw = response.choices[0].message.content.strip()
+                if raw is None:
+                    self.win.after(0, lambda: self._llm_error(
+                        "Tous les modèles ont échoué (probe HTTP 200 + TTFT)."
+                    ))
+                    return
+                
+                log_chronicler_response("Combat Simulator (LLM)", raw)
+                
                 # Nettoyer éventuel markdown
                 raw = re.sub(r'^```json\s*', '', raw)
                 raw = re.sub(r'\s*```$',    '', raw)

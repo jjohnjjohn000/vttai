@@ -215,12 +215,15 @@ class QuestTrackerMixin:
                 temperature=chron_cfg.get("temperature", 0.2),
             )
             client   = _ag.OpenAIWrapper(config_list=llm_cfg["config_list"])
+            from agent_logger import log_chronicler_prompt, log_chronicler_response
+            log_chronicler_prompt("Quest Add", _QUEST_ADD_SYSTEM_PROMPT, messages=[{"role": "user", "content": user_prompt}])
             response = client.create(messages=[
                 {"role": "system", "content": _QUEST_ADD_SYSTEM_PROMPT},
                 {"role": "user",   "content": user_prompt},
             ])
 
             raw_text = (response.choices[0].message.content or "").strip()
+            log_chronicler_response("Quest Add", raw_text)
             clean    = _strip_json_fences(raw_text)
 
             # ── 3. Parser le JSON ────────────────────────────────────────────
@@ -313,12 +316,15 @@ class QuestTrackerMixin:
                 temperature=chron_cfg.get("temperature", 0.2),   # basse pour la précision
             )
             client   = _ag.OpenAIWrapper(config_list=llm_cfg["config_list"])
+            from agent_logger import log_chronicler_prompt, log_chronicler_response
+            log_chronicler_prompt("Quest Analysis", _QUEST_SYSTEM_PROMPT, messages=[{"role": "user", "content": user_prompt}])
             response = client.create(messages=[
                 {"role": "system", "content": _QUEST_SYSTEM_PROMPT},
                 {"role": "user",   "content": user_prompt},
             ])
 
             raw_text = (response.choices[0].message.content or "").strip()
+            log_chronicler_response("Quest Analysis", raw_text)
             clean    = _strip_json_fences(raw_text)
 
             # ── 5. Parser le JSON ─────────────────────────────────────────────

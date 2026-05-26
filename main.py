@@ -32,19 +32,19 @@ import os
 # event loop. This bypasses the bridge entirely to guarantee stability.
 os.environ["NO_AT_BRIDGE"] = "1"
 
+# FIX IBus — Disconnect Tkinter from ibus-daemon
+# ibus-daemon --xim consumes 1GB+ RAM and blocks Tk's X11 event loop during
+# XIM initialization handshake. By clearing the IM module vars BEFORE Tk is
+# imported, Tkinter never attempts to connect to ibus, eliminating the startup
+# stall entirely. The user can still type normally (ibus only matters for CJK
+# input methods, which VTTAI2 doesn't need).
+os.environ["GTK_IM_MODULE"] = ""
+os.environ["QT_IM_MODULE"] = ""
+os.environ["XMODIFIERS"] = ""
+
 import urllib.request
 import time
 import faulthandler as _fh; _fh.enable()
-
-def _restart_ibus():
-    try:
-        subprocess.Popen(
-            ["ibus-daemon", "--xim", "--replace", "-d"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-    except FileNotFoundError:
-        pass  # ibus not installed, no problem
 
 # ====================================================================
 # FIX B — Variables gRPC AVANT tout thread C
@@ -160,6 +160,10 @@ _dbg("import panels_npc_mixin...")
 from panels_npc_mixin import PanelsNPCMixin
 _dbg("import panels_tools_mixin...")
 from panels_tools_mixin import PanelsToolsMixin
+_dbg("import character_creator_mixin...")
+from character_creator_mixin import CharacterCreatorMixin
+_dbg("import character_manager_mixin...")
+from character_manager_mixin import CharacterManagerMixin
 
 # ── Imports des mixins issus du découpage de main.py ──────────────────────────
 _dbg("import session_mixin...")
@@ -201,6 +205,7 @@ from state_manager import (
     get_inventory_prompt,
     get_health_prompt,
     get_campaign_log_toc_prompt, get_campaign_log_prompt,
+    get_menace_prompt_combat,
 )
 _dbg("import voice_interface...")
 from voice_interface   import record_audio_and_transcribe, play_voice
@@ -241,6 +246,8 @@ class DnDApp(
     PanelsSceneMixin,
     PanelsNPCMixin,
     PanelsToolsMixin,
+    CharacterCreatorMixin,
+    CharacterManagerMixin,
     # ── Nouveaux mixins issus du découpage de main.py ─────────────────────────
     SessionMixin,           # session_mixin.py        — cycle de vie des sessions
     SessionPauseMixin,      # session_pause_mixin.py  — pause/reprise globale
@@ -393,6 +400,11 @@ class DnDApp(
         _dbg("volume chargé, lancement setup_ui...")
         self.setup_ui()
         _dbg("setup_ui terminé")
+        
+        # Raccourci pour lancer la création de personnage
+        self.root.bind("<Control-n>", lambda e: self.open_character_creator())
+        self.root.bind("<Control-N>", lambda e: self.open_character_creator())
+        
         threading.Thread(target=self.audio_worker, daemon=True).start()
         self.root.after(100, self.process_queue)
         self.root.after(1000, self.update_stats_panel)
@@ -415,7 +427,7 @@ class DnDApp(
 
             # Boucle d'attente : on vérifie toutes les 500ms si les agents
             # sont enfin instanciés en mémoire avant de lancer la bascule.
-            def _wait_and_sync_combat():
+            def _wait_and_sync_combat(_retries=[0]):
                 if getattr(self, "_agents", None):
                     try:
                         from combat_tracker import COMBAT_STATE as _CS
@@ -426,10 +438,18 @@ class DnDApp(
                                 "color": "#ff9800"
                             })
                             self._update_agent_combat_prompts()
+                            # Vérifier que la bascule a réellement fonctionné
+                            if not getattr(self, "_combat_llm_active", False):
+                                raise RuntimeError("_combat_llm_active toujours False après _update_agent_combat_prompts")
                     except Exception as e:
-                        pass
+                        print(f"[CombatSync] Erreur sync combat au démarrage : {e}")
+                        _retries[0] += 1
+                        if _retries[0] < 20:  # max ~10s de retry
+                            self.root.after(500, _wait_and_sync_combat)
                 else:
-                    self.root.after(500, _wait_and_sync_combat)
+                    _retries[0] += 1
+                    if _retries[0] < 40:  # max ~20s d'attente
+                        self.root.after(500, _wait_and_sync_combat)
 
             self.root.after(1500, _wait_and_sync_combat)
 
@@ -491,7 +511,7 @@ class DnDApp(
         for name, agent in self._agents.items():
             # Règles dynamiques : HORS COMBAT ou EN COMBAT selon l'état actuel
             from engine_agents import build_regle_outils as _bro
-            _rules = _bro(combat_mode=COMBAT_STATE["active"])
+            _rules = _bro(combat_mode=COMBAT_STATE["active"], char_name=name)
             _char_only = getattr(self, "_base_char_msgs", {}).get(name, "")
             base          = _rules + _char_only + _party_block
             combat_block  = combat_block_fn(name)
@@ -504,12 +524,50 @@ class DnDApp(
             # Tout le lore (scène, quêtes, mémoires, calendrier, journal) est élidé :
             # il alourdit le contexte sans aider à décider d'une action tactique.
             if COMBAT_STATE["active"]:
+                # Injection dynamique des règles d'attaque strictes
+                strict_rules = ""
+                if name == "Kaelen":
+                    strict_rules = (
+                        "\n⚔️ RÈGLE DES CHÂTIMENTS ET ATTAQUES — LIS ATTENTIVEMENT :\n"
+                        "1. CHÂTIMENT DIVIN (Divine Smite - Capacité de classe) :\n"
+                        "   Ce N'EST PAS une action ni un sort. Il s'ajoute simplement à une attaque réussie.\n"
+                        "   Pour l'utiliser, ajoute '| Divine Smite niv.X si touche' à la fin de la ligne Règle 5e de ton attaque.\n"
+                        "   NE FAIS JAMAIS de bloc [ACTION] séparé pour ça.\n"
+                        "2. SORTS DE CHÂTIMENT (Wrathful Smite, Thunderous Smite, Faveur Divine) :\n"
+                        "   Ce SONT des sorts qui coûtent une ACTION BONUS.\n"
+                        "   Tu DOIS les lancer dans un bloc [ACTION] Type: Action Bonus SÉPARÉ, puis attendre le résultat avant d'attaquer au message suivant.\n"
+                        "3. EXTRA ATTACK (Attaque Supplémentaire) :\n"
+                        "   Tu as droit à 2 attaques par Action. Tu DOIS les déclarer SÉPARÉMENT.\n"
+                        "   Fais ta première attaque ([ACTION] Type: Action), attends le résultat du MJ, "
+                        "   puis fais ta seconde attaque dans un NOUVEAU message ([ACTION] Type: Extra Attack).\n"
+                    )
+                elif name == "Thorne":
+                    strict_rules = (
+                        "\nFORMAT ATTAQUE OBLIGATOIRE — Tu te bats avec deux armes, tu n'es pas obligé de faire tes deux attaques:\n"
+                        "  Tu dois déclarer chaque attaque SÉPARÉMENT dans des messages distincts.\n"
+                        "  Message 1 (Première attaque) :\n"
+                        "    [ACTION]\n"
+                        "    Type      : Action\n"
+                        "    Intention : Frapper avec ma première lame\n"
+                        "    Règle 5e  : Attaque : corps-à-corps +11, 1d6+5\n"
+                        "    Cible     : [la cible]\n"
+                        "  Message 2 (après avoir reçu le résultat du MJ) :\n"
+                        "    [ACTION]\n"
+                        "    Type      : Action Bonus\n"
+                        "    Intention : Frapper avec ma seconde lame\n"
+                        "    Règle 5e  : Attaque : corps-à-corps +11, 1d6+5\n"
+                        "    Cible     : [la cible]\n"
+                        "  Ne déclare JAMAIS tes deux attaques dans le même bloc !\n"
+                    )
+
                 agent.update_system_message(
                     base
                     + get_spells_prompt(name)
                     + get_inventory_prompt()
                     + combat_block
+                    + strict_rules
                     + map_block
+                    + get_menace_prompt_combat()
                 )
             # ── MODE EXPLORATION : prompt complet ────────────────────────────
             else:

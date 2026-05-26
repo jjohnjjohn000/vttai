@@ -925,11 +925,15 @@ class CampaignLogMixin:
                 f"Rédige maintenant le bloc d'archive narratif consolidé pour ces sessions."
             )
 
+            from agent_logger import log_chronicler_prompt, log_chronicler_response
+            log_chronicler_prompt("Archive Consolidation", system_prompt, messages=[{"role": "user", "content": user_prompt}])
             response = client.create(messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": user_prompt},
             ])
-            return response.choices[0].message.content.strip()
+            res_content = response.choices[0].message.content.strip()
+            log_chronicler_response("Archive Consolidation", res_content)
+            return res_content
 
         except Exception as e:
             print(f"[CampaignLogMixin] Erreur génération résumé LLM : {e}")

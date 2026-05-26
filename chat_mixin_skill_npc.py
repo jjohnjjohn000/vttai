@@ -435,6 +435,39 @@ class ChatMixinSkillNpc:
             except Exception:
                 pass
 
+        # ── Tooltip helper (hover description) ───────────────────────────────
+        def _npc_tooltip(widget, text: str):
+            """Attach a hover tooltip showing *text* to *widget*."""
+            _tip = [None, None]          # [Toplevel, after-id]
+            def _show(e):
+                if _tip[0]:              # already visible
+                    return
+                def _do_show():
+                    tw = tk.Toplevel(widget)
+                    tw.wm_overrideredirect(True)
+                    tw.attributes("-topmost", True)
+                    tk.Label(
+                        tw, text=text, bg="#1a2030", fg="#b8d8f0",
+                        font=("Consolas", 8), justify=tk.LEFT,
+                        padx=8, pady=6, wraplength=350,
+                        relief="solid", bd=1,
+                    ).pack()
+                    tw.geometry(f"+{e.x_root + 12}+{e.y_root + 12}")
+                    _tip[0] = tw
+                _tip[1] = widget.after(300, _do_show)
+            def _hide(e):
+                if _tip[1]:
+                    widget.after_cancel(_tip[1])
+                    _tip[1] = None
+                if _tip[0]:
+                    try:
+                        _tip[0].destroy()
+                    except Exception:
+                        pass
+                    _tip[0] = None
+            widget.bind("<Enter>", _show, add="+")
+            widget.bind("<Leave>", _hide, add="+")
+
         target_var = tk.StringVar(
             value=targets[0].name if targets else "— aucune —")
         if not hasattr(self, "_tk_vars_keepalive"): self._tk_vars_keepalive =[]
@@ -557,6 +590,8 @@ class ChatMixinSkillNpc:
                 name_lbl.pack(side=tk.LEFT, padx=(0, 8))
                 name_lbl.bind("<Enter>", lambda e, l=name_lbl: l.config(fg=GOLD))
                 name_lbl.bind("<Leave>", lambda e, l=name_lbl: l.config(fg=FG_MID))
+                if desc_full:
+                    _npc_tooltip(name_lbl, desc_full[:500])
                 name_lbl.bind("<Button-1>",
                     lambda e, n=aname, d=desc_full:
                         _send(f"▸ **{n}**\n{d[:400]}", "#9ba8b8"))
@@ -690,6 +725,9 @@ class ChatMixinSkillNpc:
                         msg = (f"**{n}** — JdS DD {dc} ({sv})\n"
                                f"  {tgt} doit réussir !")
                         _send(msg, BLUE)
+                        
+                        if tgt and tgt != "— aucune —" and hasattr(self, "_cmd_save"):
+                            self._cmd_save(f"{tgt} {sv} {dc}")
 
                     _qbtn(f"DD {dc_val} {sv_lbl}", BG_DC, BLUE, _dc)
 
@@ -729,15 +767,19 @@ class ChatMixinSkillNpc:
                 tdesc = _clean(_fmt_entries(trait.get("entries", [])))
                 trow  = tk.Frame(outer, bg=BG_ACT, padx=8, pady=2)
                 trow.pack(fill=tk.X)
-                tk.Label(trow, text=f"• {tname}:",
+                _trait_name_lbl = tk.Label(trow, text=f"• {tname}:",
                          bg=BG_ACT, fg=TEAL,
-                         font=("Consolas", 7, "bold")).pack(side=tk.LEFT)
+                         font=("Consolas", 7, "bold"),
+                         cursor="hand2")
+                _trait_name_lbl.pack(side=tk.LEFT)
                 tk.Label(trow,
                          text=tdesc[:160] + ("…" if len(tdesc) > 160 else ""),
                          bg=BG_ACT, fg=FG_DIM,
                          font=("Consolas", 7),
                          wraplength=440, justify=tk.LEFT
                          ).pack(side=tk.LEFT, padx=4)
+                if tdesc:
+                    _npc_tooltip(_trait_name_lbl, tdesc[:500])
             _sep()
 
         tk.Frame(outer, bg="#1c2a3a", height=2).pack(fill=tk.X)

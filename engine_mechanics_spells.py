@@ -446,15 +446,20 @@ def execute_spell_action(
 
     # Sort à touche automatique
     _deals_damage = False
+    _BUFF_KW = ("guidance", "assistance", "bless", "bénédiction", "bane", "fléau", "inspiration", "chance")
+    _is_buff = any(k in r_low or k in i_low for k in _BUFF_KW)
+
     if _sp_data:
         import json as _json_parser
         _entries_str = _json_parser.dumps(_sp_data.get("entries", []))
         _deals_damage = (
             bool(_sp_data.get("damage_inflict"))
             or "{@damage " in _entries_str
-            or "{@dice " in _entries_str
         )
-    if not _deals_damage and _all_dice(regle):
+        if not _deals_damage and "{@dice " in _entries_str and not _is_buff:
+            _deals_damage = True
+
+    if not _deals_damage and _all_dice(regle) and not _is_buff and not is_heal:
         _deals_damage = True
 
     _is_auto_hit = (

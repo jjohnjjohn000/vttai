@@ -231,6 +231,10 @@ class CombatTrackerStateMixin:
                 self._refresh_list()
                 if self.combat_active:
                     self._log(f"⟳ Combat restauré — Round {self.round_num}")
+                    # NOTE IMPORTANTE :
+                    # On ne déclenche AUCUN _log_turn() ni _trigger_pc_turn_if_needed() ici.
+                    # L'annonce du combat et le déclenchement du joueur sont délégués
+                    # à autogen_engine.py, garantissant que l'IA est 100% opérationnelle.
             else:
                 # Pas de sauvegarde : import classique des PJ
                 self._import_pcs()

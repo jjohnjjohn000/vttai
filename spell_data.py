@@ -556,6 +556,19 @@ def get_spell_damage_expr(spell_name: str, spell_level: int) -> str | None:
     if sp is None:
         return None
 
+    # ── 0. Ignorer les sorts de Buff (dégâts ajoutés aux attaques futures) ──
+    _BUFF_SPELLS = {
+        "divine favor", "faveur divine", "hex", "maléfice", "hunter's mark",
+        "marque du chasseur", "holy weapon", "arme sainte", "crusader's mantle",
+        "manteau du croisé", "magic weapon", "arme magique", "elemental weapon",
+        "arme élémentaire", "absorb elements", "absorption d'éléments",
+        "enlarge/reduce", "agrandissement/rapetissement", "shadow blade",
+        "lame de l'ombre", "flame blade", "lame de flammes", "bless", "bénédiction",
+        "guidance", "assistance", "bane", "fléau"
+    }
+    if spell_name.strip().lower() in _BUFF_SPELLS:
+        return None
+
     desc         = sp.get("description", "")
     entries_raw  = sp.get("entries_higher", [])
     higher_txt   = _flatten_entries(entries_raw) if entries_raw else ""
@@ -564,6 +577,13 @@ def get_spell_damage_expr(spell_name: str, spell_level: int) -> str | None:
     # ── 1. Trouver la première expression de dés dans la description ──────────
     dice_m = _DICE_EXPR_RE.search(desc)
     if not dice_m:
+        return None
+
+    # ── 1.5. Détection contextuelle de buff ("extra damage", "additional damage") ──
+    start_idx = max(0, dice_m.start() - 40)
+    end_idx = min(len(desc), dice_m.end() + 40)
+    context = desc[start_idx:end_idx].lower()
+    if any(kw in context for kw in ("extra ", "additional ", "supplémentaire")):
         return None
 
     base_n      = int(dice_m.group(1))          # ex. 1  (dés par projectile)

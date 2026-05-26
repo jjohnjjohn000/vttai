@@ -49,14 +49,16 @@ def _handle_damage_link(self, msg: dict):
     dmg_total   = msg.get("dmg_total")         # int ou None
     is_crit     = msg.get("is_crit", False)
     resume_cb   = msg.get("resume_callback")   # callback(final_amount: int)
-    color       = self.CHAR_COLORS.get(char_name, "#4fc3f7")
+    color       = getattr(self, "CHAR_COLORS", {}).get(char_name, "#4fc3f7")
 
     # ── 1. Afficher le texte des dés dans le chat (lecture seule) ──────────
     if text:
         self.append_message(sender, text, color)     # méthode existante
 
-    if dmg_total is None or resume_cb is None:
-        return
+    if dmg_total is None:
+        dmg_total = 0
+    if resume_cb is None:
+        resume_cb = lambda *args, **kwargs: None
 
     # ── 2. Insérer l'hyperlien cliquable ───────────────────────────────────
     crit_pfx  = "🎯 CRITIQUE — " if is_crit else ""
@@ -106,8 +108,20 @@ def _handle_damage_link(self, msg: dict):
     self.chat_display.tag_bind(tag, "<Button-1>", _on_click)
     self.chat_display.tag_bind(tag, "<Enter>",    _on_enter)
     self.chat_display.tag_bind(tag, "<Leave>",    _on_leave)
-    self.chat_display.config(state=tk.DISABLED)
-    self.chat_display.see(tk.END)
+
+    def _force_scroll():
+        try:
+            self.chat_display.update_idletasks()
+            self.chat_display.yview_moveto(1.0)
+        except Exception:
+            pass
+
+    try:
+        self.chat_display.config(state=tk.DISABLED)
+        self.chat_display.after(50, _force_scroll)
+        self.chat_display.after(250, _force_scroll)
+    except Exception:
+        pass
 
 
 def _open_damage_popup(self,
@@ -344,10 +358,16 @@ def _open_damage_popup(self,
         # engine_receive.py après _dl_ev.wait(). On ne le fait plus ici en double !
 
     def _cancel():
-        # En cas d'annulation : timeout naturel du wait() dans engine_receive
+        # L'annulation ferme la fenêtre et appelle le récapitulatif avec le total par défaut
+        # pour éviter que le thread de réception ne reste bloqué pendant 5 minutes.
         popup.destroy()
-        # On ne rappelle PAS resume_callback → le wait() expire et _dmg_total
-        # est utilisé comme fallback dans engine_receive.py
+        try:
+            resume_callback(total, _cible_var.get(), "")
+        except TypeError:
+            try:
+                resume_callback(total, _cible_var.get())
+            except TypeError:
+                resume_callback(total)
 
     popup.protocol("WM_DELETE_WINDOW", _cancel)
     spx.bind("<Return>", lambda e: _confirm())

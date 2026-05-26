@@ -208,6 +208,7 @@ def get_all_llm_config_models() -> list:
 
     # Gemini (ordre = priorite dans la chaine de fallback)
     if gemini_key:
+        _add("gemini-3.5-flash")
         _add("gemini-3.1-pro-preview")
         _add("gemma-4-31b-it")
         _add("gemma-4-26b-a4b-it")
@@ -228,7 +229,6 @@ def get_all_llm_config_models() -> list:
 
     # OpenRouter
     if router_key:
-        _add("openrouter/meta-llama/llama-3.3-70b-instruct:free")
         _add("openrouter/mistralai/mistral-small-3.1-24b-instruct:free")
         _add("openrouter/arcee-ai/trinity-large-preview:free")
 

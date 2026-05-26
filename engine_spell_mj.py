@@ -17,21 +17,13 @@ Exporte :
 
 import re as _re
 import threading as _threading_spell
+from functools import lru_cache as _lru_cache
 
 from state_manager import load_state
 from app_config    import get_chronicler_config
 from llm_config    import build_llm_config, _default_model
 
 
-# ─── Client LLM partagé pour parse_mj_directives ─────────────────────────────
-# Créer un httpx.Client + openai.OpenAI par message MJ provoque une création de
-# SSLContext à chaque appel.  ssl.create_default_context() n'est pas thread-safe
-# sous Python 3.10 / OpenSSL 3.x → segfault si deux threads l'appellent en
-# même temps.  On résout le problème en construisant ces objets une seule fois
-# (lazy-init protégé par un lock) et en les réutilisant pour tous les appels.
-_PARSER_CLIENT_LOCK = _threading_spell.Lock()
-_parser_openai_client = None   # openai.OpenAI singleton (lazy)
-_parser_cfg0          = None   # config dict capturé à la première init
 
 
 # ─── Regex statiques (indépendants de la liste PNJ) ──────────────────────────
@@ -137,7 +129,7 @@ def get_prepared_spell_names(char_name: str) -> list:
     except Exception:
         return []
 
-
+@_lru_cache(maxsize=32)
 def extract_spell_name_llm(intention: str, char_name: str) -> str:
     """
     Utilise un LLM léger pour identifier le nom canonique du sort lancé.
@@ -150,7 +142,52 @@ def extract_spell_name_llm(intention: str, char_name: str) -> str:
     """
     prepared = get_prepared_spell_names(char_name)
     if not prepared:
-        return intention.strip()[:50]
+        return ""
+
+    _txt_low = intention.lower()
+
+    # ── FILTRE ULTRA-RAPIDE : Correspondance bilingue avec le grimoire ──
+    # Si absolument aucun mot des sorts préparés (en EN ou FR) n'est mentionné,
+    # le LLM ne trouvera rien de toute façon. On annule l'appel API instantanément.
+    import unicodedata
+    def _norm(s):
+        return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c)).lower()
+
+    try:
+        from spell_data import get_spell as _gs
+    except ImportError:
+        _gs = lambda n: None
+
+    _norm_txt = _norm(_txt_low)
+    _spell_mentioned = False
+    
+    for sp in prepared:
+        _norm_sp = _norm(sp)
+        # Vérification nom complet anglais
+        if _norm_sp in _norm_txt:
+            _spell_mentioned = True
+            break
+            
+        _sp_data = _gs(sp)
+        if _sp_data and _sp_data.get("name_fr"):
+            _norm_fr = _norm(_sp_data["name_fr"])
+            # Vérification nom complet français (ex: "trait de feu")
+            if _norm_fr in _norm_txt:
+                _spell_mentioned = True
+                break
+            # Recherche par mot clé significatif FR (>= 5 lettres)
+            if any(len(w) >= 5 and w in _norm_txt for w in _norm_fr.split()):
+                _spell_mentioned = True
+                break
+
+        # Recherche par mot clé significatif EN (>= 5 lettres)
+        if any(len(w) >= 5 and w in _norm_txt for w in _norm_sp.split()):
+            _spell_mentioned = True
+            break
+            
+    if not _spell_mentioned:
+        return ""
+    # ───────────────────────────────────────────────────────────────────
 
     spell_list = ", ".join(prepared)
     prompt = (
@@ -163,13 +200,25 @@ def extract_spell_name_llm(intention: str, char_name: str) -> str:
         f"Aucune explication, aucune ponctuation supplémentaire."
     )
     try:
-        import autogen as _ag
         _chron = get_chronicler_config()
         _model = _chron.get("model", _default_model)
         _cfg   = build_llm_config(_model, temperature=0.0)
-        client = _ag.OpenAIWrapper(config_list=_cfg["config_list"])
-        response = client.create(messages=[{"role": "user", "content": prompt}])
-        raw = (response.choices[0].message.content or "").strip()
+        from agent_logger import log_chronicler_prompt, log_chronicler_response
+        log_chronicler_prompt("Spell Extraction", "", messages=[{"role": "user", "content": prompt}])
+
+        from llm_probe import chronicler_llm_call_with_probe
+        raw = chronicler_llm_call_with_probe(
+            config_list   = _cfg["config_list"],
+            messages      = [{"role": "user", "content": prompt}],
+            context_label = "Spell Extraction",
+            temperature   = 0.0,
+            max_tokens    = 200,
+        )
+        if raw is None:
+            print("[SpellExtract] Tous les modèles ont échoué (probe).")
+            return intention.strip()[:50]
+
+        log_chronicler_response("Spell Extraction", raw)
         
         # Nettoyage des balises de réflexion (modèles reasoning type Gemma/DeepSeek)
         raw = _re.sub(r'<(thought|think)>.*?</\1>\s*', '', raw, flags=_re.IGNORECASE | _re.DOTALL)
@@ -515,6 +564,14 @@ def parse_mj_directives(mj_text: str,
     """
     import json as _json
 
+    # Exclusion immédiate des annonces de tour système pour économiser des appels LLM
+    if any(k in mj_text for k in (
+        "[TOUR DE COMBAT", "[ACTION HORS COMBAT",
+        "Déclare un [ACTION]", "Continue ton tour", 
+        "Reprends ton tour", "fait une [ACTION] type: Fin de tour"
+    )):
+        return []
+
     if not DIRECTIVE_PREFILTER.search(mj_text):
         return []
 
@@ -617,43 +674,32 @@ def parse_mj_directives(mj_text: str,
     if _results_regex:
         return _results_regex
 
-    # ── Passe 2 : LLM (OpenAI SDK) ──────────────────────────────────────
+    # ── Passe 2 : LLM avec sonde HTTP 200 + fallback config_list ──────────
     try:
-        import openai as _openai
-        global _parser_openai_client, _parser_cfg0
+        _chron = get_chronicler_config()
+        _full_cfg = build_llm_config(
+            _chron.get("model") or default_model_str, temperature=0
+        )
 
-        # Lazy-init thread-safe : on crée le client openai une seule fois.
-        # Le lock garantit qu'on n'entre pas deux fois dans le bloc init
-        # depuis deux threads distincts, ce qui créerait deux SSLContexts
-        # simultanément → segfault.
-        if _parser_openai_client is None:
-            with _PARSER_CLIENT_LOCK:
-                if _parser_openai_client is None:   # double-checked locking
-                    _ac   = get_agent_config_fn("Thorne")
-                    _cfg0 = build_llm_config(
-                        _ac.get("model") or default_model_str, temperature=0
-                    )["config_list"][0]
-                    _parser_cfg0 = _cfg0
-                    _parser_openai_client = _openai.OpenAI(
-                        api_key  = _cfg0["api_key"],
-                        base_url = str(_cfg0.get("base_url", "https://api.openai.com/v1")),
-                    )
+        from agent_logger import log_chronicler_prompt, log_chronicler_response
+        log_chronicler_prompt("MJ Directive Parsing", PARSER_SYSTEM, messages=[{"role": "user", "content": mj_text}])
 
-        _oa = _parser_openai_client
-        _model_name = _parser_cfg0["model"]
+        from llm_probe import chronicler_llm_call_with_probe
+        _raw = chronicler_llm_call_with_probe(
+            config_list   = _full_cfg["config_list"],
+            messages      = [
+                {"role": "system", "content": PARSER_SYSTEM},
+                {"role": "user",   "content": mj_text},
+            ],
+            context_label = "MJ Directive Parsing",
+            temperature   = 0.0,
+            max_tokens    = 400,
+        )
+        if _raw is None:
+            print("[MJParser] Tous les modèles ont échoué (probe).")
+            return []
 
-        from llm_config import _SSL_LOCK as _psl
-        with _psl:
-            _resp = _oa.chat.completions.create(
-                model    = _model_name,
-                messages =[
-                    {"role": "system", "content": PARSER_SYSTEM},
-                    {"role": "user",   "content": mj_text},
-                ],
-                temperature = 0,
-                max_tokens  = 400,
-            )
-        _raw = _resp.choices[0].message.content.strip()
+        log_chronicler_response("MJ Directive Parsing", _raw)
         
         # Nettoyage des balises de réflexion
         _raw = _re.sub(r'<(thought|think)>.*?</\1>\s*', '', _raw, flags=_re.IGNORECASE | _re.DOTALL)

@@ -41,7 +41,7 @@ class MonsterSheetWindow(
     def __init__(self, root, npc_name: str, bestiary_name: str | None = None,
                  on_select_callback=None, win_state: dict = None, track_fn=None,
                  chat_queue=None, audio_queue=None, npc_color: str = "#e0e0e0",
-                 get_scene_fn=None):
+                 get_scene_fn=None, combatant=None):
         self.root = root
         self.npc_name = npc_name
         self.on_select_callback = on_select_callback
@@ -49,6 +49,7 @@ class MonsterSheetWindow(
         self.audio_queue = audio_queue
         self.npc_color   = npc_color
         self.get_scene_fn = get_scene_fn
+        self.combatant   = combatant   # live Combatant from CombatTracker (or None)
         self._current_monster: dict | None = None
         self._img_tk = None       # référence PhotoImage anti-GC
         self._img_bytes: bytes | None = load_npc_image_bytes(npc_name)
@@ -301,10 +302,43 @@ class MonsterSheetWindow(
                      font=("Arial", 8, "bold"), anchor="w").pack(side=tk.LEFT)
 
             if slots:
-                for _ in range(min(slots, 9)):
-                    tk.Label(row_lbl, text="□",
-                             bg=SPELL_BG, fg=SLOT_FG,
-                             font=("Consolas", 9)).pack(side=tk.LEFT, padx=1)
+                # Récupérer l'état du combatant s'il est lié
+                _cb_slots = None
+                if self.combatant and hasattr(self.combatant, "spell_slots"):
+                    _cb_slots = self.combatant.spell_slots.get(lvl_key)
+
+                for slot_i in range(min(slots, 9)):
+                    is_used = False
+                    if _cb_slots:
+                        is_used = slot_i < _cb_slots.get("used", 0)
+                    text = "■" if is_used else "□"
+                    fg = "#ef5350" if is_used else SLOT_FG
+
+                    slot_btn = tk.Button(row_lbl, text=text,
+                                         bg=SPELL_BG, fg=fg,
+                                         font=("Consolas", 9), relief="flat",
+                                         bd=0, padx=1, cursor="hand2")
+                    slot_btn.pack(side=tk.LEFT, padx=1)
+
+                    def _toggle_slot(lk=lvl_key, si=slot_i, btn=slot_btn,
+                                     cb=self.combatant, bg=SPELL_BG, fg_on="#ef5350",
+                                     fg_off=SLOT_FG):
+                        if cb and hasattr(cb, "spell_slots") and lk in cb.spell_slots:
+                            sd = cb.spell_slots[lk]
+                            if btn.cget("text") == "□":
+                                sd["used"] = min(sd["max"], sd.get("used", 0) + 1)
+                                btn.config(text="■", fg=fg_on)
+                            else:
+                                sd["used"] = max(0, sd.get("used", 0) - 1)
+                                btn.config(text="□", fg=fg_off)
+                        else:
+                            # Pas de combatant — toggle visuel local seulement
+                            if btn.cget("text") == "□":
+                                btn.config(text="■", fg=fg_on)
+                            else:
+                                btn.config(text="□", fg=fg_off)
+
+                    slot_btn.config(command=_toggle_slot)
 
             spell_wrap = tk.Frame(parent, bg=SPELL_BG)
             spell_wrap.pack(fill=tk.X, padx=24, pady=(1, 2))

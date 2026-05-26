@@ -84,6 +84,8 @@ def get_map_prompt(win_state: dict, for_hero: str = "", in_combat: bool = True) 
         print(f"[get_map_prompt] Impossible de lire le fog mask : {_fog_err}")
 
     def _is_revealed(tok) -> bool:
+        if tok.get("hidden", False):
+            return False
         if _fog_arr is None or _fog_w == 0 or _fog_h == 0:
             return True
         c  = int(round(tok.get("col", 0)))
@@ -91,6 +93,38 @@ def get_map_prompt(win_state: dict, for_hero: str = "", in_combat: bool = True) 
         px = min(int((c + 0.5) * _fog_w / cols), _fog_w - 1) if cols > 0 else 0
         py = min(int((r + 0.5) * _fog_h / rows), _fog_h - 1) if rows > 0 else 0
         return _fog_arr[py, px] <= 127
+
+    def _is_revealed_door(door_dict) -> bool:
+        if _fog_arr is None or _fog_w == 0 or _fog_h == 0:
+            return True
+        import math
+        cell_p = max(1, data.get("cell_px", 44))
+        d_px = door_dict.get("px", (door_dict.get("col", 0) + 0.5) * cell_p)
+        d_py = door_dict.get("py", (door_dict.get("row", 0) + 0.5) * cell_p)
+        w = door_dict.get("length_scale", 1.0) * cell_p
+        h = 0.25 * cell_p
+        ang = math.radians(door_dict.get("rotation", 0))
+        cos_a = math.cos(ang)
+        sin_a = math.sin(ang)
+        
+        pts_local = [
+            (0, 0),
+            (-w/2, -h/2), (w/2, -h/2), (w/2, h/2), (-w/2, h/2),
+            (-w/2, 0), (w/2, 0), (0, -h/2), (0, h/2)
+        ]
+        
+        for lx, ly in pts_local:
+            px = d_px + lx * cos_a - ly * sin_a
+            py = d_py + lx * sin_a + ly * cos_a
+            cf = px / cell_p
+            rf = py / cell_p
+            fpx = min(int(cf * _fog_w / cols), _fog_w - 1) if cols > 0 else 0
+            fpy = min(int(rf * _fog_h / rows), _fog_h - 1) if rows > 0 else 0
+            fpx = max(0, fpx)
+            fpy = max(0, fpy)
+            if _fog_arr[fpy, fpx] <= 127:
+                return True
+        return False
 
     def _is_ally(t):
         a = t.get("alignment", "")
@@ -104,7 +138,7 @@ def get_map_prompt(win_state: dict, for_hero: str = "", in_combat: bool = True) 
         if a == "ally":    return False
         return t.get("type") == "monster"
 
-    allies   = [t for t in tokens if _is_ally(t)]
+    allies   = [t for t in tokens if _is_ally(t) and not t.get("hidden", False)]
     enemies  = [t for t in tokens if _is_hostile(t) and _is_revealed(t)]
     neutrals = [t for t in tokens if t.get("alignment") == "neutral"
                 and t.get("type") != "trap" and _is_revealed(t)]
@@ -261,16 +295,21 @@ def get_map_prompt(win_state: dict, for_hero: str = "", in_combat: bool = True) 
                 lines.append(f"  • {nt}")
 
     doors = data.get("doors", [])
+    visible_doors = []
     if doors:
-        lines.append("\n🚪 PORTES — état réel (priorité absolue sur l'image de fond) :")
-        lines.append("  ⚠ L'image peut montrer un état différent — ces données font foi.")
         for d in doors:
+            c = int(d.get("col", int(d.get("px", 0) / max(1, data.get("cell_px", 44)))))
+            r = int(d.get("row", int(d.get("py", 0) / max(1, data.get("cell_px", 44)))))
+            if not _is_revealed_door(d):
+                continue
+            visible_doors.append((d, c, r))
+
+    if visible_doors:
+        lines.append("\n🚪 PORTES :")
+        for d, c, r in visible_doors:
             state    = "OUVERTE" if d.get("open") else "FERMÉE"
-            label    = f" ({d['label']})" if d.get("label") else ""
-            override = ("l'image montre une porte fermée — elle est en réalité OUVERTE"
-                        if d.get("open")
-                        else "l'image montre une porte ouverte — elle est en réalité FERMÉE")
-            lines.append(f"  • Col {d['col']+1}, Lig {d['row']+1}{label} : {state} — {override}")
+            label    = f" ({d.get('label', '')})" if d.get("label") else ""
+            lines.append(f"  • Col {c+1}, Lig {r+1}{label} : {state}")
 
     obstacles = data.get("obstacles", [])
     if obstacles:

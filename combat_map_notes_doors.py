@@ -21,6 +21,12 @@ class NotesDoorsMixin:
         door["open"] = not door["open"]
         self._redraw_one_door(door)
         self._save_state()
+        state_txt = "ouverte" if door["open"] else "fermée"
+        label_txt = f" ({door.get('label', '')})" if door.get("label") else ""
+        if hasattr(self, "_status_var"):
+            self._status_var.set(
+                f"Porte{label_txt} — maintenant {state_txt}"
+            )
 
     def _edit_door_label(self, door):
         new_label = simpledialog.askstring(
@@ -143,9 +149,10 @@ class NotesDoorsMixin:
 
     def _draw_one_note(self, n: dict):
         """Dessine une note minimaliste : fond noir transparent + texte lisible."""
-        z   = self.zoom
-        cx  = n["px"] * z
-        cy  = n["py"] * z
+        z   = self.zoom   # Zoom is still used for font scaling dynamically
+        scale = self._cp / self.cell_px
+        cx  = n["px"] * scale
+        cy  = n["py"] * scale
         col = n["color"]
         fs  = max(7, int(9 * z))
 
@@ -279,8 +286,7 @@ class NotesDoorsMixin:
                     self._rename_token(tok)
                     return
         # Double-clic sur une porte → éditer son label
-        col, row = self._canvas_to_cell(cx, cy)
-        door_hit = self._door_at(col, row)
+        door_hit = self._door_at(cx, cy)
         if door_hit is not None:
             self._edit_door_label(door_hit)
 
@@ -488,40 +494,106 @@ class NotesDoorsMixin:
 
     # ─── Outil Porte ─────────────────────────────────────────────────────────
 
-    def _door_at(self, col: int, row: int) -> "dict | None":
-        """Retourne la porte à (col, row) ou None."""
-        for d in self._doors:
-            if d["col"] == col and d["row"] == row:
+    def _door_handle_at(self, cx: float, cy: float) -> "dict | None":
+        """Retourne la porte dont la poignée contient (cx, cy) en coords canvas, ou None."""
+        import math
+        cp = self._cp
+        h_d = cp * 0.25
+        scale = cp / self.cell_px
+        
+        for d in reversed(self._doors):
+            w_d = cp * d.get("length_scale", 1.0)
+            d_px = d.get("px", (d.get("col", 0) + 0.5) * self.cell_px)
+            d_py = d.get("py", (d.get("row", 0) + 0.5) * self.cell_px)
+            nx, ny = d_px * scale, d_py * scale
+            
+            angle_rad = math.radians(d.get("rotation", 0))
+            is_open = d.get("open", False)
+            open_a = d.get("open_angle", 90 if is_open else 0)
+            
+            mirrored = d.get("mirrored", False)
+            m = 1 if not mirrored else -1
+            
+            hx, hy = m * (-w_d / 2), 0
+            swing_px, swing_py = m * (w_d / 2), 0
+            
+            if open_a > 0:
+                open_rad = math.radians(m * open_a)
+                cos_o = math.cos(open_rad)
+                sin_o = math.sin(open_rad)
+                sx = hx + (swing_px - hx) * cos_o - (swing_py - hy) * sin_o
+                sy = hy + (swing_px - hx) * sin_o + (swing_py - hy) * cos_o
+            else:
+                sx, sy = swing_px, swing_py
+                
+            cos_a = math.cos(angle_rad)
+            sin_a = math.sin(angle_rad)
+            handle_x = nx + sx * cos_a - sy * sin_a
+            handle_y = ny + sx * sin_a + sy * cos_a
+            
+            handle_r = max(6, w_d * 0.15)
+            if (cx - handle_x)**2 + (cy - handle_y)**2 <= handle_r**2:
                 return d
+                
         return None
 
-    def _door_toggle_or_create(self, col: int, row: int):
-        """Clic gauche : si une porte existe, bascule ouvert/fermé. Sinon ouvre
-        une mini-fenêtre pour saisir un label et crée la porte (fermée)."""
-        existing = self._door_at(col, row)
-        if existing is not None:
-            existing["open"] = not existing["open"]
-            self._redraw_one_door(existing)
-            self._save_state()
-            state_txt = "ouverte" if existing["open"] else "fermée"
-            label_txt = f" ({existing['label']})" if existing["label"] else ""
-            if hasattr(self, "_status_var"):
-                self._status_var.set(
-                    f"Porte{label_txt} — maintenant {state_txt} "
-                    f"(Col {col+1}, Lig {row+1})"
-                )
-            return
+    def _door_at(self, cx: float, cy: float) -> "dict | None":
+        """Retourne la porte dont le cadre (virtuel) contient (cx, cy) en coords canvas, ou None."""
+        import math
+        cp = self._cp
+        h_d = cp * 0.25
+        tol = cp * 0.3
+        scale = cp / self.cell_px
+        
+        for d in reversed(self._doors):
+            w_d = cp * d.get("length_scale", 1.0)
+            d_px = d.get("px", (d.get("col", 0) + 0.5) * self.cell_px)
+            d_py = d.get("py", (d.get("row", 0) + 0.5) * self.cell_px)
+            nx, ny = d_px * scale, d_py * scale
+            
+            angle_rad = math.radians(d.get("rotation", 0))
+            
+            tx = cx - nx
+            ty = cy - ny
+            
+            cos_a = math.cos(-angle_rad)
+            sin_a = math.sin(-angle_rad)
+            lx = tx * cos_a - ty * sin_a
+            ly = tx * sin_a + ty * cos_a
+            
+            is_open = d.get("open", False)
+            open_a = d.get("open_angle", 90 if is_open else 0)
+            mirrored = d.get("mirrored", False)
+            m = 1 if not mirrored else -1
 
-        # Nouvelle porte : demander un label optionnel
+            if open_a > 0:
+                open_rad = math.radians(m * open_a)
+                hx, hy = m * (-w_d / 2), 0
+                cos_io = math.cos(-open_rad)
+                sin_io = math.sin(-open_rad)
+                px = hx + (lx - hx) * cos_io - (ly - hy) * sin_io
+                py = hy + (lx - hx) * sin_io + (ly - hy) * cos_io
+                if (-w_d/2 - tol <= px <= w_d/2 + tol) and (-h_d/2 - tol <= py <= h_d/2 + tol):
+                    return d
+            else:
+                if (-w_d/2 - tol <= lx <= w_d/2 + tol) and (-h_d/2 - tol <= ly <= h_d/2 + tol):
+                    return d
+        return None
+
+    def _door_create(self, cx: float, cy: float):
+        """Ouvre une mini-fenêtre pour saisir un label et crée la porte (fermée) à la position cliquée."""
+        px = cx / self.zoom
+        py = cy / self.zoom
+
         dw = tk.Toplevel(self.win)
         dw.title("Nouvelle porte")
-        dw.geometry("280x110")
+        dw.geometry("280x160")
         dw.configure(bg="#0d1018")
         dw.resizable(False, False)
         dw.wait_visibility()
         dw.grab_set()
 
-        tk.Label(dw, text=f"Porte — Col {col+1}, Lig {row+1}",
+        tk.Label(dw, text=f"Nouvelle Porte",
                  bg="#0d1018", fg="#ff9966",
                  font=("Consolas", 10, "bold")).pack(pady=(10, 2))
         tk.Label(dw, text="Label (optionnel) :",
@@ -533,19 +605,34 @@ class NotesDoorsMixin:
         entry.pack(padx=14, ipady=3)
         entry.focus_set()
 
+        tk.Label(dw, text="Largeur de la porte :",
+                 bg="#0d1018", fg="#aaaacc",
+                 font=("Consolas", 8)).pack(pady=(4, 0))
+        size_var = tk.StringVar(value="5 feet")
+        opt = tk.OptionMenu(dw, size_var, "3 feet", "5 feet", "10 feet")
+        opt.config(bg="#252538", fg="#eeeeee", font=("Consolas", 9), relief="flat", highlightthickness=0)
+        opt["menu"].config(bg="#252538", fg="#eeeeee", font=("Consolas", 9))
+        opt.pack(pady=2)
+
         def _confirm(event=None):
             label = entry.get().strip()
+            sel = size_var.get()
+            scale = 1.0
+            if "3 " in sel: scale = 0.6
+            elif "10 " in sel: scale = 2.0
+            
             dw.destroy()
-            door = {"col": col, "row": row, "open": False,
-                    "label": label, "canvas_ids": []}
+            door = {"px": px, "py": py, "rotation": 0, "open": False,
+                    "label": label, "length_scale": scale, "canvas_ids": []}
             self._doors.append(door)
-            self._redraw_one_door(door)  # utilise _cp courant
+            self._cut_walls_with_door(door)
+            self._redraw_one_door(door)
             self._save_state()
 
         entry.bind("<Return>", _confirm)
         tk.Button(dw, text="Créer (fermée)", bg="#2c1200", fg="#ff9966",
                   font=("Consolas", 9, "bold"), relief="flat",
-                  command=_confirm).pack(pady=6)
+                  command=_confirm).pack(pady=8)
 
     def _delete_door(self, door: dict):
         for cid in door.get("canvas_ids", []):
@@ -554,74 +641,217 @@ class NotesDoorsMixin:
             self._doors.remove(door)
         self._save_state()
 
-    def _draw_one_door(self, door: dict):
-        """Overlay d'état de porte sur l'image — couvre visuellement la porte dessinée.
+    def _cut_walls_with_door(self, door: dict):
+        import math
+        d_px = door.get("px", (door.get("col", 0) + 0.5) * self.cell_px)
+        d_py = door.get("py", (door.get("row", 0) + 0.5) * self.cell_px)
+        C = (d_px, d_py)
+        scale_len = door.get("length_scale", 1.0)
+        R = self.cell_px * 0.5 * scale_len
+        new_walls = []
+        for w in getattr(self, "_walls", []):
+            A = w["p1"]
+            B = w["p2"]
+            dx, dy = B[0] - A[0], B[1] - A[1]
+            lensq = dx*dx + dy*dy
+            if lensq < 1e-5:
+                new_walls.append(w)
+                continue
+            fAx, fAy = A[0] - C[0], A[1] - C[1]
+            a = lensq
+            b = 2 * (fAx * dx + fAy * dy)
+            c = fAx*fAx + fAy*fAy - R*R
+            delta = b*b - 4*a*c
+            if delta <= 0:
+                new_walls.append(w)
+                continue
+            sq_delta = math.sqrt(delta)
+            t1 = (-b - sq_delta) / (2*a)
+            t2 = (-b + sq_delta) / (2*a)
+            if t1 > t2: t1, t2 = t2, t1
+            valid_segs = []
+            if t1 > 0:
+                valid_segs.append((0, min(1.0, t1)))
+            if t2 < 1.0:
+                valid_segs.append((max(0.0, t2), 1.0))
+            if not valid_segs:
+                 pass
+            elif len(valid_segs) == 1 and valid_segs[0] == (0, 1.0):
+                 new_walls.append(w)
+            else:
+                 for (st, et) in valid_segs:
+                     P1 = (A[0] + st*dx, A[1] + st*dy)
+                     P2 = (A[0] + et*dx, A[1] + et*dy)
+                     new_walls.append({"p1": P1, "p2": P2})
+        self._walls = new_walls
+        self._wall_pil = None
+        self._composite()
 
-        Porte FERMÉE : fond opaque rouge foncé + barres croisées + texte "FERMÉE"
-                       → écrase une porte ouverte dans l'image.
-        Porte OUVERTE : fond opaque vert foncé + arc ouvert + texte "OUVERTE"
-                       → écrase une porte fermée dans l'image.
+    def _door_is_player_visible(self, door: dict) -> bool:
+        if getattr(self, "_dm_view", True):
+            return True
+        if getattr(self, "_fog_mask", None) is None:
+            return True
+        mW, mH = self._fog_mask.size
+        if mW == 0 or mH == 0:
+            return False
+            
+        import math
+        d_px = door.get("px", (door.get("col", 0) + 0.5) * self.cell_px)
+        d_py = door.get("py", (door.get("row", 0) + 0.5) * self.cell_px)
+        
+        w = door.get("length_scale", 1.0) * self.cell_px
+        h = 0.25 * self.cell_px
+        ang = math.radians(door.get("rotation", 0))
+        cos_a = math.cos(ang)
+        sin_a = math.sin(ang)
+        
+        pts_local = [
+            (0, 0),
+            (-w/2, -h/2), (w/2, -h/2), (w/2, h/2), (-w/2, h/2),
+            (-w/2, 0), (w/2, 0), (0, -h/2), (0, h/2)
+        ]
+        
+        for lx, ly in pts_local:
+            px = d_px + lx * cos_a - ly * sin_a
+            py = d_py + lx * sin_a + ly * cos_a
+            cf = px / self.cell_px
+            rf = py / self.cell_px
+            fpx = min(max(0, int(cf * mW / self.cols)), mW - 1)
+            fpy = min(max(0, int(rf * mH / self.rows)), mH - 1)
+            val = self._fog_mask.getpixel((fpx, fpy))
+            if val <= 127:
+                return True
+        return False
+
+    def _draw_one_door(self, door: dict):
+        """Overlay d'état de porte sur l'image : rectangle orienté.
+        Porte FERMÉE : rectangle fin plein rouge.
+        Porte OUVERTE : rectangle fin plein vert.
         """
+        if hasattr(self, "_door_is_player_visible") and not self._door_is_player_visible(door):
+            door["canvas_ids"] = []
+            return
+
+        import math
         cp   = self._cp
-        col, row = door["col"], door["row"]
-        x0   = col * cp
-        y0   = row * cp
-        x1   = x0 + cp
-        y1   = y0 + cp
-        cx_  = x0 + cp * 0.5
-        cy_  = y0 + cp * 0.5
+        d_px = door.get("px", (door.get("col", 0) + 0.5) * self.cell_px)
+        d_py = door.get("py", (door.get("row", 0) + 0.5) * self.cell_px)
+        scale = cp / self.cell_px
+        cx_ = d_px * scale
+        cy_ = d_py * scale
+        angle_deg = door.get("rotation", 0)
+        angle_rad = math.radians(angle_deg)
+        
+        # Dimensions porte (orientée horizontalle à angle 0)
+        w = cp * door.get("length_scale", 1.0)
+        h = cp * 0.25 # porte fine
+
+        corners = [
+            (-w / 2, -h / 2),
+            ( w / 2, -h / 2),
+            ( w / 2,  h / 2),
+            (-w / 2,  h / 2)
+        ]
+
+        mirrored = door.get("mirrored", False)
+        m = 1 if not mirrored else -1  # flip x for mirrored hinge
+
+        is_open = door.get("open", False)
+        open_a = door.get("open_angle", 90 if is_open else 0)
+
+        hx, hy = m * (-w / 2), 0
+        swing_px, swing_py = m * (w / 2), 0
+
+        if open_a > 0:
+            open_rad = math.radians(m * open_a)
+            cos_o = math.cos(open_rad)
+            sin_o = math.sin(open_rad)
+            open_corners = []
+            for dx, dy in corners:
+                nx = hx + (dx - hx) * cos_o - (dy - hy) * sin_o
+                ny = hy + (dx - hx) * sin_o + (dy - hy) * cos_o
+                open_corners.append((nx, ny))
+            corners = open_corners
+            sx = hx + (swing_px - hx) * cos_o - (swing_py - hy) * sin_o
+            sy = hy + (swing_px - hx) * sin_o + (swing_py - hy) * cos_o
+        else:
+            sx, sy = swing_px, swing_py
+
+        rot_corners = []
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
+        for dx, dy in corners:
+            rx = dx * cos_a - dy * sin_a
+            ry = dx * sin_a + dy * cos_a
+            rot_corners.extend([cx_ + rx, cy_ + ry])
+
         ids  = []
-        pad  = max(2, int(cp * 0.06))   # marge intérieure
 
         if door["open"]:
-            # ── OUVERTE : fond vert opaque + arc D&D style + "OUVERT" ───────
-            # Fond semi-opaque couvrant la case entière
-            ids.append(self.canvas.create_rectangle(
-                x0 + pad, y0 + pad, x1 - pad, y1 - pad,
-                fill="#0a2a0a", outline="#44cc66", width=2, tags="door"))
-            # Arc ouvert (porte pivotée) — style plan architectural
-            r = cp * 0.36
-            ids.append(self.canvas.create_arc(
-                cx_ - r, cy_ - r, cx_ + r, cy_ + r,
-                start=0, extent=90, style="arc",
-                outline="#44ee66", width=max(2, int(cp * 0.07)), tags="door"))
-            # Ligne du battant
-            ids.append(self.canvas.create_line(
-                cx_, cy_, cx_ + r, cy_,
-                fill="#44ee66", width=max(2, int(cp * 0.07)), tags="door"))
-            # Label état
-            font_sz = max(6, int(cp * 0.20))
-            label_txt = door["label"] if door.get("label") else "OUVERT"
-            ids.append(self.canvas.create_text(
-                cx_, y1 - max(5, int(cp * 0.16)),
-                text=label_txt, fill="#88ffaa",
-                font=("Consolas", font_sz, "bold"), tags="door"))
+            fill_col = "#43a047"
+            out_col = "#1b5e20"
+            label_col = "#a5d6a7"
         else:
-            # ── FERMÉE : fond rouge opaque + barres + cadenas + "FERMÉ" ────
-            ids.append(self.canvas.create_rectangle(
-                x0 + pad, y0 + pad, x1 - pad, y1 - pad,
-                fill="#1e0000", outline="#cc3300", width=2, tags="door"))
-            # Deux barres croisées (verrou visuel)
-            m = int(cp * 0.22)
-            ids.append(self.canvas.create_line(
-                cx_ - m, cy_, cx_ + m, cy_,
-                fill="#cc3300", width=max(3, int(cp * 0.09)), tags="door"))
-            ids.append(self.canvas.create_line(
-                cx_, cy_ - m, cx_, cy_ + m,
-                fill="#cc3300", width=max(3, int(cp * 0.09)), tags="door"))
-            # Petit carré central (cadenas)
-            hs = max(3, int(cp * 0.10))
-            ids.append(self.canvas.create_rectangle(
-                cx_ - hs, cy_ - hs, cx_ + hs, cy_ + hs,
-                outline="#ff6633", fill="#3a0000",
-                width=1, tags="door"))
-            # Label état
+            fill_col = "#e53935"
+            out_col = "#b71c1c"
+            label_col = "#ef9a9a"
+
+        ids.append(self.canvas.create_polygon(
+            rot_corners, fill=fill_col, outline=out_col, width=2, tags="door"))
+
+        if not door.get("open", False):
+            # Arrow pointing toward the opening side
+            arrow_pts = [(-w*0.15, -h*0.15), (w*0.15, -h*0.15), (0, h*0.4)]
+            rot_arrow = []
+            for dx, dy in arrow_pts:
+                rx = dx * cos_a - dy * sin_a
+                ry = dx * sin_a + dy * cos_a
+                rot_arrow.extend([cx_ + rx, cy_ + ry])
+            ids.append(self.canvas.create_polygon(
+                rot_arrow, fill="#ffffff", outline="", tags="door"))
+
+            # Hinge dot on the correct side
+            hx, hy = m * (-w / 2), 0
+            hx_rot = hx * cos_a - hy * sin_a
+            hy_rot = hx * sin_a + hy * cos_a
+            hrx = cx_ + hx_rot
+            hry = cy_ + hy_rot
+            hrv = max(3, w * 0.06)
+            ids.append(self.canvas.create_oval(
+                hrx - hrv, hry - hrv, hrx + hrv, hry + hrv,
+                fill="#ffaaaa", outline="#e53935", width=1, tags="door"))
+
+        handle_x = cx_ + sx * cos_a - sy * sin_a
+        handle_y = cy_ + sx * sin_a + sy * cos_a
+        
+        if getattr(self, "_hovered_door_handle", None) is door:
+            handle_r = max(8, w * 0.16)
+            outline_col = "#ffffff"
+        else:
+            handle_r = max(5, w * 0.1)
+            outline_col = "#f57f17"
+            
+        ids.append(self.canvas.create_oval(
+            handle_x - handle_r, handle_y - handle_r,
+            handle_x + handle_r, handle_y + handle_r,
+            fill="#ffeb3b", outline=outline_col, width=2, tags=("door", "door_handle")))
+
+        if door.get("label"):
             font_sz = max(6, int(cp * 0.20))
-            label_txt = door["label"] if door.get("label") else "FERMÉ"
-            ids.append(self.canvas.create_text(
-                cx_, y1 - max(5, int(cp * 0.16)),
-                text=label_txt, fill="#ff8866",
-                font=("Consolas", font_sz, "bold"), tags="door"))
+            try:
+                txt_id = self.canvas.create_text(
+                    cx_, cy_,
+                    text=door["label"], fill=label_col,
+                    font=("Consolas", font_sz, "bold"), angle=-angle_deg, tags="door")
+                ids.append(txt_id)
+            except Exception:
+                # Fallback si l'angle n'est pas supporté (ancienne version tk)
+                txt_id = self.canvas.create_text(
+                    cx_, cy_,
+                    text=door["label"], fill=label_col,
+                    font=("Consolas", font_sz, "bold"), tags="door")
+                ids.append(txt_id)
 
         door["canvas_ids"] = ids
 
@@ -641,12 +871,26 @@ class NotesDoorsMixin:
         """Description textuelle des portes pour les agents."""
         if not self._doors:
             return ""
-        lines = ["\n🚪 PORTES :"]
+            
+        visible_doors = []
         for d in self._doors:
+            if hasattr(self, "_door_is_player_visible") and getattr(self, "_dm_view", False) == False and not self._door_is_player_visible(d):
+                continue
+            visible_doors.append(d)
+            
+        if not visible_doors:
+            return ""
+            
+        lines = ["\n🚪 PORTES :"]
+        for d in visible_doors:
             state  = "ouverte" if d["open"] else "FERMÉE"
             label  = f" — {d['label']}" if d.get("label") else ""
+            d_px = d.get("px", (d.get("col", 0) + 0.5) * self.cell_px)
+            d_py = d.get("py", (d.get("row", 0) + 0.5) * self.cell_px)
+            col = int(d_px / self.cell_px)
+            row = int(d_py / self.cell_px)
             lines.append(
-                f"  • Col {d['col']+1}, Lig {d['row']+1}{label} : {state}")
+                f"  • Col {col+1}, Lig {row+1}{label} : {state}")
         return "\n".join(lines)
 
     def _notes_description(self) -> str:

@@ -186,6 +186,7 @@ class TokenManagerMixin:
             tok.get("source_name", ""),  # source name — redraw if it changes
             tok.get("token_art", ""),    # token art path — redraw if it changes
             tok.get("portrait", ""),     # portrait path — redraw if it changes
+            tok.get("hidden", False),    # cacher/afficher si l'état change
             zoom, cp,
             id(tok) in sel,
             tok.get("name") == active_turn if active_turn else False, # redessiner si l'initiative change
@@ -194,11 +195,15 @@ class TokenManagerMixin:
 
     def _tok_is_visible_for_players(self, tok: dict) -> bool:
         """En mode vue joueurs, un token ennemi/neutre est visible seulement si
-        sa case est révélée dans le fog mask. Les alliés sont toujours visibles."""
+        sa case est révélée dans le fog mask. Les alliés sont toujours visibles.
+        Les tokens masqués (hidden) sont toujours invisibles."""
+        if tok.get("hidden", False):
+            return False
+
         alignment = tok.get("alignment", "")
         tok_type  = tok.get("type", "")
         if alignment == "ally" or (alignment == "" and tok_type == "hero"):
-            return True   # héros + PNJ alliés toujours visibles
+            return True   # héros + PNJ alliés toujours visibles (sauf si hidden)
         # Ennemis/neutres/pièges : vérifier le fog mask
         if self._fog_mask is None:
             return False  # pas de masque = tout caché
@@ -227,6 +232,8 @@ class TokenManagerMixin:
         for tok in getattr(self, "tokens", []):
             tok.pop("_fp", None)
         self._redraw_all_tokens()
+        if hasattr(self, "_redraw_all_doors"):
+            self._redraw_all_doors()
 
     def _redraw_all_tokens(self):
         active_turn = getattr(self, "active_turn_name", None)
@@ -409,8 +416,14 @@ class TokenManagerMixin:
             tags=("token", "align_ring", tag)))
 
         # ── Corps du token ────────────────────────────────────────────────────
-        # Stipple gray50 si en vol → aspect semi-transparent
-        stipple_val = "gray50" if flying else ""
+        is_hidden = tok.get("hidden", False)
+        # Stipple gray50 si en vol ou masqué → aspect semi-transparent
+        stipple_val = "gray50" if (flying or is_hidden) else ""
+        
+        dash_val = (4, 4) if is_hidden else ""
+        if is_hidden:
+            outline = "#b388ff" # purple outline for hidden tokens to distinguish them
+            fill = "#311b92"
 
         # Art du token sur le canvas : images/tokens/ en priorité.
         # Utilise source_name (nom canonique du fichier, ex. "Rictavio") si dispo,
@@ -431,27 +444,27 @@ class TokenManagerMixin:
         diameter_px   = max(4, int(rad * 2))
         portrait_photo = (
             _make_circular_portrait(portrait_path, diameter_px)
-            if portrait_path else None
-        )
+            if portrait_path and not is_hidden else None
+        ) # Do not show portrait if hidden so we can see the purple stipple clearly
 
         sh = style.get("shape", "circle")
         if sh == "circle":
             ids.append(self.canvas.create_oval(
                 cx-rad, cy-rad, cx+rad, cy+rad,
                 fill=fill, outline=outline, width=2,
-                stipple=stipple_val,
+                stipple=stipple_val, dash=dash_val,
                 tags=("token", tag)))
         elif sh == "diamond":
             pts = [cx, cy-rad, cx+rad, cy, cx, cy+rad, cx-rad, cy]
             ids.append(self.canvas.create_polygon(
                 pts, fill=fill, outline=outline, width=2,
-                stipple=stipple_val,
+                stipple=stipple_val, dash=dash_val,
                 tags=("token", tag)))
         else:
             pts = [cx, cy-rad, cx+rad*0.88, cy+rad*0.75, cx-rad*0.88, cy+rad*0.75]
             ids.append(self.canvas.create_polygon(
                 pts, fill=fill, outline=outline, width=2,
-                stipple=stipple_val,
+                stipple=stipple_val, dash=dash_val,
                 tags=("token", tag)))
 
         # ── Portrait (par-dessus le fond coloré) ─────────────────────────────
@@ -1187,7 +1200,45 @@ class TokenManagerMixin:
         """Ouvre la MonsterSheetWindow pour le token sélectionné."""
         try:
             from npc_bestiary_panel import MonsterSheetWindow
-            MonsterSheetWindow(self.win, tok_name, bestiary_name)
+            # ── Trouver le Combatant lié dans le tracker ─────────────────
+            combatant = None
+            tracker = getattr(getattr(self, "app", None), "_combat_tracker_win", None)
+            if tracker and hasattr(tracker, "combatants"):
+                combatant = next(
+                    (cb for cb in tracker.combatants if cb.name == tok_name), None
+                )
+                # ── Singleton via le tracker ─────────────────────────────
+                if combatant and hasattr(tracker, "_npc_sheets"):
+                    existing = tracker._npc_sheets.get(combatant.uid)
+                    if existing is not None:
+                        try:
+                            if existing.win.winfo_exists():
+                                existing.win.deiconify()
+                                existing.win.lift()
+                                existing.win.focus_force()
+                                return
+                        except Exception:
+                            pass
+                # ── Hydrater spell_slots si vides ────────────────────────
+                if combatant and not combatant.spell_slots and bestiary_name:
+                    try:
+                        from npc_bestiary_manager import get_monster as _gm
+                        _mon = _gm(bestiary_name)
+                        if _mon and _mon.get("spellcasting"):
+                            for _sc in _mon["spellcasting"]:
+                                if "spells" in _sc:
+                                    for _lk, _ld in _sc["spells"].items():
+                                        if "slots" in _ld and int(_lk) > 0:
+                                            combatant.spell_slots[_lk] = {"max": _ld["slots"], "used": 0}
+                    except Exception:
+                        pass
+            sheet = MonsterSheetWindow(self.win, tok_name, bestiary_name,
+                                       combatant=combatant)
+            # Enregistrer dans le singleton du tracker si possible
+            if combatant and tracker:
+                if not hasattr(tracker, "_npc_sheets"):
+                    tracker._npc_sheets = {}
+                tracker._npc_sheets[combatant.uid] = sheet
         except ImportError:
             pass
 

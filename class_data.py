@@ -184,6 +184,78 @@ def get_subclass_features(class_name: str, subclass_short: str, level: int) -> l
 # ─── Proficiencies ────────────────────────────────────────────────────────────
 
 @lru_cache(maxsize=32)
+def get_subclass_level(class_name: str) -> int:
+    """Retourne le niveau auquel la classe obtient sa sous-classe."""
+    mapping = {
+        "cleric": 1, "sorcerer": 1, "warlock": 1,
+        "druid": 2, "wizard": 2,
+        "artificer": 3, "barbarian": 3, "bard": 3, "fighter": 3, 
+        "monk": 3, "paladin": 3, "ranger": 3, "rogue": 3, "mystic": 1
+    }
+    return mapping.get(class_name.lower(), 3)
+
+
+def get_available_subclasses(class_name: str) -> list[str]:
+    """Retourne la liste des noms de sous-classes disponibles pour une classe."""
+    try:
+        data = _load_class_json(class_name)
+        return sorted([sub.get("name", "") for sub in data.get("subclass", []) if sub.get("name")])
+    except Exception:
+        return []
+
+
+def get_available_subclasses_short(class_name: str) -> list[tuple[str, str]]:
+    """Retourne [(shortName, fullName), ...] pour chaque sous-classe."""
+    try:
+        data = _load_class_json(class_name)
+        return sorted(
+            [(sub.get("shortName", ""), sub.get("name", "")) for sub in data.get("subclass", []) if sub.get("shortName")],
+            key=lambda x: x[1]
+        )
+    except Exception:
+        return []
+
+
+def get_class_proficiency_choices(class_name: str) -> list[dict]:
+    """Extrait les choix de compétences et d'outils disponibles au niveau 1."""
+    entry = _get_class_entry(class_name)
+    profs = entry.get("startingProficiencies", {})
+    choices = []
+    
+    # Compétences
+    for skill_entry in profs.get("skills", []):
+        if isinstance(skill_entry, dict):
+            if "choose" in skill_entry:
+                from_list = skill_entry["choose"].get("from", [])
+                count = skill_entry["choose"].get("count", 1)
+                opts = sorted([s.title() for s in from_list])
+                for i in range(count):
+                    lbl = f"Compétence {i+1}" if count > 1 else "Compétence"
+                    choices.append({"label": lbl, "options": opts})
+            elif "any" in skill_entry:
+                count = skill_entry["any"]
+                opts = sorted(["Acrobatics", "Animal Handling", "Arcana", "Athletics", "Deception", "History", "Insight", "Intimidation", "Investigation", "Medicine", "Nature", "Perception", "Performance", "Persuasion", "Religion", "Sleight of Hand", "Stealth", "Survival"])
+                for i in range(count):
+                    lbl = f"Compétence libre {i+1}" if count > 1 else "Compétence libre"
+                    choices.append({"label": lbl, "options": opts})
+                    
+    # Outils
+    for tool_entry in profs.get("toolProficiencies", []):
+        if isinstance(tool_entry, dict):
+            for k, v in tool_entry.items():
+                if k == "anyArtisansTool":
+                    for i in range(v):
+                        lbl = f"Outil d'artisan {i+1}" if v > 1 else "Outil d'artisan"
+                        choices.append({"label": lbl, "options": ["Alchemist's Supplies", "Brewer's Supplies", "Calligrapher's Supplies", "Carpenter's Tools", "Cartographer's Tools", "Cobbler's Tools", "Cook's Utensils", "Glassblower's Tools", "Jeweler's Tools", "Leatherworker's Tools", "Mason's Tools", "Painter's Supplies", "Potter's Tools", "Smith's Tools", "Tinker's Tools", "Weaver's Tools", "Woodcarver's Tools"]})
+                elif k == "anyMusicalInstrument":
+                    for i in range(v):
+                        lbl = f"Instrument {i+1}" if v > 1 else "Instrument"
+                        choices.append({"label": lbl, "options": ["Bagpipes", "Drum", "Dulcimer", "Flute", "Lute", "Lyre", "Horn", "Pan Flute", "Shawm", "Viol"]})
+    
+    return choices
+
+
+@lru_cache(maxsize=32)
 def get_proficiencies(class_name: str) -> dict:
     """
     Retourne les maîtrises de départ de la classe.
@@ -327,6 +399,39 @@ def get_combat_prompt(class_name: str, subclass_short: str = "", level: int = 11
         lines.append(f"  • Maîtrises : {' | '.join(parts)}")
 
     return "\n".join(lines)
+
+# ─── Starting Equipment ──────────────────────────────────────────────────────
+
+def get_starting_equipment(class_name: str) -> list[str]:
+    """
+    Retourne la liste des lignes d'équipement de départ (texte lisible).
+    Ex: ["(a) a martial weapon and a shield or (b) two martial weapons", ...]
+    """
+    entry = _get_class_entry(class_name)
+    equip = entry.get("startingEquipment", {})
+    lines = equip.get("default", [])
+    return [_clean_5etools_text(line) for line in lines]
+
+
+def get_class_table_groups(class_name: str) -> list[dict]:
+    """Retourne les classTableGroups bruts (tables de progression custom)."""
+    entry = _get_class_entry(class_name)
+    return entry.get("classTableGroups", [])
+
+
+def get_multiclassing_info(class_name: str) -> dict:
+    """
+    Retourne les infos de multiclassage.
+    {"requirements": {"str": 13, "cha": 13}, "proficienciesGained": {...}}
+    """
+    entry = _get_class_entry(class_name)
+    return entry.get("multiclassing", {})
+
+
+def get_subclass_title(class_name: str) -> str:
+    """Retourne le titre de sous-classe (ex: 'Sacred Oath' pour Paladin)."""
+    entry = _get_class_entry(class_name)
+    return entry.get("subclassTitle", "Subclass")
 
 
 # ─── 5etools Text Cleanup ────────────────────────────────────────────────────

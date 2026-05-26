@@ -19,6 +19,13 @@ import threading
 import tkinter as tk
 from pathlib import Path
 
+def _clean_env():
+    import os
+    e = os.environ.copy()
+    e.pop("LD_LIBRARY_PATH", None)
+    e.pop("LD_PRELOAD", None)
+    return e
+
 
 # ─── Répertoires par défaut ──────────────────────────────────────────────────
 _BASE = Path(__file__).resolve().parent / "music"
@@ -200,6 +207,7 @@ class _ChannelStrip:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=_clean_env()
             )
         except FileNotFoundError:
             self._track_label.config(text="❌ ffplay introuvable")

@@ -590,12 +590,15 @@ FORMAT DE RÉPONSE :
                     client_kwargs = {k: v for k, v in llm_cfg.items() if k not in ("functions", "tools")}
                     client = _ag.OpenAIWrapper(**client_kwargs)
                     
+                    from agent_logger import log_chronicler_prompt, log_chronicler_response
+                    log_chronicler_prompt("Scene Generation", sys_prompt, messages=[{"role": "user", "content": user_prompt}])
                     response = client.create(messages=[
                         {"role": "system", "content": sys_prompt},
                         {"role": "user",   "content": user_prompt},
                     ])
 
                     raw_text = (response.choices[0].message.content or "").strip()
+                    log_chronicler_response("Scene Generation", raw_text)
                     
                     # Extraction robuste du JSON
                     match = re.search(r'\{.*\}', raw_text, re.DOTALL)

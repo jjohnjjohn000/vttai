@@ -100,6 +100,7 @@ class PanelsNPCMixin:
                 "color":         npc.get("color", group_data.get("color", "#c77dff")),
                 "voice":         npc.get("voice", _default_voice),
                 "speed":         npc.get("speed", "+0%"),
+                "pitch":         npc.get("pitch", "+0%"),
                 "bestiary_name": npc.get("bestiary_name") or group_data.get("bestiary_name") or "",
                 "hp_current":    npc.get("hp_current") if npc.get("hp_current") is not None else group_data.get("hp_current"),
                 "notes":         npc.get("notes", "") or group_data.get("notes", ""),
@@ -112,6 +113,7 @@ class PanelsNPCMixin:
                     "color":         gn.get("color", "#c77dff"),
                     "voice":         _default_voice,
                     "speed":         "+0%",
+                    "pitch":         "+0%",
                     "bestiary_name": gn.get("bestiary_name", ""),
                     "hp_current":    gn.get("hp_current"),
                     "notes":         gn.get("notes", ""),
@@ -148,8 +150,8 @@ class PanelsNPCMixin:
         # ── En-têtes colonnes ─────────────────────────────────────────────────
         col_hdr = tk.Frame(win, bg=BG3, pady=4)
         col_hdr.pack(fill=tk.X, padx=0)
-        for txt, w in [("Nom",    13), ("Couleur",  8), ("Voix TTS",   20),
-                       ("Vitesse", 7), ("Monstre",  18), ("PV",         6),
+        for txt, w in [("Nom",    12), ("Couleur",  7), ("Voix TTS",   18),
+                       ("Vitesse", 6), ("Hauteur",  6), ("Monstre",  18), ("PV",         6),
                        ("Actions", 24)]:
             tk.Label(col_hdr, text=txt, bg=BG3, fg=GOLD,
                      font=("Arial", 8, "bold"), width=w, anchor="w"
@@ -192,18 +194,19 @@ class PanelsNPCMixin:
                 color_var    = tk.StringVar(value=npc.get("color", "#c77dff"))
                 voice_var    = tk.StringVar(value=npc.get("voice", get_available_voices()[0]))
                 speed_var    = tk.StringVar(value=npc.get("speed", "+0%"))
+                pitch_var    = tk.StringVar(value=npc.get("pitch", "+0%"))
                 bestiary_var = tk.StringVar(value=npc.get("bestiary_name", "") or "")
                 hp_var       = tk.StringVar(value=str(npc.get("hp_current") or ""))
                 notes_var    = tk.StringVar(value=npc.get("notes", ""))
 
                 # Nom
-                tk.Entry(row, textvariable=name_var, width=13, bg="#252535",
+                tk.Entry(row, textvariable=name_var, width=12, bg="#252535",
                          fg=FG, font=("Consolas", 10),
                          insertbackground=FG, relief="flat"
                          ).pack(side=tk.LEFT, padx=3, ipady=4)
 
                 # Couleur + aperçu
-                color_e = tk.Entry(row, textvariable=color_var, width=8,
+                color_e = tk.Entry(row, textvariable=color_var, width=7,
                                    bg="#252535", font=("Consolas", 10),
                                    insertbackground=FG, relief="flat")
                 color_e.pack(side=tk.LEFT, padx=3, ipady=4)
@@ -218,13 +221,19 @@ class PanelsNPCMixin:
                 _voices = get_available_voices()
                 vm = tk.OptionMenu(row, voice_var, *_voices)
                 vm.config(bg="#2a1a3a", fg=PURPLE, font=("Consolas", 8),
-                          width=18, relief="flat", highlightthickness=0,
+                          width=16, relief="flat", highlightthickness=0,
                           activebackground="#3a2a4a", activeforeground=PURPLE)
                 vm["menu"].config(bg="#2a1a3a", fg=PURPLE, font=("Consolas", 8))
                 vm.pack(side=tk.LEFT, padx=3)
 
                 # Vitesse
-                tk.Entry(row, textvariable=speed_var, width=7, bg="#252535",
+                tk.Entry(row, textvariable=speed_var, width=6, bg="#252535",
+                         fg=FG, font=("Consolas", 10),
+                         insertbackground=FG, relief="flat"
+                         ).pack(side=tk.LEFT, padx=3, ipady=4)
+
+                # Hauteur
+                tk.Entry(row, textvariable=pitch_var, width=6, bg="#252535",
                          fg=FG, font=("Consolas", 10),
                          insertbackground=FG, relief="flat"
                          ).pack(side=tk.LEFT, padx=3, ipady=4)
@@ -504,6 +513,7 @@ class PanelsNPCMixin:
                     "color":    color_var,
                     "voice":    voice_var,
                     "speed":    speed_var,
+                    "pitch":    pitch_var,
                     "bestiary": bestiary_var,
                     "hp":       hp_var,
                     "notes":    notes_var,
@@ -518,7 +528,7 @@ class PanelsNPCMixin:
         def _add_npc():
             merged.append({
                 "name": "Nouveau PNJ", "color": "#c77dff",
-                "voice": get_available_voices()[0], "speed": "+0%",
+                "voice": get_available_voices()[0], "speed": "+0%", "pitch": "+0%",
                 "bestiary_name": "", "hp_current": None, "notes": "",
             })
             _build_rows()
@@ -535,6 +545,7 @@ class PanelsNPCMixin:
                 color    = rv["color"].get().strip()   or "#c77dff"
                 voice    = rv["voice"].get()
                 speed    = rv["speed"].get()            or "+0%"
+                pitch    = rv["pitch"].get()            or "+0%"
                 bestiary = rv["bestiary"].get().strip()
                 hp_raw   = rv["hp"].get().strip()
                 notes    = rv["notes"].get().strip()
@@ -547,6 +558,7 @@ class PanelsNPCMixin:
                     "color":         color,
                     "voice":         voice,
                     "speed":         speed,
+                    "pitch":         pitch,
                     "bestiary_name": bestiary or None,
                     "hp_current":    hp,
                     "notes":         notes,
@@ -587,7 +599,7 @@ class PanelsNPCMixin:
 
             # Mise à jour VOICE_MAPPING dynamique
             try:
-                from voice_interface import VOICE_MAPPING, SPEED_MAPPING
+                from voice_interface import VOICE_MAPPING, SPEED_MAPPING, PITCH_MAPPING
                 for npc in tts_updated:
                     bare_key = npc["name"]
                     npc_key  = f"__npc__{bare_key}"
@@ -596,8 +608,10 @@ class PanelsNPCMixin:
                     #   <nom>         → lecture directe via VOICE_MAPPING (edge-tts + piper)
                     VOICE_MAPPING[npc_key]  = npc["voice"]
                     VOICE_MAPPING[bare_key] = npc["voice"]
-                    SPEED_MAPPING[npc_key]  = npc["speed"]
-                    SPEED_MAPPING[bare_key] = npc["speed"]
+                    SPEED_MAPPING[npc_key]  = npc.get("speed", "+0%")
+                    SPEED_MAPPING[bare_key] = npc.get("speed", "+0%")
+                    PITCH_MAPPING[npc_key]  = npc.get("pitch", "+0%")
+                    PITCH_MAPPING[bare_key] = npc.get("pitch", "+0%")
             except Exception:
                 pass
 

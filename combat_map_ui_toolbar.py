@@ -44,6 +44,8 @@ class UIToolbarMixin:
             ("obstacle_poly", "⬡ Obstacle",    "#ff6633", "#2c1000"),
             ("obstacle_free", "✏ Main levée",  "#ff9955", "#2c1800"),
             ("erase_obs",     "⌫ Efface",       "#ff6b6b", "#2c0808"),
+            ("wall",          "🧱 Mur",         "#00deff", "#0a1a2c"),
+            ("erase_wall",    "⌫ Eff. Mur",     "#ff6b6b", "#2c0808"),
             ("resize_map",    "⤢ Carte",       "#ffb74d", "#2c1a00"),
         ]:
             btn = tk.Button(
@@ -129,6 +131,7 @@ class UIToolbarMixin:
             ("Redimensionner",   "#9b8fc7", "#1a1020", self._resize_grid),
             ("Eff. Tokens",      "#ff8a65", "#2c1500", self._clear_all_tokens),
             ("Eff. Obstacles",   "#ff8a65", "#2c1500", self._clear_all_obstacles),
+            ("Eff. Murs",        "#00deff", "#0a1a2c", self._clear_all_walls),
         ]:
             tk.Button(
                 row2, text=text, bg="#1e1e30", fg=fg,

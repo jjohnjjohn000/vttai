@@ -198,6 +198,18 @@ class CombatTrackerNPCMixin:
                     tracker.win.deiconify()
                     tracker.win.lift()
                     tracker.win.focus_force()
+                    if getattr(tracker, "combat_active", False):
+                        try:
+                            from combat_tracker_state import COMBAT_STATE
+                            COMBAT_STATE["active"] = True
+                        except Exception:
+                            pass
+                        # ── Restaurer le modèle LLM combat ──
+                        try:
+                            if hasattr(tracker, "app") and tracker.app is not None and hasattr(tracker.app, "_set_combat_llm"):
+                                tracker.app._set_combat_llm(True)
+                        except Exception:
+                            pass
                     return tracker
             except Exception:
                 pass  # fenêtre détruite, on en recrée une

@@ -20,6 +20,7 @@ for key in keys:
 
     BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
     MODELS = [
+        "gemini-3.5-flash",
         "gemini-3.1-pro-preview",
         "gemini-3.1-flash-lite",
         "gemini-3.1-flash-lite-preview",
@@ -33,16 +34,20 @@ for key in keys:
     for model in MODELS:
         url = BASE.rstrip("/") + "/chat/completions"
         t0  = time.perf_counter()
-        r   = requests.post(url,
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={"model": model, "messages": [{"role": "user", "content": "Dis juste OK."}], "max_tokens": 5},
-            timeout=15)
-        ms = int((time.perf_counter() - t0) * 1000)
+        try:
+            r   = requests.post(url,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": model, "messages": [{"role": "user", "content": "Dis juste OK."}], "max_tokens": 5},
+                timeout=30)
+            ms = int((time.perf_counter() - t0) * 1000)
 
-        if r.status_code == 200:
-            print(f"  \033[92m✓\033[0m {model:<35} {ms}ms")
-        else:
-            try:    err = r.json().get("error", {}).get("message", r.text[:120])
-            except: err = r.text[:120]
-            icon = "\033[91m✗\033[0m" if r.status_code != 429 else "\033[93m⏱\033[0m"
-            print(f"  {icon} {model:<35} HTTP {r.status_code} — {err[:80]}")
+            if r.status_code == 200:
+                print(f"  \033[92m✓\033[0m {model:<35} {ms}ms")
+            else:
+                try:    err = r.json().get("error", {}).get("message", r.text[:120])
+                except: err = r.text[:120]
+                icon = "\033[91m✗\033[0m" if r.status_code != 429 else "\033[93m⏱\033[0m"
+                print(f"  {icon} {model:<35} HTTP {r.status_code} — {err[:80]}")
+        except requests.exceptions.RequestException as e:
+            ms = int((time.perf_counter() - t0) * 1000)
+            print(f"  \033[91m✗\033[0m {model:<35} ERROR — {type(e).__name__} ({ms}ms)")
