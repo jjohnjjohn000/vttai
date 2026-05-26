@@ -1,0 +1,862 @@
+{
+  "_meta": {
+    "sources": [
+      {
+        "json": "LMB",
+        "abbreviation": "LMB",
+        "full": "La Malédiction de Barovie",
+        "authors": [
+          "Alexis Lacasse"
+        ],
+        "version": "1.0",
+        "color": "822000",
+        "targetSchema": "1.2"
+      }
+    ],
+    "dateAdded": 1730000000,
+    "dateLastModified": 1730000000
+  },
+  "monster": [
+    {
+      "name": "Aspect de Zariel (Forme de Base)",
+      "isNamedCreature": true,
+      "source": "LMB",
+      "page": 1,
+      "size": [
+        "M"
+      ],
+      "type": {
+        "type": "fiend",
+        "tags": [
+          "devil"
+        ]
+      },
+      "alignment": [
+        "N",
+        "E"
+      ],
+      "ac": [
+        {
+          "ac": 18,
+          "from": [
+            "armure naturelle"
+          ]
+        }
+      ],
+      "hp": {
+        "average": 255,
+        "formula": "30d8 + 120"
+      },
+      "speed": {
+        "walk": 30,
+        "fly": 60
+      },
+      "str": 16,
+      "dex": 18,
+      "con": 18,
+      "int": 20,
+      "wis": 22,
+      "cha": 24,
+      "save": {
+        "dex": "+10",
+        "wis": "+12",
+        "cha": "+13"
+      },
+      "skill": {
+        "insight": "+12",
+        "perception": "+12",
+        "deception": "+13",
+        "stealth": "+10"
+      },
+      "resist": [
+        "cold",
+        "psychic",
+        {
+          "resist": [
+            "bludgeoning",
+            "piercing",
+            "slashing"
+          ],
+          "note": "d'attaques non magiques qui ne sont pas en argent",
+          "cond": true
+        }
+      ],
+      "immune": [
+        "fire",
+        "poison"
+      ],
+      "conditionImmune": [
+        "charmed",
+        "frightened",
+        "poisoned"
+      ],
+      "senses": [
+        "vision véritable 120 ft."
+      ],
+      "passive": 22,
+      "languages": [
+        "Céleste",
+        "Commun",
+        "Infernal",
+        "télépathie 120 ft."
+      ],
+      "cr": "18",
+      "spellcasting": [
+        {
+          "name": "Incantation Innée",
+          "type": "spellcasting",
+          "headerEntries": [
+            "La caractéristique d'incantation de l'Aspect est le Charisme (DD des sorts 21, {@hit 13} au toucher). Elle peut lancer les sorts suivants de manière innée, sans composantes matérielles :"
+          ],
+          "will": [
+            "{@spell eldritch blast|phb|trait eldritch} (3 rayons)",
+            "{@spell darkness|phb|ténèbres}",
+            "{@spell misty step|phb|pas brumeux}",
+            "{@spell detect magic|phb|détection de la magie}"
+          ],
+          "daily": {
+            "3e": [
+              "{@spell counterspell|phb|contresort}",
+              "{@spell dispel magic|phb|dissipation de la magie}"
+            ]
+          },
+          "ability": "cha"
+        }
+      ],
+      "trait": [
+        {
+          "name": "Résistance Légendaire (3/Jour)",
+          "entries": [
+            "Si l'Aspect échoue à un jet de sauvegarde, elle peut choisir de réussir à la place."
+          ]
+        },
+        {
+          "name": "Résistance à la Magie",
+          "entries": [
+            "L'Aspect a l'avantage aux jets de sauvegarde contre les sorts et autres effets magiques."
+          ]
+        }
+      ],
+      "action": [
+        {
+          "name": "Multi-attaque",
+          "entries": [
+            "L'Aspect effectue deux attaques avec son Épée Longue de l'Ombre ou utilise son {@spell eldritch blast|phb|Trait Eldritch}."
+          ]
+        },
+        {
+          "name": "Épée Longue de l'Ombre",
+          "entries": [
+            "{@atk mw} {@hit 13} au toucher, allonge 10 ft., une cible. {@h}15 ({@damage 2d8 + 7}) dégâts tranchants plus 13 ({@damage 3d8}) dégâts nécrotiques."
+          ]
+        }
+      ],
+      "legendary": [
+        {
+          "name": "Attaque ou Trait",
+          "entries": [
+            "L'Aspect effectue une attaque à l'épée ou lance un rayon de {@spell eldritch blast|phb|Trait Eldritch}."
+          ]
+        },
+        {
+          "name": "Pas Ténébreux (Coûte 2 actions)",
+          "entries": [
+            "L'Aspect se téléporte magiquement, ainsi que tout équipement qu'elle porte ou transporte, jusqu'à 60 pieds dans un espace inoccupé qu'elle peut voir et qui se trouve dans des ténèbres ou une lumière faible."
+          ]
+        },
+        {
+          "name": "Ténèbres Glaciales (Coûte 2 actions)",
+          "entries": [
+            "L'Aspect lance le sort {@spell darkness|phb|ténèbres} sans composante."
+          ]
+        }
+      ],
+      "traitTags": [
+        "Legendary Resistances",
+        "Magic Resistance"
+      ],
+      "senseTags": [
+        "U"
+      ],
+      "languageTags": [
+        "CE",
+        "C",
+        "I",
+        "TP"
+      ],
+      "damageTags": [
+        "S",
+        "N"
+      ],
+      "spellcastingTags": [
+        "I"
+      ],
+      "hasFluff": true
+    },
+    {
+      "name": "Aspect de Zariel (Forme Augmentée)",
+      "isNamedCreature": true,
+      "source": "LMB",
+      "page": 1,
+      "size": [
+        "H"
+      ],
+      "type": {
+        "type": "fiend",
+        "tags": [
+          "devil"
+        ]
+      },
+      "alignment": [
+        "L",
+        "E"
+      ],
+      "ac": [
+        {
+          "ac": 21,
+          "from": [
+            "armure naturelle d'obsidienne fusionnée"
+          ]
+        }
+      ],
+      "hp": {
+        "average": 345,
+        "formula": "30d10 + 180"
+      },
+      "speed": {
+        "walk": 40,
+        "fly": {
+          "number": 90,
+          "condition": "(stationnaire)"
+        },
+        "canHover": true
+      },
+      "str": 24,
+      "dex": 20,
+      "con": 22,
+      "int": 22,
+      "wis": 24,
+      "cha": 26,
+      "save": {
+        "str": "+14",
+        "con": "+13",
+        "wis": "+14",
+        "cha": "+15"
+      },
+      "skill": {
+        "arcana": "+13",
+        "deception": "+15",
+        "insight": "+14",
+        "perception": "+14",
+        "intimidation": "+15",
+        "stealth": "+12"
+      },
+      "resist": [
+        "cold",
+        "psychic"
+      ],
+      "immune": [
+        "fire",
+        "poison",
+        {
+          "resist": [
+            "bludgeoning",
+            "piercing",
+            "slashing"
+          ],
+          "note": "d'attaques non magiques qui ne sont pas en argent",
+          "cond": true
+        }
+      ],
+      "conditionImmune": [
+        "charmed",
+        "exhaustion",
+        "frightened",
+        "paralyzed",
+        "poisoned"
+      ],
+      "senses": [
+        "vision véritable 120 ft."
+      ],
+      "passive": 24,
+      "languages": [
+        "Infernal",
+        "Céleste",
+        "Commun",
+        "télépathie 120 ft."
+      ],
+      "cr": "23",
+      "spellcasting": [
+        {
+          "name": "Incantation Innée",
+          "type": "spellcasting",
+          "headerEntries": [
+            "La caractéristique d'incantation de l'Aspect est le Charisme (DD des sorts 23, {@hit 15} au toucher pour les attaques de sort). Elle peut lancer les sorts suivants de manière innée, sans composantes matérielles :"
+          ],
+          "will": [
+            "{@spell darkness|phb|ténèbres}",
+            "{@spell eldritch blast|phb|trait eldritch} (4 rayons)",
+            "{@spell fear|phb|peur}",
+            "{@spell detect magic|phb|détection de la magie}",
+            "{@spell telekinesis|phb|télékinésie}"
+          ],
+          "daily": {
+            "3e": [
+              "{@spell counterspell|phb|contresort}",
+              "{@spell dispel magic|phb|dissipation de la magie}",
+              "{@spell shadow of moil|xge|ombre de moil}",
+              "{@spell vampiric touch|phb|contact vampirique}",
+              "{@spell wall of fire|phb|mur de feu}"
+            ],
+            "1e": [
+              "{@spell finger of death|phb|doigt de mort}",
+              "{@spell dominate monster|phb|domination de monstre}",
+              "{@spell plane shift|phb|changement de plan}",
+              "{@spell feeblemind|phb|débilité}"
+            ]
+          },
+          "ability": "cha"
+        }
+      ],
+      "trait": [
+        {
+          "name": "Résistance Légendaire (3/Jour)",
+          "entries": [
+            "Si l'Aspect échoue à un jet de sauvegarde, elle peut choisir de réussir à la place."
+          ]
+        },
+        {
+          "name": "Résistance à la Magie",
+          "entries": [
+            "L'Aspect a l'avantage aux jets de sauvegarde contre les sorts et autres effets magiques."
+          ]
+        },
+        {
+          "name": "Aura Ténébreuse Oppressante",
+          "entries": [
+            "Les créatures hostiles situées à moins de 30 pieds de l'Aspect ont un désavantage à tous leurs jets de sauvegarde contre l'état {@condition effrayé}. De plus, la zone à l'intérieur de cette aura est considérée comme un terrain difficile pour les ennemis de l'Aspect."
+          ]
+        },
+        {
+          "name": "Résilience Vampirique Améliorée",
+          "entries": [
+            "Chaque fois que l'Aspect inflige des dégâts nécrotiques à une créature vivante, elle gagne des points de vie temporaires égaux à la moitié des dégâts nécrotiques infligés."
+          ]
+        }
+      ],
+      "action": [
+        {
+          "name": "Multiattaque",
+          "entries": [
+            "L'Aspect effectue trois attaques : une avec sa Lame d'Âme et deux avec ses Chaînes Infernales ou son {@spell eldritch blast|phb|Trait Eldritch}."
+          ]
+        },
+        {
+          "name": "Lame d'Âme",
+          "entries": [
+            "{@atk mw} {@hit 14} au toucher, allonge 10 ft., une cible. {@h}20 ({@damage 3d8 + 7}) dégâts tranchants plus 18 ({@damage 4d8}) dégâts nécrotiques."
+          ]
+        },
+        {
+          "name": "Chaînes Infernales",
+          "entries": [
+            "{@atk rs} {@hit 15} au toucher, portée 120 ft., une cible. {@h}16 ({@damage 2d10 + 5}) dégâts perforants plus 14 ({@damage 4d6}) dégâts de feu. Si la cible est une créature, elle est tirée de 30 pieds en ligne droite vers l'Aspect et doit réussir un jet de sauvegarde de Force DD 21 ou être {@condition entravée} (restrained) par les chaînes spectrales. La créature peut utiliser son action pour refaire le jet de Force et se libérer."
+          ]
+        }
+      ],
+      "reaction": [
+        {
+          "name": "Évasion Crépusculaire",
+          "entries": [
+            "Lorsque l'Aspect subit des dégâts d'une attaque ou d'un sort qu'elle peut voir, elle peut utiliser sa réaction pour se téléporter magiquement jusqu'à 60 pieds dans un espace inoccupé et devenir {@condition invisible} jusqu'au début de son prochain tour ou jusqu'à ce qu'elle attaque ou lance un sort."
+          ]
+        }
+      ],
+      "legendary": [
+        {
+          "name": "Frappe ou Trait (1 action)",
+          "entries": [
+            "L'Aspect effectue une attaque avec ses Chaînes Infernales ou lance un rayon de {@spell eldritch blast|phb|Trait Eldritch}."
+          ]
+        },
+        {
+          "name": "Pas Ténébreux (Coûte 2 actions)",
+          "entries": [
+            "L'Aspect se téléporte de 120 pieds vers un espace inoccupé qu'elle peut voir, puis elle peut effectuer une attaque de Lame d'Âme."
+          ]
+        },
+        {
+          "name": "Déferlement d'Ombres (Coûte 3 actions)",
+          "entries": [
+            "L'Aspect libère une vague concentrée d'énergie nécrotique et d'âmes tourmentées dans un cône de 60 pieds. Chaque créature dans la zone doit effectuer un jet de sauvegarde de Constitution DD 23. En cas d'échec, elle subit 55 ({@damage 10d10}) dégâts nécrotiques et l'Aspect gagne instantanément le maximum de points de vie temporaires conférés par sa Résilience Vampirique. En cas de réussite, la créature subit la moitié des dégâts."
+          ]
+        }
+      ],
+      "traitTags": [
+        "Legendary Resistances",
+        "Magic Resistance"
+      ],
+      "senseTags": [
+        "U"
+      ],
+      "actionTags": [
+        "Multiattack"
+      ],
+      "languageTags": [
+        "CE",
+        "C",
+        "I",
+        "TP"
+      ],
+      "damageTags": [
+        "S",
+        "N",
+        "P",
+        "F"
+      ],
+      "spellcastingTags": [
+        "I"
+      ],
+      "conditionInflict": [
+        "restrained"
+      ],
+      "conditionInflictSpell": [
+        "frightened"
+      ],
+      "hasFluff": true
+    },
+    {
+      "name": "Commandantes Vex (Érinyes)",
+      "isNamedCreature": true,
+      "source": "LMB",
+      "page": 1,
+      "size": [
+        "M"
+      ],
+      "type": {
+        "type": "fiend",
+        "tags": [
+          "devil"
+        ]
+      },
+      "alignment": [
+        "L",
+        "E"
+      ],
+      "ac": [
+        {
+          "ac": 18,
+          "from": [
+            "armure de plates"
+          ]
+        }
+      ],
+      "hp": {
+        "average": 153,
+        "formula": "18d8 + 72"
+      },
+      "speed": {
+        "walk": 30,
+        "fly": 60
+      },
+      "str": 18,
+      "dex": 16,
+      "con": 18,
+      "int": 14,
+      "wis": 18,
+      "cha": 20,
+      "save": {
+        "dex": "+7",
+        "con": "+8",
+        "wis": "+8",
+        "cha": "+9"
+      },
+      "resist": [
+        "cold",
+        {
+          "resist": [
+            "bludgeoning",
+            "piercing",
+            "slashing"
+          ],
+          "note": "d'attaques non magiques qui ne sont pas en argent",
+          "cond": true
+        }
+      ],
+      "immune": [
+        "fire",
+        "poison"
+      ],
+      "conditionImmune": [
+        "poisoned"
+      ],
+      "senses": [
+        "vision véritable 120 ft."
+      ],
+      "passive": 14,
+      "languages": [
+        "Céleste",
+        "Commun",
+        "Infernal",
+        "télépathie 120 ft."
+      ],
+      "cr": "12",
+      "trait": [
+        {
+          "name": "Armes Infernales",
+          "entries": [
+            "Les attaques d'arme de l'Érinye sont magiques. Lorsqu'elle touche avec une arme, elle inflige 13 ({@damage 3d8}) dégâts de poison supplémentaires (inclus dans les attaques)."
+          ]
+        },
+        {
+          "name": "Résistance à la Magie",
+          "entries": [
+            "L'Érinye a l'avantage aux jets de sauvegarde contre les sorts et autres effets magiques."
+          ]
+        }
+      ],
+      "action": [
+        {
+          "name": "Multi-attaque",
+          "entries": [
+            "L'Érinye effectue trois attaques : deux avec son épée longue et une tactique spéciale (Corde ou Moisson)."
+          ]
+        },
+        {
+          "name": "Épée longue",
+          "entries": [
+            "{@atk mw} {@hit 8} au toucher, allonge 5 ft., une cible. {@h}8 ({@damage 1d8 + 4}) dégâts tranchants plus 13 ({@damage 3d8}) dégâts de poison."
+          ]
+        },
+        {
+          "name": "Arc long empoisonné",
+          "entries": [
+            "{@atk rw} {@hit 7} au toucher, portée 150/600 ft., une cible. {@h}7 ({@damage 1d8 + 3}) dégâts perforants plus 13 ({@damage 3d8}) dégâts de poison, et la cible doit réussir un jet de sauvegarde de Constitution DD 14 ou être {@condition empoisonnée} pendant 1 minute."
+          ]
+        },
+        {
+          "name": "Corde d'Enchevêtrement (Vex'tarr uniquement)",
+          "entries": [
+            "Vex'tarr cible une créature à moins de 20 pieds. La cible doit réussir un jet de sauvegarde de Dextérité DD 15 ou être {@condition entravée} par la corde magique."
+          ]
+        },
+        {
+          "name": "Moisson d'Âmes (Vex'amorth uniquement) {@recharge 6}",
+          "entries": [
+            "Vex'amorth cible une créature à moins de 30 pieds. La cible doit réussir un jet de sauvegarde de Charisme DD 17 ou subir 27 ({@damage 6d8}) dégâts nécrotiques. Vex'amorth se soigne d'un montant égal à la moitié des dégâts infligés."
+          ]
+        }
+      ],
+      "reaction": [
+        {
+          "name": "Parade",
+          "entries": [
+            "L'Érinye ajoute 4 à sa CA contre une attaque au corps à corps qui la toucherait."
+          ]
+        }
+      ],
+      "traitTags": [
+        "Magic Resistance"
+      ],
+      "senseTags": [
+        "U"
+      ],
+      "actionTags": [
+        "Multiattack",
+        "Parry"
+      ],
+      "languageTags": [
+        "CE",
+        "C",
+        "I",
+        "TP"
+      ],
+      "damageTags": [
+        "S",
+        "P",
+        "I",
+        "N"
+      ],
+      "conditionInflict": [
+        "poisoned",
+        "restrained"
+      ],
+      "savingThrowForced": [
+        "constitution",
+        "dexterity",
+        "charisma"
+      ],
+      "hasFluff": true
+    },
+    {
+      "name": "Exethanter (Mémoire Restaurée)",
+      "isNamedCreature": true,
+      "source": "LMB",
+      "page": 1,
+      "size": [
+        "M"
+      ],
+      "type": {
+        "type": "undead",
+        "tags": [
+          "lich"
+        ]
+      },
+      "alignment": [
+        "N",
+        "E"
+      ],
+      "ac": [
+        {
+          "ac": 17,
+          "from": [
+            "armure naturelle"
+          ]
+        }
+      ],
+      "hp": {
+        "average": 135,
+        "formula": "18d8 + 54"
+      },
+      "speed": {
+        "walk": 30
+      },
+      "str": 11,
+      "dex": 16,
+      "con": 16,
+      "int": 20,
+      "wis": 14,
+      "cha": 16,
+      "save": {
+        "con": "+10",
+        "int": "+12",
+        "wis": "+9"
+      },
+      "skill": {
+        "arcana": "+19",
+        "history": "+12",
+        "insight": "+9",
+        "perception": "+9"
+      },
+      "resist": [
+        "cold",
+        "lightning",
+        "necrotic"
+      ],
+      "immune": [
+        "poison",
+        {
+          "immune": [
+            "bludgeoning",
+            "piercing",
+            "slashing"
+          ],
+          "note": "d'attaques non magiques",
+          "cond": true
+        }
+      ],
+      "conditionImmune": [
+        "charmed",
+        "exhaustion",
+        "frightened",
+        "paralyzed",
+        "poisoned"
+      ],
+      "senses": [
+        "vision véritable 120 ft."
+      ],
+      "passive": 19,
+      "languages": [
+        "Commun",
+        "et jusqu'à cinq autres langues arcaniques"
+      ],
+      "cr": "21",
+      "spellcasting": [
+        {
+          "name": "Incantation",
+          "type": "spellcasting",
+          "headerEntries": [
+            "Exethanter est un lanceur de sorts de niveau 18. Sa caractéristique d'incantation est l'Intelligence (DD des sorts 20, {@hit 12} au toucher). Il a préparé les sorts de magicien suivants :"
+          ],
+          "spells": {
+            "0": {
+              "spells": [
+                "{@spell mage hand|phb|main de mage}",
+                "{@spell prestidigitation|phb}",
+                "{@spell ray of frost|phb|rayon de givre}"
+              ]
+            },
+            "1": {
+              "slots": 4,
+              "spells": [
+                "{@spell detect magic|phb|détection de la magie}",
+                "{@spell magic missile|phb|projectile magique}",
+                "{@spell shield|phb|bouclier}",
+                "{@spell thunderwave|phb|vague tonnante}"
+              ]
+            },
+            "2": {
+              "slots": 3,
+              "spells": [
+                "{@spell detect thoughts|phb|détection des pensées}",
+                "{@spell invisibility|phb}",
+                "{@spell Melf's acid arrow|phb|flèche acide de Melf}",
+                "{@spell mirror image|phb|image miroir}"
+              ]
+            },
+            "3": {
+              "slots": 3,
+              "spells": [
+                "{@spell animate dead|phb|animation des morts}",
+                "{@spell counterspell|phb|contresort}",
+                "{@spell dispel magic|phb|dissipation de la magie}",
+                "{@spell fireball|phb|boule de feu}"
+              ]
+            },
+            "4": {
+              "slots": 3,
+              "spells": [
+                "{@spell blight|phb|flétrissement}",
+                "{@spell dimension door|phb|porte dimensionnelle}"
+              ]
+            },
+            "5": {
+              "slots": 3,
+              "spells": [
+                "{@spell cloudkill|phb|brume mortelle}",
+                "{@spell scrying|phb|scrutation}"
+              ]
+            },
+            "6": {
+              "slots": 1,
+              "spells": [
+                "{@spell disintegrate|phb|désintégration}",
+                "{@spell globe of invulnerability|phb|globe d'invulnérabilité}"
+              ]
+            },
+            "7": {
+              "slots": 1,
+              "spells": [
+                "{@spell finger of death|phb|doigt de mort}",
+                "{@spell plane shift|phb|changement de plan}"
+              ]
+            },
+            "8": {
+              "slots": 1,
+              "spells": [
+                "{@spell dominate monster|phb|domination de monstre}",
+                "{@spell power word stun|phb|mot de pouvoir étourdissant}"
+              ]
+            },
+            "9": {
+              "slots": 1,
+              "spells": [
+                "{@spell power word kill|phb|mot de pouvoir mortel}"
+              ]
+            }
+          },
+          "ability": "int"
+        }
+      ],
+      "trait": [
+        {
+          "name": "Résistance Légendaire (3/Jour)",
+          "entries": [
+            "Si Exethanter échoue à un jet de sauvegarde, il peut choisir de réussir à la place."
+          ]
+        },
+        {
+          "name": "Rajeunissement",
+          "entries": [
+            "Si son phylactère est intact, Exethanter regagne 1 point de vie au début de son tour. S'il est détruit, il gagne un nouveau corps en 1d10 jours, regagnant tous ses points de vie. Le nouveau corps apparaît à côté de son phylactère caché."
+          ]
+        },
+        {
+          "name": "Résistance au Renvoi",
+          "entries": [
+            "Exethanter a l'avantage aux jets de sauvegarde contre tout effet qui repousse les morts-vivants."
+          ]
+        }
+      ],
+      "action": [
+        {
+          "name": "Toucher Paralysant",
+          "entries": [
+            "{@atk ms} {@hit 12} au toucher, allonge 5 ft., une créature. {@h}10 ({@damage 3d6}) dégâts de froid. La cible doit réussir un jet de sauvegarde de Constitution DD 18 ou être {@condition paralyzed|paralysée} pendant 1 minute. La cible peut répéter le jet de sauvegarde à la fin de chacun de ses tours pour mettre fin à l'effet."
+          ]
+        }
+      ],
+      "legendary": [
+        {
+          "name": "Tour de Magie (1 action)",
+          "entries": [
+            "Exethanter lance un tour de magie."
+          ]
+        },
+        {
+          "name": "Toucher Glacial (Coûte 2 actions)",
+          "entries": [
+            "Exethanter utilise son Toucher Paralysant."
+          ]
+        },
+        {
+          "name": "Regard Terrifiant (Coûte 2 actions)",
+          "entries": [
+            "Exethanter fixe une créature qu'il peut voir à moins de 10 pieds. La cible doit réussir un jet de sauvegarde de Sagesse DD 18 ou être {@condition frightened|effrayée} pendant 1 minute."
+          ]
+        },
+        {
+          "name": "Perturber la Vie (Coûte 3 actions)",
+          "entries": [
+            "Chaque créature vivante à moins de 20 pieds d'Exethanter subit 21 ({@damage 6d6}) dégâts nécrotiques (JS de Constitution DD 18 pour réduire de moitié)."
+          ]
+        }
+      ],
+      "lairActions": [
+        {
+          "entries": [
+            "À l'initiative 20 (en perdant les égalités), Exethanter peut prendre une action de repaire dans le Temple d'Ambre pour provoquer l'un des effets suivants :",
+            {
+              "type": "list",
+              "items": [
+                "Exethanter lance le sort {@spell fog cloud|phb|nappe de brouillard} ou {@spell arcane lock|phb|verrou magique}.",
+                "Exethanter cible une créature qu'il peut voir. Cette créature doit réussir un JS de Sagesse DD 18 ou subir 10 ({@damage 3d6}) dégâts psychiques et être affectée par une forme de folie à court terme.",
+                "Exethanter puise dans l'énergie des vestiges. Il regagne 1d8 points de vie pour chaque sarcophage d'ambre intact dans un rayon de 60 pieds."
+              ]
+            }
+          ]
+        }
+      ],
+      "traitTags": [
+        "Legendary Resistances",
+        "Rejuvenation",
+        "Turn Resistance"
+      ],
+      "senseTags": [
+        "U"
+      ],
+      "languageTags": [
+        "C"
+      ],
+      "damageTags": [
+        "C",
+        "N",
+        "Y"
+      ],
+      "spellcastingTags": [
+        "CS"
+      ],
+      "conditionInflict": [
+        "paralyzed"
+      ],
+      "conditionInflictLegendary": [
+        "frightened"
+      ],
+      "savingThrowForced": [
+        "constitution",
+        "wisdom"
+      ],
+      "hasFluff": true
+    }
+  ]
+}
