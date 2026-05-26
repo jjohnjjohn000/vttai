@@ -1,0 +1,130 @@
+{
+  "_meta": {
+    "sources": [
+      {
+        "json": "LMB",
+        "abbreviation": "LMB",
+        "full": "La Malédiction de Barovie",
+        "authors": [
+          "Alexis Lacasse"
+        ],
+        "version": "1.0",
+        "color": "822000",
+        "targetSchema": "1.2"
+      }
+    ],
+    "dateAdded": 1730000000,
+    "dateLastModified": 1730000000
+  },
+  "monsterFluff": [
+    {
+      "name": "Aspect de Zariel (Forme de Base)",
+      "source": "LMB",
+      "entries": [
+        "L'Aspect de Zariel est une projection autonome et calculatrice de l'Archiduchesse d'Avernus. Emprisonnée autrefois dans le Temple d'Ambre, elle s'est libérée de sa stase il y a un an en profitant d'une erreur de Mordenkainen le Mage Fou. Ayant sagement attendu dans l'ombre que la tyrannie de Strahd s'effondre, elle a profité du vide de pouvoir pour abattre un Vestige Sombre et ouvrir la faille de Tser Pool, permettant l'invasion de la Barovie par les légions de la vraie Zariel.",
+        "Utilisez cette forme lors de la rencontre du Chapitre 6.5 (Caverne du Mont Baratok). Elle n'a pas encore absorbé le plein potentiel des âmes baroviennes. Elle préfère tester les héros, évaluer leurs forces et fuir avec ses pouvoirs d'ombre plutôt que de s'engager dans un combat à mort.",
+        {
+          "type": "entries",
+          "name": "Le Sanctuaire des Ombres",
+          "entries": [
+            "Sous sa Forme de Base, l'Aspect opère avec une cruelle économie d'effort. Elle ne s'engage pas dans des combats à mort inutiles et méprise l'impulsivité, se retranchant dans une immense cathédrale souterraine inversée sous le Mont Baratok. De là, protégée par une milice de goules disciplinées et contrôlées par télépathie, elle projette la majeure partie de sa conscience à travers les plans (comme la Toile Démoniaque ou le monde des Rêves) pour tisser sa toile en toute sécurité."
+          ]
+        },
+        {
+          "type": "entries",
+          "name": "Vision Éthérée : L'Esprit Projeté",
+          "entries": [
+            "En regardant l'Aspect dans le Plan Éthéré, on remarque un fin « câble » d'énergie noire et verte partant de sa nuque pour percer la voûte de la caverne et disparaître vers d'autres plans. L'Aspect n'est pas « complète » ici ; elle projette une grande partie de sa conscience ailleurs, comme vers le Cocon d'Âmes dans l'Abysse ou le Rêve d'Elara. C'est pourquoi elle se repose ici et n'utilise pas la totalité de sa puissance destructrice."
+          ]
+        },
+        {
+          "type": "entries",
+          "name": "L'Audience Glaciale (Interprétation)",
+          "entries": [
+            "L'Aspect n'attaque pas à vue. Intriguée par les héros, elle préfère les jalonner pour évaluer leurs connaissances.",
+            "De nature arrogante et manipulatrice, elle se délecte de :",
+            "{@b La Moquerie :} Elle rabaisse systématiquement les exploits des héros. La mort de Strahd n'était pour elle qu'un détail.",
+            "{@b La Pêche aux Informations :} Elle tentera subtilement de savoir si les héros ont vu ou détiennent l'âme de Strahd von Zarovich, élément crucial pour ses plans de moisson.",
+            "{@b La Division :} Elle n'hésitera pas à glisser des indices sur des failles dans la défense de son propre allié, le Général Haruman, espérant que les héros détruiront l'armée de son rival à sa place."
+          ]
+        },
+        {
+          "type": "entries",
+          "name": "La Rupture de la Trêve (Tactique)",
+          "entries": [
+            "Si les héros l'attaquent ou se font trop menaçants, l'Aspect ne s'engagera pas dans un combat à mort. Ce lieu n'a pas de valeur stratégique absolue, il n'est qu'un dortoir.",
+            "Dès le premier round de combat, elle utilisera l'une de ses Actions Légendaires ou son tour de jeu régulier pour lancer {@spell darkness|phb|Ténèbres}, puis utilisera son sort de téléportation ou son Pas Ténébreux pour disparaître dans les ombres, son rire résonnant dans la caverne : {@i « Nous nous reverrons quand l'heure du vrai jugement sonnera. »}",
+            "Dans sa fuite, elle laisse généralement derrière elle des serviteurs pour retenir ses assaillants (comme 3 Ombres Supérieures / Wraiths émergeant des cristaux de sa plateforme)."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Aspect de Zariel (Forme Augmentée)",
+      "source": "LMB",
+      "entries": [
+        "L'Aspect de Zariel, sous sa Forme Augmentée, représente l'incarnation de la fureur militaire et du pouvoir brut. Forcée de fuir la Barovie physique pour se replier vers l'un de ses sanctuaires planaires (l'Abysse, le Mont Céleste, le monde des Rêves, ou même Avernus), l'Aspect réalise la menace que posent les héros.",
+        "Utilisez cette fiche terrifiante lors des affrontements finaux dans les sanctuaires planaires (Abysse, Mont Céleste, Rêves) et lors du rituel du Temple d'Ambre (Chapitre 31). Après avoir fui les héros et s'être gavée de l'essence des âmes baroviennes volées, elle est devenue une véritable machine de guerre quasi-divine, prête à anéantir toute résistance.",
+        {
+          "type": "entries",
+          "name": "Le Gavage Impie",
+          "entries": [
+            "Arrivée dans son repaire, elle brise ses propres protocoles de contention. Par pur instinct de survie et soif de destruction, elle absorbe directement une quantité massive d'âmes baroviennes qu'elle avait réussi à moissonner.",
+            "Ce gavage la fait muter horriblement. Sa taille augmente pour devenir gigantesque, son armure d'obsidienne fusionne littéralement avec sa chair pour la rendre presque invulnérable, et sa magie noire est décuplée. Ses alignements stricts s'effacent un peu devant une violence aveugle et prédatrice."
+          ]
+        },
+        {
+          "type": "entries",
+          "name": "La Confrontation Finale",
+          "entries": [
+            "À partir de sa métamorphose, l'Aspect cesse de fuir ou d'utiliser la diplomatie. Que ce soit pour protéger le cœur de l'invasion qu'elle a méticuleusement dissimulé, ou lors du Rituel de Scellement ultime mené par les héros au Temple d'Ambre, cette forme n'a qu'un seul objectif : annihiler toute résistance.",
+            "Son 'Déferlement d'Ombres' ne blesse pas seulement le corps : il gèle l'âme et lui permet de se revitaliser grâce à l'énergie vitale volée, faisant d'elle un véritable cauchemar pour quiconque tente une bataille d'usure."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Commandantes Vex (Érinyes)",
+      "source": "LMB",
+      "entries": [
+        "Vex'amorth (la Lame-Faucheuse du Bastion de la Rancune) et Vex'tarr (la Geôlière du Mur Noir) sont des Érinyes d'élite dans les légions de Zariel. Elles sont les fers de lance de l'invasion, combinant la discipline militaire avec une magie empoisonnée redoutable.",
+        {
+          "type": "entries",
+          "name": "Le Quatuor des Sœurs Vex",
+          "entries": [
+            "Pour bien gérer la cohérence de l'invasion diabolique, il faut comprendre la chaîne de commandement. Il existe quatre Érinyes d'élite déployées, connues sous le nom des \"Sœurs Vex\".",
+            "{@b Commandement Principal (La Vraie Zariel & Haruman) :}",
+            "{@b Vex'tarr :} La gardienne du Mur Noir côté Barovie (Chapitre 3). Elle sécurise l'entrée.",
+            "{@b Vex'ulia :} La gardienne de la Cascade de Cendres côté Gisombre (Chapitre 10). Elle sécurise la sortie vers Avernus.",
+            "{@b Vex'amorth :} La Lame-Faucheuse, officière en chef sous les ordres d'Haruman, gérant le Bastion de la Rancune (Chapitre 29).",
+            "{@b L'Électron Libre (L'Aspect de Zariel) :}",
+            "{@b Vex'sira :} La quatrième sœur n'obéit pas à la hiérarchie militaire d'Haruman. Elle est l'assassin personnelle de l'Aspect de Zariel. Si l'Aspect a besoin de traquer les héros spécifiquement, c'est Vex'sira qui mènera la traque."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Exethanter (Mémoire Restaurée)",
+      "source": "LMB",
+      "entries": [
+        "Exethanter, la Liche Souveraine, est l'archimage mort-vivant qui règne en maître absolu sur le Temple d'Ambre. Sa mémoire lui a été restaurée par les héros de l'Aube Brisée, faisant de lui l'une des entités les plus intelligentes et létales du multivers — non plus une relique confuse, mais un calculateur éternel pleinement conscient de son pouvoir.",
+        {
+          "type": "entries",
+          "name": "Nature et Idéologie",
+          "entries": [
+            "Exethanter est une faction d'un seul homme, neutre mauvais. Son objectif principal est de restaurer l'ordre et l'intégrité de son « laboratoire » (le Temple d'Ambre), purger l'infestation infernale de Zariel, et reprendre ses recherches éternelles sur les secrets du multivers.",
+            "Il est un allié de circonstance imprévisible et dangereux. Il aidera les héros tant qu'ils serviront ses objectifs, mais n'hésitera pas à les éliminer s'ils deviennent une menace pour son sanctuaire ou son savoir."
+          ]
+        },
+        {
+          "type": "entries",
+          "name": "Le Gardien du Temple",
+          "entries": [
+            "En tant que gardien originel du Temple d'Ambre, Exethanter voit l'invasion infernale de Zariel comme une violation intolérable de son domaine. Cette convergence d'intérêts avec les héros en fait un allié puissant, mais volatile : sa loyauté s'arrête là où ses intérêts personnels commencent.",
+            "Il peut agir comme un donateur de quête froid et calculateur, offrant des informations précieuses sur les Vestiges Sombres et la structure du Temple, ou se transformer en boss impitoyable si les héros menacent son sanctuaire ou tentent de s'emparer de son savoir ésotérique."
+          ]
+        }
+      ]
+    }
+  ]
+}
