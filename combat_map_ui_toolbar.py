@@ -692,25 +692,21 @@ class UIToolbarMixin:
             "",
         ]
 
-        visible_tokens, hidden_tokens = [], []
+        visible_tokens = []
         for tok in self.tokens:
             c, r = int(tok["col"]), int(tok["row"])
             if not (col_min <= c <= col_max and row_min <= r <= row_max):
                 continue
+            if tok.get("hidden", False) or _cell_covered(c, r):
+                continue
             label = _tok_label(tok)
-            if not _cell_covered(c, r):
-                visible_tokens.append((tok, label))
-            else:
-                hidden_tokens.append(label)
+            visible_tokens.append((tok, label))
 
         if visible_tokens:
             lines.append("Tokens visibles :")
             for _, lbl in visible_tokens: lines.append(f"  • {lbl}")
         else:
             lines.append("Aucun token visible dans ce cadre.")
-        if hidden_tokens:
-            lines.append("Tokens sous brouillard dans ce cadre :")
-            for lbl in hidden_tokens: lines.append(f"  ? {lbl}")
 
         # ── Bloc distances 3D entre tokens visibles ────────────────────────────
         vis_toks = [tok for tok, _ in visible_tokens]

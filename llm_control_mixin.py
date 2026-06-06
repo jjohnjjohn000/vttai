@@ -145,8 +145,10 @@ class LLMControlMixin:
                 "color": "#e67e22",
             })
             return
+            
         text = self.entry.get().strip()
         self.entry.delete(0, tk.END)
+        
         # ── Historique des entrées (navigation ↑/↓) ───────────────────────────
         if text:
             hist = getattr(self, '_chat_history', [])
@@ -155,15 +157,108 @@ class LLMControlMixin:
                 self._chat_history = hist
             self._chat_hist_idx = -1
             self._chat_hist_draft = ""
+            
+        if self.input_event.is_set() and not text.startswith("/"):
+            return
+            
+        # ─── PARSING DES COMMANDES AVANT TOUTE INTERRUPTION LLM ──────────────────
+        if text.startswith("/"):
+            import re as _re_msg
+            
+            # /vote choix1 choix2 ...
+            _pv = _re_msg.match(r'^/vote\s+(.+)$', text, _re_msg.IGNORECASE)
+            if _pv:
+                raw_choices = _pv.group(1).strip()
+                choices = [c.strip() for c in _re_msg.split(r'\s+', raw_choices) if c.strip()]
+                if len(choices) < 2:
+                    self.msg_queue.put({"sender": "⚠️ Système", "text": "Usage : /vote choix_1 choix_2 [choix_3 ...]", "color": "#FF9800"})
+                    return
+                if not getattr(self, "_agents", None):
+                    self.msg_queue.put({"sender": "⚠️ Système", "text": "Agents non initialisés — lancez la partie d'abord.", "color": "#FF9800"})
+                    return
+                threading.Thread(target=self._run_vote, args=(choices,), daemon=True).start()
+                return
+
+            # /dmg [nom] [valeur] [type]
+            _pd = _re_msg.match(r'^/dmg(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
+            if _pd:
+                self._cmd_damage(_pd.group(1) or "")
+                return
+
+            # /heal [nom] [valeur]
+            _ph = _re_msg.match(r'^/heal(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
+            if _ph:
+                self._cmd_heal(_ph.group(1) or "")
+                return
+
+            # /skill [nom] [compétence] [contexte] [dc]
+            _pskill = _re_msg.match(r'^/skill(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
+            if _pskill and _pskill.group(1):
+                self._cmd_skill(_pskill.group(1))
+                return
+
+            # /save [nom] [caractéristique] [contexte] [dc]
+            _psave = _re_msg.match(r'^/save(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
+            if _psave and _psave.group(1):
+                self._cmd_save(_psave.group(1))
+                return
+
+            # /search [mots] [book/adventure]
+            _psearch = _re_msg.match(r'^/search(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
+            if _psearch:
+                self._cmd_search(_psearch.group(1) or "")
+                return
+
+            # /quest <description>
+            _pq = _re_msg.match(r'^/quest\s+(.+)$', text, _re_msg.IGNORECASE | _re_msg.DOTALL)
+            if _pq:
+                quest_desc = _pq.group(1).strip()
+                self.msg_queue.put({"sender": "📜 Chroniqueur", "text": f"Analyse de la nouvelle quête en cours…\n« {quest_desc} »", "color": "#c8b8ff"})
+                threading.Thread(target=self.add_quest_via_llm, args=(quest_desc,), daemon=True, name="quest-add").start()
+                return
+            if _re_msg.match(r'^/quest\s*$', text, _re_msg.IGNORECASE):
+                self.msg_queue.put({"sender": "⚠️ Système", "text": "Usage : /quest <description de la nouvelle quête>", "color": "#FF9800"})
+                return
+
+            # Commandes qui envoient du texte directement au chat/LLM:
+            
+            # /round
+            if _re_msg.match(r'^/round$', text, _re_msg.IGNORECASE):
+                text = "Tour de table pour vous tous."
+                # On laisse le flux continuer pour que ça soit géré par le bloc _llm_running
+            
+            # /msg
+            _pm = _re_msg.match(r'^/msg\s+(\S+)\s+(.+)$', text, _re_msg.IGNORECASE)
+            if _pm:
+                target_raw = _pm.group(1)
+                private_text = _pm.group(2).strip()
+                if not getattr(self, "_agents", None):
+                    self.msg_queue.put({"sender": "⚠️ Système", "text": "Agents non initialisés — lancez la partie d'abord.", "color": "#FF9800"})
+                    return
+                real_name = next((n for n in self._agents if n.lower().startswith(target_raw.lower())), None)
+                if real_name is None:
+                    self.msg_queue.put({"sender": "⚠️ Système", "text": f"Personnage '{target_raw}' introuvable. Valides : {', '.join(self._agents.keys())}", "color": "#FF9800"})
+                    return
+                
+                # Affiche dans l'UI du MJ
+                self.msg_queue.put({"sender": f"🔒 MJ → {real_name}", "text": private_text, "color": "#888844"})
+                _trigger_mj_tts(private_text, "Alexis_Le_MJ")
+                
+                # Laisse continuer le flux pour injection. text reste le brut "/msg Nom message" pour que `gui_get_human_input` le parse
+                # Mais il ne doit plus bypasser l'affichage (qui est géré manuellement ci-dessous).
+
+        # ─── INTERCEPTION DU TEXTE SI LE LLM TOURNE (GÈRE LE TEXTE ET /msg, /round) ───
         if self._llm_running and not self._waiting_for_mj:
             if not text:
                 self.stop_llms()
                 return
             
-            # --- INTERCEPTION MADAM EVA (Tarokka) ---
-            # Si le texte vient de la fenêtre Tarokka, on force l'identité de Madam Eva
-            # pour l'injection dans le GroupChat sans modifier le sender UI (déjà géré).
-            if getattr(self, "_tarokka_win", None) and text.startswith("🎴 **") and " : " in text:
+            # Formattage et préparation de l'affichage pour la reprise
+            if text.startswith("/msg "):
+                # Déjà affiché joliment avec le cadenas par le bloc "/msg"
+                formatted = text
+                display = None
+            elif text.startswith("🎴 **") and getattr(self, "_tarokka_win", None) and " : " in text:
                 formatted = f"[Madam Eva] : {text}"
                 display = {"sender": "Madam Eva", "text": text, "color": "#9b8fc7"}
                 _trigger_mj_tts(text, "Madam Eva")
@@ -178,142 +273,31 @@ class LLMControlMixin:
                     display = {"sender": "Alexis_Le_MJ", "text": text, "color": "#4CAF50"}
                     _trigger_mj_tts(text, "Alexis_Le_MJ")
                 
-            # Stocke le message à afficher APRÈS l'arrêt — le except StopLLMRequested le postera
-            # Si une interruption est déjà en cours, juste remplacer le message en attente
             if self._pending_interrupt_input is not None:
                 self._pending_interrupt_input = formatted
                 self._pending_interrupt_display = display
                 return
+                
             self._pending_interrupt_input = formatted
             self._pending_interrupt_display = display
             self.msg_queue.put({"sender": "⏹ Système", "text": "LLMs interrompus — reprise avec votre nouveau message.", "color": "#FF9800"})
-            self._inject_stop()   # pas de with_input ici — géré par _pending_interrupt_display
+            self._inject_stop()
             return
+
         if self.input_event.is_set():
             return
-        # ── Détection commande /vote choix1 choix2 ... ───────────────────────
-        import re as _re_msg
-        _pv = _re_msg.match(r'^/vote\s+(.+)$', text, _re_msg.IGNORECASE)
-        if _pv:
-            raw_choices = _pv.group(1).strip()
-            choices = [c.strip() for c in _re_msg.split(r'\s+', raw_choices) if c.strip()]
-            if len(choices) < 2:
-                self.msg_queue.put({"sender": "⚠️ Système",
-                                    "text": "Usage : /vote choix_1 choix_2 [choix_3 ...]",
-                                    "color": "#FF9800"})
-                return
-            if not self._agents:
-                self.msg_queue.put({"sender": "⚠️ Système",
-                                    "text": "Agents non initialisés — lancez la partie d'abord.",
-                                    "color": "#FF9800"})
-                return
-            threading.Thread(target=self._run_vote, args=(choices,), daemon=True).start()
-            return
-
-        # ── Détection commande /msg NomPersonnage texte... ────────────────────
-        _pm = _re_msg.match(r'^/msg\s+(\S+)\s+(.+)$', text, _re_msg.IGNORECASE)
-        if _pm:
-            target_raw = _pm.group(1)
-            private_text = _pm.group(2).strip()
-            if not self._agents:
-                self.msg_queue.put({"sender": "⚠️ Système", "text": "Agents non initialisés — lancez la partie d'abord.", "color": "#FF9800"})
-                return
-            real_name = next((n for n in self._agents if n.lower().startswith(target_raw.lower())), None)
-            if real_name is None:
-                self.msg_queue.put({
-                    "sender": "⚠️ Système",
-                    "text": f"Personnage '{target_raw}' introuvable. Valides : {', '.join(self._agents.keys())}",
-                    "color": "#FF9800"
-                })
-                return
             
-            # 1. On affiche joliment le message dans le chat du MJ avec le cadenas
-            self.msg_queue.put({
-                "sender": f"🔒 MJ → {real_name}",
-                "text": private_text,
-                "color": "#888844"
-            })
-            _trigger_mj_tts(private_text, "Alexis_Le_MJ")
-            
-            # 2. CORRECTIF : Au lieu de bypasser AutoGen en ouvrant un thread parallèle,
-            # on transmet la commande brute au moteur principal. 
-            # 'gui_get_human_input' (dans engine_agents.py) s'occupera de la convertir
-            # en "[MJ → Nom]" pour que les actions mécaniques soient interceptées !
-            self.user_input = text
-            self.input_event.set()
-            return
-
-        # ── Commande /dmg [nom] [valeur] [type_dégâts] ────────────────────────
-        _pd = _re_msg.match(r'^/dmg(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
-        if _pd:
-            self._cmd_damage(_pd.group(1) or "")
-            return
-
-        # ── Commande /heal [nom] [valeur] ─────────────────────────────────────
-        _ph = _re_msg.match(r'^/heal(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
-        if _ph:
-            self._cmd_heal(_ph.group(1) or "")
-            return
-
-        # ── Commande /skill [nom] [compétence] [contexte_optionnel] [dc] ──────
-        _pskill = _re_msg.match(r'^/skill(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
-        if _pskill and _pskill.group(1):
-            self._cmd_skill(_pskill.group(1))
-            return
-
-        # ── Commande /save [nom] [caractéristique] [contexte_optionnel] [dc] ──
-        _psave = _re_msg.match(r'^/save(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
-        if _psave and _psave.group(1):
-            self._cmd_save(_psave.group(1))
-            return
-
-        # ── Commande /round ───────────────────────────────────────────────────
-        if _re_msg.match(r'^/round$', text, _re_msg.IGNORECASE):
-            self._cmd_round()
-            return
-
-        # ── Commande /search[mots] [book/adventure] ──────────────────────────
-        _psearch = _re_msg.match(r'^/search(?:\s+(.+))?$', text, _re_msg.IGNORECASE)
-        if _psearch:
-            self._cmd_search(_psearch.group(1) or "")
-            return
-
-        # ── Commande /quest <description de la quête> ─────────────────────────
-        _pq = _re_msg.match(r'^/quest\s+(.+)$', text, _re_msg.IGNORECASE | _re_msg.DOTALL)
-        if _pq:
-            quest_desc = _pq.group(1).strip()
-            self.msg_queue.put({
-                "sender": "📜 Chroniqueur",
-                "text":   f"Analyse de la nouvelle quête en cours…\n« {quest_desc} »",
-                "color":  "#c8b8ff",
-            })
-            threading.Thread(
-                target=self.add_quest_via_llm,
-                args=(quest_desc,),
-                daemon=True,
-                name="quest-add",
-            ).start()
-            return
-        if _re_msg.match(r'^/quest\s*$', text, _re_msg.IGNORECASE):
-            self.msg_queue.put({
-                "sender": "⚠️ Système",
-                "text":   "Usage : /quest <description de la nouvelle quête>\n"
-                          "Exemple : /quest Escorter le marchand Vistani jusqu'à Vallaki",
-                "color":  "#FF9800",
-            })
-            return
-
         # ── Enter vide → parole spontanée ────────────────────────────────
-        # [PAROLE_SPONTANEE] est un marqueur reconnu par le sélecteur de
-        # speaker dans autogen_engine : il déclenche directement la rotation
-        # d'un PJ sans passer par l'analyse du contenu du message MJ.
         if not text:
             self.user_input = "[PAROLE_SPONTANEE]"
             self.input_event.set()
             return
 
-        # --- INTERCEPTION MADAM EVA (Tarokka) ---
-        if getattr(self, "_tarokka_win", None) and text.startswith("🎴 **") and " : " in text:
+        # ── Traitement standard (quand c'est le tour du MJ) ─────────────────────────
+        if text.startswith("/msg "):
+            # A été affiché par le bloc "/msg" plus haut. gui_get_human_input le traitera.
+            self.user_input = text
+        elif getattr(self, "_tarokka_win", None) and text.startswith("🎴 **") and " : " in text:
             self.msg_queue.put({"sender": "Madam Eva", "text": text, "color": "#9b8fc7"})
             self.user_input = f"[Madam Eva] : {text}"
             _trigger_mj_tts(text, "Madam Eva")

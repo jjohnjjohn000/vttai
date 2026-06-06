@@ -595,6 +595,13 @@ class AutogenEngineMixin:
             except StopLLMRequested:
                 self._set_llm_running(False)
                 self._set_waiting_for_mj(False)
+                
+                # Nettoyage des messages MJ en attente (évite le double prompting)
+                if hasattr(self, 'groupchat') and self.groupchat.messages:
+                    while self.groupchat.messages and self.groupchat.messages[-1].get("name") in ("Alexis_Le_MJ", "MJ"):
+                        print(f"[Engine] Annulation du message MJ : {self.groupchat.messages[-1].get('content', '')[:40]}...")
+                        self.groupchat.messages.pop()
+
                 if self._pending_interrupt_input is not None:
                     premier_message = self._pending_interrupt_input
                     self._pending_interrupt_input = None

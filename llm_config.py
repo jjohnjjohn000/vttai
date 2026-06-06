@@ -33,6 +33,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ─── Global Key Quota Exclusion Tracker ──────────────────────────────────────
+_EXHAUSTED_KEYS = set()
+
+def mark_key_exhausted(api_key: str, model: str = None):
+    if api_key:
+        _EXHAUSTED_KEYS.add((api_key, model))
+
+def is_key_exhausted(api_key: str, model: str = None) -> bool:
+    return (api_key, model) in _EXHAUSTED_KEYS
+
 
 class _NoKeepaliveHttpClient(httpx.Client):
     """

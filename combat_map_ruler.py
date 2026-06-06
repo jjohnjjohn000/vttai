@@ -137,19 +137,27 @@ class RulerMixin:
 
         # ── Rendu de l'image avec le pointeur ─────────────────────────────────
         try:
-            img = self._render_pointer_image(cx, cy)
+            img = self._render_pointer_image(cx, cy, dm_fog=True)
+            img_agent = self._render_pointer_image(cx, cy, dm_fog=False)
         except Exception as e:
             print(f"[Pointer] Erreur rendu : {e}")
             img = None
+            img_agent = None
 
         # ── Sérialiser en PNG bytes ───────────────────────────────────────────
         img_bytes = None
+        img_agent_bytes = None
         if img is not None:
             try:
                 import io as _io
                 buf = _io.BytesIO()
                 img.save(buf, "PNG")
                 img_bytes = buf.getvalue()
+                
+                if img_agent is not None:
+                    buf2 = _io.BytesIO()
+                    img_agent.save(buf2, "PNG")
+                    img_agent_bytes = buf2.getvalue()
             except Exception as e:
                 print(f"[Pointer] Erreur PNG : {e}")
 
@@ -163,15 +171,15 @@ class RulerMixin:
                 "action":    "map_pointer",
                 "sender":    "🗺️ MJ",
                 "comment":   header,
-                "img_bytes": img_bytes,
+                "img_bytes": img_agent_bytes,  # Affiche l'image opaque joueur dans le chat MJ
                 "col":       col_display,
                 "row":       row_display,
             })
             # ── Diffusion aux agents joueurs (image + contexte) ───────────────
-            if img_bytes is not None:
+            if img_agent_bytes is not None:
                 self.msg_queue.put({
                     "action":    "map_pointer_broadcast",
-                    "img_bytes": img_bytes,
+                    "img_bytes": img_agent_bytes,
                     "comment":   comment,
                     "col":       col_display,
                     "row":       row_display,
@@ -179,7 +187,7 @@ class RulerMixin:
                     "notes_txt": self._notes_description(),
                 })
 
-    def _render_pointer_image(self, cx: float, cy: float) -> "Image.Image":
+    def _render_pointer_image(self, cx: float, cy: float, dm_fog: bool = True) -> "Image.Image":
         """
         Rend le viewport courant avec un pointeur visible (épingle rouge + halo)
         centré sur (cx, cy) en coordonnées canvas.
@@ -288,13 +296,31 @@ class RulerMixin:
             fog_arr    = np.array(fog_scaled, dtype=np.uint8)
             fog_rgba   = np.zeros((VH, VW, 4), dtype=np.uint8)
             covered    = fog_arr > 0
-            fog_rgba[covered] = _C_FOG_DM   # vue MJ semi-transparent
+            fog_color = _C_FOG_DM if dm_fog else _C_FOG_PLAYER
+            fog_rgba[covered] = fog_color
             fog_layer  = Image.fromarray(fog_rgba, "RGBA")
             bg = Image.alpha_composite(bg, fog_layer)
 
         # Tokens
+        # Pre-compute fog mask array for agent view token filtering
+        _fog_arr_tok = None
+        if not dm_fog and self._fog_mask is not None:
+            _fog_arr_tok = np.array(self._fog_mask)
+        _cp_px = self.cell_px
+        _mw_fog = self.cols * _cp_px
+        _mh_fog = self.rows * _cp_px
+
         for tok in self.tokens:
             tc, tr = int(round(tok["col"])), int(round(tok["row"]))
+            # Agent view: skip tokens that are masked or under fog
+            if not dm_fog:
+                if tok.get("hidden", False):
+                    continue
+                if _fog_arr_tok is not None:
+                    fpx = min(int((tc + 0.5) * _cp_px), _mw_fog - 1)
+                    fpy = min(int((tr + 0.5) * _cp_px), _mh_fog - 1)
+                    if _fog_arr_tok[fpy, fpx] > 127:
+                        continue
             tcx = (tc + 0.5) * cp - vx0
             tcy = (tr + 0.5) * cp - vy0
             if -cp < tcx < VW + cp and -cp < tcy < VH + cp:

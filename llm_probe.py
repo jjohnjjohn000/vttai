@@ -137,6 +137,12 @@ def probe_llm_availability(
         return result
 
     base_url, api_key, model = endpoint
+
+    from llm_config import is_key_exhausted, mark_key_exhausted
+    if is_key_exhausted(api_key, model):
+        result["reason"] = "quota_429_cached"
+        return result
+
     url = f"{base_url}/chat/completions"
 
     payload = {
@@ -168,6 +174,8 @@ def probe_llm_availability(
 
                 # ── Vérification du status HTTP ──────────────────────────────
                 if response.status_code == 429:
+                    from llm_config import mark_key_exhausted
+                    mark_key_exhausted(api_key, model)
                     result["reason"] = "quota_429"
                     return result
                 if response.status_code == 401:

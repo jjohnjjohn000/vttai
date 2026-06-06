@@ -255,7 +255,7 @@ class CharacterFaceWindow:
             bg=bg, highlightthickness=2,
             highlightbackground=border
         )
-        self.canvas.pack()
+        self.canvas.pack(fill=tk.BOTH, expand=True)
 
         bot = tk.Frame(self.win, bg=bg, height=BOT_H)
         bot.pack(fill=tk.X)
@@ -584,6 +584,16 @@ class CharacterFaceWindow:
         # ── Bordure ───────────────────────────────────────────────────────────
         c.create_rectangle(0, 0, cw-1, ch-1,
                            outline=self.data["border"], width=2)
+                           
+        # ── Scale ─────────────────────────────────────────────────────────────
+        target_w = c.winfo_width()
+        target_h = c.winfo_height()
+        if target_w > 10 and target_h > 10:
+            scale = min(target_w / cw, target_h / ch)
+            offset_x = (target_w - (cw * scale)) / 2
+            offset_y = (target_h - (ch * scale)) / 2
+            c.scale("all", 0, 0, scale, scale)
+            c.move("all", offset_x, offset_y)
 
     # ── Sourcils ──────────────────────────────────────────────────────────────
     def _draw_eyebrows(self, c, cx, ey, eco):

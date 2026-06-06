@@ -276,8 +276,13 @@ class ImageBroadcastMixin:
                 )
                 # Injection dans le groupchat autogen via le mécanisme standard
                 try:
-                    self.user_input = inject_txt
-                    self.input_event.set()
+                    if hasattr(self, "_llm_running") and self._llm_running and not getattr(self, "_waiting_for_mj", True):
+                        self._pending_interrupt_input = inject_txt
+                        self._pending_interrupt_display = None
+                        self._inject_stop()
+                    else:
+                        self.user_input = inject_txt
+                        self.input_event.set()
                 except Exception:
                     pass
 

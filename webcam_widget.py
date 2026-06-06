@@ -73,6 +73,13 @@ class WebcamWidget(tk.Frame):
         self.video_label.pack(fill=tk.BOTH, expand=True)
         
         self.thread = None
+        self.bind("<Configure>", self._on_configure)
+
+    def _on_configure(self, event):
+        if event.widget == self:
+            if event.width > 20 and event.height > 20:
+                self.width = event.width
+                self.height = event.height
 
     def start(self):
         if not OPENCV_AVAILABLE or self.running:

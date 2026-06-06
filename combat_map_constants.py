@@ -47,8 +47,8 @@ _C_BG_B = (16, 16, 24, 255)
 _C_GRID = (255, 255, 255, 35)
 # Fog — vue MJ (semi-transparent : voir la carte sous le brouillard)
 _C_FOG_DM     = (20, 20, 60, 100)    # bleuté translucide
-# Fog — vue joueur (opaque)
-_C_FOG_PLAYER = (8, 8, 18, 255)
+# Fog — vue joueur (opaque noir pur)
+_C_FOG_PLAYER = (0, 0, 0, 255)
 _C_FOG_CLEAR  = (0, 0, 0, 0)
 
 BG_WIN  = "#0d0d1a"

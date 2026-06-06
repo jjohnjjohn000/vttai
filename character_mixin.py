@@ -175,6 +175,10 @@ class CharacterMixin:
             pass
 
         # ── Bascule IA / Humain + Webcam (Nouveaux persos uniquement) ─────────
+        avatar_area = None
+        btn_control = None
+        btn_settings = None
+        _update_control_btn = None
         if char_name not in ["Kaelen", "Elara", "Thorne", "Lyra"]:
             _is_human_init = data.get("is_human", False)
             
@@ -281,25 +285,6 @@ class CharacterMixin:
             win.bind("<Unmap>", _on_unmap_webcam, add="+")
             win.bind("<Destroy>", _on_destroy_webcam, add="+")
 
-            # --- Optimisation de la Webcam (Arrêt automatique si fenêtre masquée) ---
-            def _on_map_webcam(e):
-                if e.widget == win and load_state().get("characters", {}).get(char_name, {}).get("is_human", False):
-                    if webcam_widget:
-                        webcam_widget.start()
-                        
-            def _on_unmap_webcam(e):
-                if e.widget == win:
-                    if webcam_widget:
-                        webcam_widget.stop()
-            
-            def _on_destroy_webcam(e):
-                if e.widget == win and webcam_widget:
-                    webcam_widget.stop()
-                    
-            win.bind("<Map>", _on_map_webcam, add="+")
-            win.bind("<Unmap>", _on_unmap_webcam, add="+")
-            win.bind("<Destroy>", _on_destroy_webcam, add="+")
-
         # ── Bouton « Faire parler » ───────────────────────────────────────────
         speak_bar = tk.Frame(win, bg=char_bg)
         speak_bar.pack(fill=tk.X, padx=8, pady=(0, 6))
@@ -343,8 +328,14 @@ class CharacterMixin:
                 )
             # Injection dans le groupchat normal — AutoGen gère le contexte complet
             self.msg_queue.put({"sender": "Alexis_Le_MJ", "text": msg, "color": "#4CAF50"})
-            self.user_input = msg
-            self.input_event.set()
+            if getattr(self, "_llm_running", False) and not getattr(self, "_waiting_for_mj", False):
+                self._pending_interrupt_input = msg
+                self._pending_interrupt_display = None
+                if hasattr(self, "_inject_stop"):
+                    self._inject_stop()
+            else:
+                self.user_input = msg
+                self.input_event.set()
             speak_entry.delete(0, tk.END)
             speak_entry.insert(0, "Prends la parole...")
             speak_entry.config(fg="#666677")
@@ -2109,6 +2100,48 @@ class CharacterMixin:
                 except Exception: pass
             win.after(2000, _refresh_popout)
         win.after(2000, _refresh_popout)
+
+        # ── Zoom / Unzoom ─────────────────────────────────────────────────────
+        win._is_zoomed = False
+        def _toggle_zoom(event=None):
+            if win._is_zoomed:
+                win._is_zoomed = False
+                if avatar_area and hasattr(win, 'webcam_widget') and win.webcam_widget:
+                    avatar_area.pack_configure(fill=tk.NONE, expand=False, pady=(10, 5))
+                    btn_control.pack(pady=(0, 10))
+                    c_data = load_state().get("characters", {}).get(char_name, {})
+                    if _update_control_btn:
+                        _update_control_btn(c_data.get("is_human", False))
+                
+                face_frame.pack_configure(expand=False, fill=tk.X)
+                speak_bar.pack(fill=tk.X, padx=8, pady=(0, 6), after=face_frame)
+                hdr.pack(fill=tk.X, after=speak_bar)
+                tabs_bar.pack(fill=tk.X, after=hdr)
+                if btn_stats.cget("bg") == color: _show_tab("stats")
+                elif btn_spells.cget("bg") == color: _show_tab("spells")
+                elif btn_class.cget("bg") == color: _show_tab("class")
+                elif btn_race.cget("bg") == color: _show_tab("race")
+            else:
+                win._is_zoomed = True
+                hdr.pack_forget()
+                speak_bar.pack_forget()
+                tabs_bar.pack_forget()
+                stats_frame.pack_forget()
+                spells_frame.pack_forget()
+                class_frame.pack_forget()
+                race_frame.pack_forget()
+                
+                if avatar_area and hasattr(win, 'webcam_widget') and win.webcam_widget:
+                    btn_control.pack_forget()
+                    btn_settings.place_forget()
+                    avatar_area.pack_configure(fill=tk.BOTH, expand=True, pady=0)
+                    
+                face_frame.pack_configure(expand=True, fill=tk.BOTH)
+
+        if hasattr(win, "webcam_widget") and win.webcam_widget:
+            win.webcam_widget.video_label.bind("<Double-Button-1>", _toggle_zoom, add="+")
+        if char_name in self.face_windows:
+            self.face_windows[char_name].canvas.bind("<Double-Button-1>", _toggle_zoom, add="+")
 
         # Mapping asynchrone pour éviter le freeze XWayland.
         # Même pattern que _track_window :

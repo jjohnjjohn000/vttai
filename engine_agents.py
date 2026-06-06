@@ -78,6 +78,15 @@ def _patch_autogen_message_retrieval():
 
         def _logged_openai_create(self, *args, **kwargs):
             model = kwargs.get("model", "unknown")
+            api_key = getattr(self._client, "api_key", getattr(self, "api_key", ""))
+            
+            from llm_config import is_key_exhausted, mark_key_exhausted
+            if is_key_exhausted(api_key, model):
+                print(f"\033[93m[AutoGen API] ⏭️ Saut de {model} (Quota déjà épuisé pour cette clé lors de cette session)\033[0m")
+                import httpx
+                resp = httpx.Response(429, request=httpx.Request("POST", "http://cached"))
+                raise openai.RateLimitError(message="Quota_429_Cached: Skipping exhausted key", response=resp, body={})
+                
             print(f"\033[94m[AutoGen API] Tentative sur le modèle : {model}...\033[0m")
             import time
             t0 = time.time()
@@ -87,7 +96,10 @@ def _patch_autogen_message_retrieval():
                 return res
             except Exception as e:
                 err_msg = str(e)
-                err_type = "Quota (429)" if ("429" in err_msg or "quota" in err_msg.lower()) else type(e).__name__
+                is_quota = ("429" in err_msg or "quota" in err_msg.lower() or "resource_exhausted" in err_msg.lower())
+                err_type = "Quota (429)" if is_quota else type(e).__name__
+                if is_quota:
+                    mark_key_exhausted(api_key, model)
                 print(f"\033[91m[AutoGen API] ✗ Échec sur {model} ({err_type}) en {time.time()-t0:.2f}s → Passage à l'index suivant\033[0m")
                 raise
 
@@ -182,9 +194,30 @@ _ACTION_MOUVEMENT_FORMAT = (
     "  Cible     : <Destination>\n"
 )
 
+def _is_tool_supported(agent_name: str) -> bool:
+    if not agent_name:
+        return True
+    try:
+        from state_manager import load_state
+        from app_config import get_agent_config
+        _cs = load_state().get("characters", {}).get(agent_name, {})
+        m = _cs.get("llm_session_override", "") or _cs.get("llm", "") or get_agent_config(agent_name).get("model", "")
+        # Llama models and deepseek models on openrouter/groq generally have poor tool use
+        if "llama" in m.lower() or "deepseek" in m.lower():
+            return False
+    except Exception:
+        pass
+    return True
+
 def _get_regles_communes(char_name: str = "", combat_mode: bool = False) -> str:
-    max_sentences = get_agent_max_sentences()
+    from app_config import get_groupchat_config
+    max_sentences_cfg = get_groupchat_config().get("agent_max_sentences", 1)
+    max_sentences = max(1, max_sentences_cfg)
     
+    # Check if tools are supported for this agent
+    tools_supported = _is_tool_supported(char_name)
+    tool_instruction = "\n• N'appelle pas les outils (update_hp, roll_dice) de ta propre initiative, sauf si une [DIRECTIVE SYSTÈME] te le demande explicitement." if tools_supported else ""
+
     if char_name in ["Kaelen", "Elara", "Lyra"] or not char_name:
         action_prompt = "Pour lancer un sort ou attaquer" if combat_mode else "Pour lancer un sort ou accomplir une action mécanique"
         mechanics_block = (
@@ -192,7 +225,7 @@ def _get_regles_communes(char_name: str = "", combat_mode: bool = False) -> str:
             f"\n• {action_prompt}, utilise TOUJOURS un bloc [ACTION]."
             "\n• ⚠️ ANTI-SPAM (RÈGLE ABSOLUE) : Ne lance JAMAIS un sort (détection, buff, etc.) s'il a déjà été lancé récemment et est toujours actif. Le MJ gère les compétences passivement (Perception passive, Investigation passive, etc.) — ne demande PAS de jet toi-même sauf si le MJ t'y invite."
             "\n• ⚠️ UPCAST OBLIGATOIRE : Tu DOIS respecter les 'Sorts dispos' affichés dans ton [TOUR EN COURS]. Si tu n'as plus d'emplacement pour le niveau de base d'un sort et que tu veux lancer quand même, tu DOIS le lancer à un niveau supérieur en l'écrivant explicitement (ex: 'Règle 5e: Shield of Faith niv. 3')."
-            "\n• N'appelle pas les outils (update_hp, roll_dice) de ta propre initiative, sauf si une [DIRECTIVE SYSTÈME] te le demande explicitement."
+            f"{tool_instruction}"
         )
     else:
         action_prompt = "Pour attaquer ou accomplir une action mécanique" if combat_mode else "Pour accomplir une action mécanique"
@@ -200,7 +233,7 @@ def _get_regles_communes(char_name: str = "", combat_mode: bool = False) -> str:
             "\n\n3. MÉCANIQUES ET SYSTÈME"
             f"\n• {action_prompt}, utilise TOUJOURS un bloc [ACTION]."
             "\n• Le MJ gère les compétences passivement (Perception passive, Investigation passive, etc.) — ne demande PAS de jet toi-même sauf si le MJ t'y invite."
-            "\n• N'appelle pas les outils (update_hp, roll_dice) de ta propre initiative, sauf si une [DIRECTIVE SYSTÈME] te le demande explicitement."
+            f"{tool_instruction}"
         )
 
     if combat_mode:
@@ -1471,10 +1504,11 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
         "À appeler dès que le MJ annonce que tu prends des dégâts ou reçois un soin."
     )
     for _upd_agent in[kaelen_agent, elara_agent, thorne_agent, lyra_agent]:
-        autogen.agentchat.register_function(
-            update_hp, caller=_upd_agent, executor=mj_agent,
-            name="update_hp", description=_update_hp_desc,
-        )
+        if _is_tool_supported(_upd_agent.name):
+            autogen.agentchat.register_function(
+                update_hp, caller=_upd_agent, executor=mj_agent,
+                name="update_hp", description=_update_hp_desc,
+            )
 
     _add_temp_hp_desc = (
         "Ajouter des PV temporaires à un personnage (sorts, capacités raciales, etc.). "
@@ -1484,10 +1518,11 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
         "À appeler dès que le MJ confirme que tu gagnes des PV temporaires."
     )
     for _upd_agent in[kaelen_agent, elara_agent, thorne_agent, lyra_agent]:
-        autogen.agentchat.register_function(
-            add_temp_hp, caller=_upd_agent, executor=mj_agent,
-            name="add_temp_hp", description=_add_temp_hp_desc,
-        )
+        if _is_tool_supported(_upd_agent.name):
+            autogen.agentchat.register_function(
+                add_temp_hp, caller=_upd_agent, executor=mj_agent,
+                name="add_temp_hp", description=_add_temp_hp_desc,
+            )
 
     _add_item_desc = (
         "Ajouter un objet à l'inventaire du groupe (ou incrémenter sa quantité). "
@@ -1509,77 +1544,81 @@ def build_agents_and_tools(autogen, cfg_fn, app) -> dict:
         "À appeler quand le MJ annonce un gain ou une dépense de monnaie."
     )
     for _inv_agent in[kaelen_agent, elara_agent, thorne_agent, lyra_agent]:
-        autogen.agentchat.register_function(
-            add_item_to_inventory, caller=_inv_agent, executor=mj_agent,
-            name="add_item_to_inventory", description=_add_item_desc,
-        )
-        autogen.agentchat.register_function(
-            remove_item_from_inventory, caller=_inv_agent, executor=mj_agent,
-            name="remove_item_from_inventory", description=_remove_item_desc,
-        )
-        autogen.agentchat.register_function(
-            update_currency, caller=_inv_agent, executor=mj_agent,
-            name="update_currency", description=_currency_desc,
-        )
+        if _is_tool_supported(_inv_agent.name):
+            autogen.agentchat.register_function(
+                add_item_to_inventory, caller=_inv_agent, executor=mj_agent,
+                name="add_item_to_inventory", description=_add_item_desc,
+            )
+            autogen.agentchat.register_function(
+                remove_item_from_inventory, caller=_inv_agent, executor=mj_agent,
+                name="remove_item_from_inventory", description=_remove_item_desc,
+            )
+            autogen.agentchat.register_function(
+                update_currency, caller=_inv_agent, executor=mj_agent,
+                name="update_currency", description=_currency_desc,
+            )
 
     # Kaelen et Thorne : dés + sorts
     for agent in [kaelen_agent, thorne_agent]:
+        if _is_tool_supported(agent.name):
+            autogen.agentchat.register_function(
+                roll_dice_safe, caller=agent, executor=mj_agent,
+                name="roll_dice",
+                description=(
+                    "Lancer des dés pour un personnage. "
+                    "Paramètres OBLIGATOIRES séparés : "
+                    "character_name (str, ex: 'Kaelen'), "
+                    "dice_type (str, formule SANS bonus, ex: '2d6' ou '1d20'), "
+                    "bonus (int, modificateur, ex: 5 ou -1). "
+                    "Exemple correct : character_name='Kaelen', dice_type='2d6', bonus=8. "
+                    "NE PAS utiliser dice_notation ni combiner le bonus dans dice_type."
+                )
+            )
+            autogen.agentchat.register_function(
+                use_spell_slot, caller=agent, executor=mj_agent,
+                name="use_spell_slot",
+                description="Consommer un slot de sort (1-9). À appeler UNIQUEMENT si le MJ te le demande explicitement."
+            )
+
+    # Elara : sorts + dés
+    if _is_tool_supported(elara_agent.name):
         autogen.agentchat.register_function(
-            roll_dice_safe, caller=agent, executor=mj_agent,
+            roll_dice_safe, caller=elara_agent, executor=mj_agent,
             name="roll_dice",
             description=(
                 "Lancer des dés pour un personnage. "
                 "Paramètres OBLIGATOIRES séparés : "
-                "character_name (str, ex: 'Kaelen'), "
-                "dice_type (str, formule SANS bonus, ex: '2d6' ou '1d20'), "
-                "bonus (int, modificateur, ex: 5 ou -1). "
-                "Exemple correct : character_name='Kaelen', dice_type='2d6', bonus=8. "
-                "NE PAS utiliser dice_notation ni combiner le bonus dans dice_type."
+                "character_name (str, ex: 'Elara'), "
+                "dice_type (str, formule SANS bonus, ex: '8d6' ou '1d20'), "
+                "bonus (int, modificateur, ex: 10 ou 0). "
+                "Exemple correct : character_name='Elara', dice_type='8d6', bonus=0."
             )
         )
         autogen.agentchat.register_function(
-            use_spell_slot, caller=agent, executor=mj_agent,
+            use_spell_slot, caller=elara_agent, executor=mj_agent,
             name="use_spell_slot",
-            description="Consommer un slot de sort (1-9). À appeler UNIQUEMENT si le MJ te le demande explicitement."
+            description="Consommer un slot de sort (1-9). Paramètres : character_name (str), level (str, ex: '3')."
         )
-
-    # Elara : sorts + dés
-    autogen.agentchat.register_function(
-        roll_dice_safe, caller=elara_agent, executor=mj_agent,
-        name="roll_dice",
-        description=(
-            "Lancer des dés pour un personnage. "
-            "Paramètres OBLIGATOIRES séparés : "
-            "character_name (str, ex: 'Elara'), "
-            "dice_type (str, formule SANS bonus, ex: '8d6' ou '1d20'), "
-            "bonus (int, modificateur, ex: 10 ou 0). "
-            "Exemple correct : character_name='Elara', dice_type='8d6', bonus=0."
-        )
-    )
-    autogen.agentchat.register_function(
-        use_spell_slot, caller=elara_agent, executor=mj_agent,
-        name="use_spell_slot",
-        description="Consommer un slot de sort (1-9). Paramètres : character_name (str), level (str, ex: '3')."
-    )
 
     # Lyra : sorts + soins + dés
-    autogen.agentchat.register_function(
-        roll_dice_safe, caller=lyra_agent, executor=mj_agent,
-        name="roll_dice",
-        description=(
-            "Lancer des dés pour un personnage. "
-            "Paramètres OBLIGATOIRES séparés : "
-            "character_name (str, ex: 'Lyra'), "
-            "dice_type (str, formule SANS bonus, ex: '1d8'), "
-            "bonus (int, modificateur, ex: 7). "
-            "Exemple correct : character_name='Lyra', dice_type='1d8', bonus=7."
+    if _is_tool_supported(lyra_agent.name):
+        autogen.agentchat.register_function(
+            roll_dice_safe, caller=lyra_agent, executor=mj_agent,
+            name="roll_dice",
+            description=(
+                "Lancer des dés pour un personnage. "
+                "Paramètres OBLIGATOIRES séparés : "
+                "character_name (str, ex: 'Lyra'), "
+                "dice_type (str, formule SANS bonus, ex: '1d8'), "
+                "bonus (int, modificateur, ex: 7). "
+                "Exemple correct : character_name='Lyra', dice_type='1d8', bonus=7."
+            )
         )
-    )
-    autogen.agentchat.register_function(
-        use_spell_slot, caller=lyra_agent, executor=mj_agent,
-        name="use_spell_slot",
-        description="Consommer un slot de sort (1-9). Paramètres : character_name (str), level (str, ex: '3')."
-    )
+        autogen.agentchat.register_function(
+            use_spell_slot, caller=lyra_agent, executor=mj_agent,
+            name="use_spell_slot",
+            description="Consommer un slot de sort (1-9). Paramètres : character_name (str), level (str, ex: '3')."
+        )
 
     # ── Thinking wrappers ─────────────────────────────────────────────────────
     agents_dict = {
